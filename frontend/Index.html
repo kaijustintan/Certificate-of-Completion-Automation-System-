@@ -1,1 +1,45 @@
 <!-- placeholder -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>E-Certificate Portal — Megaworld</title>
+
+  <!-- Google Fonts: Inter (clean modern sans-serif) -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+
+  <!-- Global stylesheet -->
+  <?!= include('Stylesheet'); ?>
+</head>
+
+<body>
+
+  <div class="app-shell">
+
+    <!-- Top navigation bar -->
+    <?!= include('Navbar'); ?>
+
+    <!-- Main content area — pages get rendered into #app -->
+    <main class="app-main">
+      <div id="app">
+        <!-- Loading state shown while the initial page renders -->
+        <div class="loading">
+          <div class="spinner"></div>
+          <div>Loading portal…</div>
+        </div>
+      </div>
+    </main>
+
+  </div>
+
+  <!-- Toast notification container -->
+  <div id="toast" class="toast"></div>
+
+  <!-- Global JavaScript: router + API calls -->
+  <?!= include('JavaScript'); ?>
+
+</body>
+</html>
