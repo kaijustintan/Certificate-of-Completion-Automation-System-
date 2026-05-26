@@ -28,7 +28,7 @@ function doGet(e) {
 
   // Build the HTML page
   const html = HtmlService
-    .createTemplateFromFile("Index")
+    .createTemplateFromFile("frontend/Index")
     .evaluate()
     .setTitle("E-Certificate Portal — Megaworld")
     .addMetaTag("viewport", "width=device-width, initial-scale=1")

@@ -88,8 +88,9 @@ function getCurrentApprover(step, groupName) {
 
 // Get all attachment rows that belong to a specific request
 function getAttachmentsForRequest(requestId) {
-  const rows = getDataRows(SHEET_NAMES.REQUEST_ATTACHMENTS);
-  return rows.filter(row => row[RA.REQUEST_ID - 1] === requestId);
+  const rows   = getDataRows(SHEET_NAMES.REQUEST_ATTACHMENTS);
+  const target = String(requestId);
+  return rows.filter(row => String(row[RA.REQUEST_ID - 1]) === target);
 }
 
 // Count how many attachments have been uploaded for a request
@@ -109,9 +110,10 @@ function countAttachments(requestId) {
 // Example: if REQ-001 is in row 5 of the sheet, this returns 5.
 function getRowNumberByRequestId(requestId) {
   const allData = getAllData(SHEET_NAMES.CERTIFICATE_REQUESTS);
-  for (let i = 1; i < allData.length; i++) {  // start at 1 to skip header
-    if (allData[i][CR.REQUEST_ID - 1] === requestId) {
-      return i + 1;  // +1 because Sheets rows are 1-based
+  const target  = String(requestId);
+  for (let i = 1; i < allData.length; i++) {
+    if (String(allData[i][CR.REQUEST_ID - 1]) === target) {
+      return i + 1;
     }
   }
   return -1;
