@@ -1,1 +1,283 @@
-<!-- placeholder -->
+<!-- JavaScript.html -->
+<!-- ============================================================
+     JavaScript.html — Router and runtime brain for the SPA.
+     Inlined once by Index.html via <?!= include('JavaScript') ?>.
+     Includes all component and page partials below so their
+     render functions are available globally before bootstrap runs.
+     ============================================================ -->
+
+
+<!-- Reusable components -->
+<?!= include('StatusBadge'); ?>
+<?!= include('EmptyState'); ?>
+<?!= include('MigaWidget'); ?>
+
+
+<!-- Page renderers -->
+<?!= include('Login'); ?>
+<?!= include('Dashboard'); ?>
+<?!= include('NewRequest'); ?>
+<?!= include('RequestDetail'); ?>
+<?!= include('ApproverDashboard'); ?>
+<?!= include('ReviewDetail'); ?>
+
+
+<script>
+// ============================================================
+// GLOBAL STATE
+// One source of truth for the active user and the current route.
+// Pages read from this; the router writes to it.
+// ============================================================
+const state = {
+  user:            null,   // { email, role } once getCurrentUser() resolves
+  currentPage:     null,   // string — last page navigated to
+  params:          {},     // route params, e.g. { id: 'REQ-123' }
+  approverGroups:  null,   // cached list of group names for the new-request form
+};
+
+
+// ============================================================
+// SERVER CALL HELPER
+// Wraps google.script.run in a Promise so we can use async/await.
+// Usage:  const user = await callServer('getCurrentUser');
+// ============================================================
+function callServer(fnName, ...args) {
+  return new Promise((resolve, reject) => {
+    google.script.run
+      .withSuccessHandler(resolve)
+      .withFailureHandler(reject)
+      [fnName](...args);
+  });
+}
+
+
+// ============================================================
+// HTML ESCAPING
+// Always run user-supplied values through this before inserting
+// into innerHTML. Project titles can contain quotes / angle
+// brackets that otherwise break layout.
+// ============================================================
+function escapeHtml(value) {
+  if (value === null || value === undefined) return '';
+  return String(value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+
+// ============================================================
+// TOAST NOTIFICATIONS
+// Auto-dismiss after 3 seconds. Types: 'success' | 'error' | ''.
+// ============================================================
+let toastTimer = null;
+function showToast(message, type) {
+  const el = document.getElementById('toast');
+  if (!el) return;
+  el.textContent = message;
+  el.className = 'toast show' + (type ? ' ' + type : '');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => {
+    el.className = 'toast' + (type ? ' ' + type : '');
+  }, 3000);
+}
+
+
+// ============================================================
+// STATUS HELPERS
+// Single mapping from STATUS string → semantic info.
+// Pages and components read from here so we don't sprinkle
+// magic strings across files.
+// ============================================================
+const STATUS_LABELS = {
+  'Syncing Files':         { badge: 'badge-syncing',  emotion: 'pending'  },
+  'Pending Approver 1':    { badge: 'badge-pending',  emotion: 'pending'  },
+  'Pending Approver 2':    { badge: 'badge-pending',  emotion: 'pending'  },
+  'Pending Approver 3':    { badge: 'badge-pending',  emotion: 'pending'  },
+  'Fully Approved':        { badge: 'badge-approved', emotion: 'approved' },
+  'Declined':              { badge: 'badge-declined', emotion: 'declined' },
+  'Returned to Requestor': { badge: 'badge-returned', emotion: 'returned' },
+};
+
+function badgeClassFor(status) {
+  return (STATUS_LABELS[status] && STATUS_LABELS[status].badge) || 'badge-pending';
+}
+
+function emotionFor(status) {
+  return (STATUS_LABELS[status] && STATUS_LABELS[status].emotion) || 'default';
+}
+
+
+// ============================================================
+// ROUTING
+// Hash format:
+//   #dashboard
+//   #new
+//   #request/REQ-123
+//   #review/REQ-123
+//   #approverDashboard
+// Empty hash → role-based home (resolved inside navigateTo).
+// ============================================================
+function parseHash() {
+  const raw = (location.hash || '').replace(/^#/, '');
+  if (!raw) return { page: 'home', params: {} };
+  const [page, ...rest] = raw.split('/');
+  const params = {};
+  if (rest.length > 0) params.id = rest.join('/');
+  return { page, params };
+}
+
+function buildHash(page, params) {
+  if (!page || page === 'home') return '#';
+  if (params && params.id) return '#' + page + '/' + params.id;
+  return '#' + page;
+}
+
+// Loading placeholder shown between page renders.
+const LOADING_HTML =
+  '<div class="loading">' +
+  '<div class="spinner"></div>' +
+  '<div>Loading…</div>' +
+  '</div>';
+
+// Main navigation function — every page change goes through here.
+async function navigateTo(page, params) {
+  params = params || {};
+
+  // Resolve 'home' to the correct dashboard for the active role.
+  if (page === 'home') {
+    page = (state.user && state.user.role === 'approver')
+      ? 'approverDashboard'
+      : 'dashboard';
+  }
+
+  state.currentPage = page;
+  state.params      = params;
+
+  const app = document.getElementById('app');
+  if (!app) return;
+  app.innerHTML = LOADING_HTML;
+
+  let html = '';
+  try {
+    switch (page) {
+      case 'login':             html = await renderLoginPage(params);             break;
+      case 'dashboard':         html = await renderDashboardPage(params);         break;
+      case 'new':               html = await renderNewRequestPage(params);        break;
+      case 'request':           html = await renderRequestDetailPage(params);     break;
+      case 'approverDashboard': html = await renderApproverDashboardPage(params); break;
+      case 'review':            html = await renderReviewDetailPage(params);      break;
+      default:
+        html = renderEmptyState({
+          title:   'Page not found',
+          message: 'No page matches "' + escapeHtml(page) + '".',
+          emotion: 'default',
+        });
+    }
+  } catch (err) {
+    console.error('navigateTo error:', err);
+    html = renderEmptyState({
+      title:   'Something went wrong',
+      message: escapeHtml((err && err.message) ? err.message : 'Unknown error.'),
+      emotion: 'declined',
+    });
+  }
+
+  app.innerHTML = html;
+
+  // Keep the URL in sync for back/forward and link-sharing.
+  const desiredHash = buildHash(page, params);
+  if (location.hash !== desiredHash && !(desiredHash === '#' && !location.hash)) {
+    history.replaceState(null, '', desiredHash);
+  }
+
+  // Pages can register an afterRender_<page>(params) hook to wire up
+  // event listeners (form submit, button clicks) once the DOM exists.
+  const hookName = 'afterRender_' + page;
+  if (typeof window[hookName] === 'function') {
+    try {
+      window[hookName](params);
+    } catch (err) {
+      console.error(hookName + ' error:', err);
+    }
+  }
+}
+
+
+// Re-route on browser back/forward.
+function onHashChange() {
+  const { page, params } = parseHash();
+  navigateTo(page, params);
+}
+
+
+// ============================================================
+// NAVBAR HOOKS
+// Navbar.html ships with hardcoded onclick="navigateTo('dashboard')".
+// Override after we know the role so approvers also land on their
+// pending list when they click the brand.
+// ============================================================
+function refreshNavbar() {
+  if (!state.user) return;
+  const email   = state.user.email || '';
+  const display = email.split('@')[0] || 'User';
+  const initial = (display.charAt(0) || '?').toUpperCase();
+
+  const nameEl   = document.getElementById('navbar-user-name');
+  const avatarEl = document.getElementById('navbar-avatar');
+  if (nameEl)   nameEl.textContent = display;
+  if (avatarEl) avatarEl.textContent = initial;
+
+  const brand = document.querySelector('.navbar-brand');
+  if (brand) brand.onclick = function () { navigateTo('home'); };
+}
+
+
+// ============================================================
+// BOOTSTRAP
+// Runs once on initial page load. Detects role, then routes.
+// ============================================================
+async function bootstrap() {
+  // Mount the login splash immediately so the user sees Miga, not a blank screen.
+  await navigateTo('login', {});
+
+  try {
+    const user = await callServer('getCurrentUser');
+    if (!user || !user.email) {
+      // Apps Script can return an empty email under certain workspace
+      // permission configurations — surface the welcome/error fallback.
+      window.__loginError = 'We could not detect your Google account. Please sign in to your Megaworld Google account and reload.';
+      await navigateTo('login', { error: true });
+      return;
+    }
+
+    state.user = user;
+    refreshNavbar();
+
+    // Honor an explicit hash if the user landed via a shared link.
+    const { page, params } = parseHash();
+    if (page && page !== 'home' && page !== 'login') {
+      await navigateTo(page, params);
+    } else {
+      await navigateTo('home');
+    }
+  } catch (err) {
+    console.error('bootstrap error:', err);
+    window.__loginError = (err && err.message)
+      ? err.message
+      : 'Unknown error while signing in.';
+    await navigateTo('login', { error: true });
+  }
+}
+
+
+// ============================================================
+// INIT
+// Wired to DOMContentLoaded so the navbar elements exist by the
+// time refreshNavbar() runs.
+// ============================================================
+window.addEventListener('hashchange', onHashChange);
+window.addEventListener('DOMContentLoaded', bootstrap);
+</script>

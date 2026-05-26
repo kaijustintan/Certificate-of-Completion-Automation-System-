@@ -1,1 +1,37 @@
-<!-- placeholder -->
+<!-- MigaWidget.html -->
+<!-- ============================================================
+     Miga mascot widget
+     Uses placeholder images for now — swap MIGA_IMAGES with real
+     Drive URLs once the PNGs are generated and hosted.
+     Emotions: default | welcome | approved | pending | declined | returned
+     ============================================================ -->
+
+
+<script>
+const MIGA_IMAGES = {
+  default:  'https://placehold.co/64x64/0a2744/ffffff?text=M',
+  welcome:  'https://placehold.co/64x64/0a2744/ffffff?text=Hi',
+  approved: 'https://placehold.co/64x64/3b6d11/ffffff?text=OK',
+  pending:  'https://placehold.co/64x64/185fa5/ffffff?text=%E2%80%A6',
+  declined: 'https://placehold.co/64x64/a32d2d/ffffff?text=X',
+  returned: 'https://placehold.co/64x64/ba7517/ffffff?text=Back',
+};
+
+function migaImageFor(emotion) {
+  return MIGA_IMAGES[emotion] || MIGA_IMAGES.default;
+}
+
+// Renders the full mascot widget (image + name + message bubble).
+// Used on dashboards, empty states, login splash, etc.
+function renderMiga(emotion, message, name) {
+  const src   = migaImageFor(emotion);
+  const label = name || 'Miga';
+  return '<div class="miga-widget">' +
+    '<img class="miga-img" src="' + src + '" alt="' + escapeHtml(label) + '">' +
+    '<div>' +
+      '<div class="miga-bubble-name">' + escapeHtml(label) + '</div>' +
+      '<div class="miga-bubble-text">' + escapeHtml(message || '') + '</div>' +
+    '</div>' +
+  '</div>';
+}
+</script>

@@ -1,1 +1,99 @@
-<!-- placeholder -->
+<!-- Dashboard.html -->
+<!-- ============================================================
+     Dashboard — requestor view
+     Lists every certificate request submitted by the current user
+     plus quick stats. Empty state shows Miga.
+     ============================================================ -->
+
+
+<script>
+async function renderDashboardPage() {
+  const requests = await callServer('getMyRequests');
+  const stats    = computeRequestorStats(requests);
+
+  const listHtml = (requests.length === 0)
+    ? renderEmptyState({
+        title:   'No requests yet',
+        message: 'Submit your first e-certificate request to see it here.',
+        emotion: 'default',
+      })
+    : renderRequestorTable(requests);
+
+  return `
+    <div class="page-header">
+      <div>
+        <div class="page-title">My requests</div>
+        <div class="page-subtitle">Every e-certificate request you have submitted.</div>
+      </div>
+      <button class="btn btn-primary" onclick="navigateTo('new')">+ New request</button>
+    </div>
+
+    ${renderMiga('welcome', 'Welcome back! Here\'s where your requests live. Click any row to see its full history.')}
+
+    <div class="stat-grid">
+      <div class="stat-card">
+        <div class="stat-number">${stats.total}</div>
+        <div class="stat-label">Total</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-number blue">${stats.pending}</div>
+        <div class="stat-label">In progress</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-number green">${stats.approved}</div>
+        <div class="stat-label">Approved</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-number red">${stats.declined}</div>
+        <div class="stat-label">Declined</div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-header">
+        <div class="card-title">All requests</div>
+      </div>
+      ${listHtml}
+    </div>
+  `;
+}
+
+
+// ─── Local helpers ────────────────────────────────────────
+function computeRequestorStats(requests) {
+  const stats = { total: 0, pending: 0, approved: 0, declined: 0 };
+  for (const r of requests) {
+    stats.total++;
+    if (r.status === 'Fully Approved')      stats.approved++;
+    else if (r.status === 'Declined')       stats.declined++;
+    else                                    stats.pending++;
+  }
+  return stats;
+}
+
+function renderRequestorTable(requests) {
+  const rows = requests.map(function (r) {
+    const idAttr = escapeHtml(r.requestId);
+    return '' +
+      '<tr onclick="navigateTo(\'request\', {id: \'' + idAttr + '\'})">' +
+        '<td>' + escapeHtml(r.controlNumber) + '</td>' +
+        '<td>' + escapeHtml(r.projectTitle)  + '</td>' +
+        '<td>' + escapeHtml(r.group)         + '</td>' +
+        '<td>' + renderStatusBadge(r.status) + '</td>' +
+        '<td>' + escapeHtml(r.dateFiled)     + '</td>' +
+      '</tr>';
+  }).join('');
+
+  return '' +
+    '<table class="data-table">' +
+      '<thead><tr>' +
+        '<th>Control no.</th>' +
+        '<th>Project</th>' +
+        '<th>Group</th>' +
+        '<th>Status</th>' +
+        '<th>Filed</th>' +
+      '</tr></thead>' +
+      '<tbody>' + rows + '</tbody>' +
+    '</table>';
+}
+</script>

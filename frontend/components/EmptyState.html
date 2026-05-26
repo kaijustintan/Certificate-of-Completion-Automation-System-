@@ -1,0 +1,27 @@
+<!-- EmptyState.html -->
+<!-- ============================================================
+     EmptyState component
+     Shown when a list is empty or a page hits an unrecoverable
+     state. Pairs Miga with a short message.
+     Accepts: { title, message, emotion }
+       - title   — required headline
+       - message — optional supporting HTML (already escaped if needed)
+       - emotion — Miga image variant (default | declined | etc.)
+     ============================================================ -->
+
+
+<script>
+function renderEmptyState(opts) {
+  opts = opts || {};
+  const title   = opts.title   || 'Nothing here yet.';
+  const message = opts.message || '';
+  const emotion = opts.emotion || 'default';
+
+  return '<div class="empty-state">' +
+    '<img class="miga-img" src="' + migaImageFor(emotion) + '" ' +
+         'alt="Miga" style="display:block;margin:0 auto 12px;">' +
+    '<div class="empty-state-title">' + escapeHtml(title) + '</div>' +
+    (message ? '<div>' + message + '</div>' : '') +
+  '</div>';
+}
+</script>

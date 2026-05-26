@@ -1,1 +1,279 @@
-<!-- placeholder -->
+<!-- RequestDetail.html -->
+<!-- ============================================================
+     RequestDetail — requestor's read-only view of one request
+     Also exposes shared helpers that ReviewDetail.html consumes:
+       getConfiguredApproverSlots(detail)
+       renderProgressSteps(detail)
+       renderRequestSummaryCards(detail)
+       renderApprovalLog(detail)
+       renderAttachmentsBlock(detail)
+     ============================================================ -->
+
+
+<script>
+// ─── SHARED HELPERS (also used by ReviewDetail) ────────────
+
+// Returns the configured approver slots for a request.
+// Slots without a configured approver are omitted.
+function getConfiguredApproverSlots(detail) {
+  const slots = [];
+  if (detail.approver1) slots.push({ n: 1, approver: detail.approver1, designation: detail.designation1, date: detail.app1Date, remark: detail.app1Remark });
+  if (detail.approver2) slots.push({ n: 2, approver: detail.approver2, designation: detail.designation2, date: detail.app2Date, remark: detail.app2Remark });
+  if (detail.approver3) slots.push({ n: 3, approver: detail.approver3, designation: detail.designation3, date: detail.app3Date, remark: detail.app3Remark });
+  return slots;
+}
+
+
+// Computes the visual state of a single step-dot.
+// Returns one of: 'done' | 'active' | 'declined' | '' (inactive).
+function dotStateFor(slotNumber, detail) {
+  const status = detail.status;
+  const step   = Number(detail.step) || 0;
+
+  if (status === 'Fully Approved')        return 'done';
+  if (status === 'Declined') {
+    if (slotNumber <  step) return 'done';
+    if (slotNumber === step) return 'declined';
+    return '';
+  }
+  if (status === 'Returned to Requestor') {
+    return (slotNumber === 1) ? 'active' : '';
+  }
+  // Pending Approver N
+  if (slotNumber <  step) return 'done';
+  if (slotNumber === step) return 'active';
+  return '';
+}
+
+
+function renderProgressSteps(detail) {
+  const slots = getConfiguredApproverSlots(detail);
+  if (slots.length === 0) return '';
+
+  let html = '<div class="progress-steps">';
+  for (let i = 0; i < slots.length; i++) {
+    const state = dotStateFor(slots[i].n, detail);
+    const cls   = 'step-dot' + (state ? ' ' + state : '');
+    const title = slots[i].approver + (slots[i].designation ? ' — ' + slots[i].designation : '');
+    html += '<div class="' + cls + '" title="' + escapeHtml(title) + '">' + slots[i].n + '</div>';
+    if (i < slots.length - 1) {
+      const lineDone = (state === 'done') ? ' done' : '';
+      html += '<div class="step-line' + lineDone + '"></div>';
+    }
+  }
+  html += '</div>';
+  return html;
+}
+
+
+// Renders one key/value pair as a .detail-row.
+function renderDetailRow(key, value) {
+  const v = (value === null || value === undefined || value === '')
+    ? '<span class="text-muted">—</span>'
+    : escapeHtml(value);
+  return '' +
+    '<div class="detail-row">' +
+      '<div class="detail-key">'   + escapeHtml(key) + '</div>' +
+      '<div class="detail-value">' + v               + '</div>' +
+    '</div>';
+}
+
+
+// Renders the three "summary" cards (request info / product / contract).
+function renderRequestSummaryCards(detail) {
+  return '' +
+    '<div class="card">' +
+      '<div class="card-header"><div class="card-title">Request information</div></div>' +
+      renderDetailRow('Project title',         detail.projectTitle) +
+      renderDetailRow('Requestor',             detail.requestor) +
+      renderDetailRow('Requestor designation', detail.requestorDesig) +
+      renderDetailRow('Group',                 detail.group) +
+      renderDetailRow('Accountable person',    detail.accountablePerson) +
+      renderDetailRow('Department',            detail.department) +
+      renderDetailRow('Location',              detail.location) +
+      renderDetailRow('PC name',               detail.pcName) +
+      renderDetailRow('PRISM',                 detail.prism) +
+      renderDetailRow('Purchase Order',        detail.purchaseOrder) +
+      renderDetailRow('IHelp number',          detail.ihelpNumber) +
+      renderDetailRow('Date of filing',        detail.dateFiled) +
+    '</div>' +
+
+    '<div class="card">' +
+      '<div class="card-header"><div class="card-title">Product details</div></div>' +
+      renderDetailRow('Product type',          detail.productType) +
+      renderDetailRow('Product name',          detail.productName) +
+      renderDetailRow('Type of purchase',      detail.typeOfPurchase) +
+      renderDetailRow('Type of license',       detail.typeOfLicense) +
+    '</div>' +
+
+    '<div class="card">' +
+      '<div class="card-header"><div class="card-title">Contract</div></div>' +
+      renderDetailRow('Supplier',              detail.supplierName) +
+      renderDetailRow('Contract start',        detail.contractStart) +
+      renderDetailRow('Contract end',          detail.contractEnd) +
+    '</div>' +
+
+    '<div class="card">' +
+      '<div class="card-header"><div class="card-title">Purpose / remark</div></div>' +
+      '<div>' + (detail.requestorRemark
+        ? escapeHtml(detail.requestorRemark)
+        : '<span class="text-muted">No remark provided.</span>') + '</div>' +
+    '</div>';
+}
+
+
+// Renders the approval log (which approvers acted and when).
+function renderApprovalLog(detail) {
+  const slots = getConfiguredApproverSlots(detail);
+  if (slots.length === 0) return '';
+
+  const rows = slots.map(function (s) {
+    const remarkBlock = s.remark
+      ? '<div class="text-small text-muted mt-sm">Remark: ' + escapeHtml(s.remark) + '</div>'
+      : '';
+    return '' +
+      '<div class="detail-row">' +
+        '<div class="detail-key">Approver ' + s.n + '</div>' +
+        '<div class="detail-value">' +
+          escapeHtml(s.approver) +
+          (s.designation ? '<div class="text-tiny text-muted">' + escapeHtml(s.designation) + '</div>' : '') +
+          (s.date ? '<div class="text-small mt-sm">' + escapeHtml(s.date) + '</div>' : '') +
+          remarkBlock +
+        '</div>' +
+      '</div>';
+  }).join('');
+
+  return '' +
+    '<div class="card">' +
+      '<div class="card-header"><div class="card-title">Approval log</div></div>' +
+      rows +
+    '</div>';
+}
+
+
+// Renders the attachments card.
+// canManage = true → show the (disabled) upload placeholder.
+function renderAttachmentsBlock(detail, canManage) {
+  const attachments = detail.attachments || [];
+  const expected    = Number(detail.expectedAttachments) || 0;
+
+  let body;
+  if (attachments.length === 0) {
+    body = '<div class="text-muted">No attachments uploaded.</div>';
+  } else {
+    body = attachments.map(function (a) {
+      const label = a.description || a.fileLink || 'Attachment';
+      return '<div class="mb-sm">' +
+        '<a href="' + escapeHtml(a.fileLink) + '" target="_blank" rel="noopener">' +
+          escapeHtml(label) +
+        '</a>' +
+      '</div>';
+    }).join('');
+  }
+
+  let placeholder = '';
+  if (canManage) {
+    const missing = Math.max(0, expected - attachments.length);
+    const note = (detail.status === 'Syncing Files' && missing > 0)
+      ? 'Waiting on ' + missing + ' more file' + (missing === 1 ? '' : 's') + '. '
+      : '';
+    placeholder =
+      '<div class="mt-md">' +
+        '<button class="btn btn-secondary" disabled>Upload files</button> ' +
+        '<span class="text-tiny text-muted">' +
+          escapeHtml(note) + 'Upload UI ships in a later phase.' +
+        '</span>' +
+      '</div>';
+  }
+
+  return '' +
+    '<div class="card">' +
+      '<div class="card-header">' +
+        '<div class="card-title">Attachments</div>' +
+        '<div class="text-tiny text-muted">' +
+          attachments.length + ' uploaded' +
+          (expected ? ' / ' + expected + ' expected' : '') +
+        '</div>' +
+      '</div>' +
+      body + placeholder +
+    '</div>';
+}
+
+
+// ─── PAGE RENDERER ─────────────────────────────────────────
+async function renderRequestDetailPage(params) {
+  const id = params && params.id;
+  if (!id) {
+    return renderEmptyState({
+      title:   'Missing request ID',
+      message: 'No request was selected.',
+      emotion: 'default',
+    });
+  }
+
+  const detail = await callServer('getRequestDetail', id);
+  if (!detail) {
+    return renderEmptyState({
+      title:   'Request not found',
+      message: 'We could not find request ' + escapeHtml(id) + '.',
+      emotion: 'declined',
+    });
+  }
+
+  const isOwner       = state.user && detail.requestor && state.user.email === detail.requestor;
+  const canResubmit   = isOwner && detail.status === 'Returned to Requestor';
+  const showReturned  = detail.status === 'Returned to Requestor';
+
+  const returnedNotice = showReturned
+    ? '<div class="card">' +
+        '<div class="card-header"><div class="card-title">Returned for updates</div></div>' +
+        renderMiga('returned',
+          'An approver returned this request to you for changes. Review their remark in the approval log below, ' +
+          (canResubmit ? 'then click Resubmit to send it back through the workflow.' : 'and the requestor can update and resubmit.')) +
+      '</div>'
+    : '';
+
+  const resubmitBar = canResubmit
+    ? '<div class="form-actions">' +
+        '<button class="btn btn-primary" onclick="onResubmitClick(\'' + escapeHtml(id) + '\')">Resubmit request</button>' +
+      '</div>'
+    : '';
+
+  return `
+    <div class="page-header">
+      <div>
+        <div class="text-tiny text-muted">${escapeHtml(detail.controlNumber)}</div>
+        <div class="page-title">${escapeHtml(detail.projectTitle)}</div>
+        <div class="page-subtitle">${renderStatusBadge(detail.status)}</div>
+      </div>
+      <button class="btn btn-secondary" onclick="navigateTo('home')">← Back</button>
+    </div>
+
+    ${renderProgressSteps(detail)}
+    ${returnedNotice}
+    ${renderRequestSummaryCards(detail)}
+    ${renderAttachmentsBlock(detail, isOwner)}
+    ${renderApprovalLog(detail)}
+    ${resubmitBar}
+  `;
+}
+
+
+// ─── ACTIONS ───────────────────────────────────────────────
+async function onResubmitClick(requestId) {
+  const ok = confirm('Resubmit this request? It will be routed back to Approver 1 from the start.');
+  if (!ok) return;
+
+  try {
+    const result = await callServer('handleResubmit', requestId);
+    if (result && result.success) {
+      showToast('Request resubmitted.', 'success');
+      navigateTo('request', { id: requestId });
+    } else {
+      showToast((result && result.message) || 'Failed to resubmit.', 'error');
+    }
+  } catch (err) {
+    showToast((err && err.message) || 'Server error.', 'error');
+  }
+}
+</script>

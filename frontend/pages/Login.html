@@ -1,0 +1,34 @@
+<!-- Login.html -->
+<!-- ============================================================
+     Login / role-detection splash
+     Shown briefly while bootstrap() resolves getCurrentUser().
+     On failure (empty email returned, or RPC error) renders a
+     welcome-style fallback with a Try again button.
+     ============================================================ -->
+
+
+<script>
+async function renderLoginPage(params) {
+  // Error fallback — bootstrap sets window.__loginError before navigating here.
+  if (params && params.error) {
+    const errorMsg = window.__loginError ||
+      'We could not complete sign-in. Please reload and try again.';
+    const body =
+      '<div class="text-muted mb-md">' + escapeHtml(errorMsg) + '</div>' +
+      '<button class="btn btn-primary" onclick="location.reload()">Try again</button>';
+    return renderEmptyState({
+      title:   'Sign-in problem',
+      message: body,
+      emotion: 'declined',
+    });
+  }
+
+  // Happy-path splash — auto-advances when bootstrap finishes.
+  return '<div class="loading">' +
+    '<img class="miga-img" src="' + migaImageFor('welcome') + '" ' +
+         'alt="Miga" style="display:block;margin:0 auto 12px;">' +
+    '<div class="spinner"></div>' +
+    '<div>Welcome — preparing your workspace…</div>' +
+  '</div>';
+}
+</script>

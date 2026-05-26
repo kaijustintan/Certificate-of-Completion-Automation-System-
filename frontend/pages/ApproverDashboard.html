@@ -1,1 +1,80 @@
-<!-- placeholder -->
+<!-- ApproverDashboard.html -->
+<!-- ============================================================
+     Approver dashboard
+     Lists every request currently pending the active user's
+     approval. Clicking a row opens the full review page.
+     ============================================================ -->
+
+
+<script>
+async function renderApproverDashboardPage() {
+  const pending = await callServer('getPendingApprovals');
+
+  const listHtml = (pending.length === 0)
+    ? renderEmptyState({
+        title:   'All caught up',
+        message: 'Nothing is currently waiting for your approval.',
+        emotion: 'approved',
+      })
+    : renderApproverTable(pending);
+
+  return `
+    <div class="page-header">
+      <div>
+        <div class="page-title">Pending approvals</div>
+        <div class="page-subtitle">Requests routed to you for action.</div>
+      </div>
+      <button class="btn btn-secondary" onclick="navigateTo('dashboard')">My submitted requests</button>
+    </div>
+
+    ${renderMiga('pending',
+        pending.length === 0
+          ? 'Inbox zero! Nothing needs you right now.'
+          : 'You have ' + pending.length + ' request' + (pending.length === 1 ? '' : 's') + ' waiting on you. Click any row to review.')}
+
+    <div class="stat-grid">
+      <div class="stat-card">
+        <div class="stat-number blue">${pending.length}</div>
+        <div class="stat-label">Pending your approval</div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-header">
+        <div class="card-title">Awaiting your action</div>
+      </div>
+      ${listHtml}
+    </div>
+  `;
+}
+
+
+// ─── Local helpers ────────────────────────────────────────
+function renderApproverTable(pending) {
+  const rows = pending.map(function (r) {
+    const idAttr = escapeHtml(r.requestId);
+    return '' +
+      '<tr onclick="navigateTo(\'review\', {id: \'' + idAttr + '\'})">' +
+        '<td>' + escapeHtml(r.controlNumber) + '</td>' +
+        '<td>' + escapeHtml(r.projectTitle)  + '</td>' +
+        '<td>' + escapeHtml(r.requestor)     + '</td>' +
+        '<td>' + escapeHtml(r.group)         + '</td>' +
+        '<td>' + renderStatusBadge(r.status) + '</td>' +
+        '<td>' + escapeHtml(r.dateFiled)     + '</td>' +
+      '</tr>';
+  }).join('');
+
+  return '' +
+    '<table class="data-table">' +
+      '<thead><tr>' +
+        '<th>Control no.</th>' +
+        '<th>Project</th>' +
+        '<th>Requestor</th>' +
+        '<th>Group</th>' +
+        '<th>Status</th>' +
+        '<th>Filed</th>' +
+      '</tr></thead>' +
+      '<tbody>' + rows + '</tbody>' +
+    '</table>';
+}
+</script>

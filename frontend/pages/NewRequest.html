@@ -1,1 +1,259 @@
-<!-- placeholder -->
+<!-- NewRequest.html -->
+<!-- ============================================================
+     New request form
+     Loads the approver-group list on first render and caches it
+     on state. Client-side validates the 15 required fields,
+     then calls submitNewRequest().
+     ============================================================ -->
+
+
+<script>
+// Field name → friendly label, used in the validation toast.
+const NEW_REQUEST_LABELS = {
+  projectTitle:      'Project title',
+  group:             'Approver group',
+  accountablePerson: 'Accountable person',
+  department:        'Department',
+  location:          'Location',
+  pcName:            'PC name',
+  purchaseOrder:     'Purchase Order',
+  productType:       'Product type',
+  productName:       'Product name',
+  typeOfPurchase:    'Type of purchase',
+  typeOfLicense:     'Type of license',
+  contractStart:     'Contract start date',
+  contractEnd:       'Contract end date',
+  supplierName:      'Supplier name',
+  requestorRemark:   'Purpose / remark',
+};
+
+// The 15 required fields. Anything outside this list is optional.
+const NEW_REQUEST_REQUIRED = Object.keys(NEW_REQUEST_LABELS);
+
+
+async function renderNewRequestPage() {
+  // Cache the approver-group list — the form opens often, the list rarely changes.
+  if (!state.approverGroups) {
+    state.approverGroups = await callServer('getApproverGroups');
+  }
+
+  const groupOptions = (state.approverGroups || [])
+    .map(function (g) {
+      return '<option value="' + escapeHtml(g) + '">' + escapeHtml(g) + '</option>';
+    })
+    .join('');
+
+  return `
+    <div class="page-header">
+      <div>
+        <div class="page-title">New e-certificate request</div>
+        <div class="page-subtitle">Fields marked with <span class="required">*</span> are required.</div>
+      </div>
+      <button class="btn btn-secondary" onclick="navigateTo('home')">← Back</button>
+    </div>
+
+    <form id="new-request-form" autocomplete="off">
+
+      <div class="card">
+        <div class="form-section-title">Request information</div>
+
+        <div class="form-row">
+          <label class="form-label">Project title <span class="required">*</span></label>
+          <input type="text" class="form-input" name="projectTitle" required>
+        </div>
+
+        <div class="form-grid">
+          <div class="form-row">
+            <label class="form-label">Approver group <span class="required">*</span></label>
+            <select class="form-select" name="group" required>
+              <option value="">Select a group…</option>
+              ${groupOptions}
+            </select>
+          </div>
+          <div class="form-row">
+            <label class="form-label">Requestor designation</label>
+            <input type="text" class="form-input" name="requestorDesig" placeholder="e.g. Systems Analyst">
+          </div>
+        </div>
+
+        <div class="form-grid">
+          <div class="form-row">
+            <label class="form-label">Accountable person <span class="required">*</span></label>
+            <input type="text" class="form-input" name="accountablePerson" required>
+          </div>
+          <div class="form-row">
+            <label class="form-label">Department <span class="required">*</span></label>
+            <input type="text" class="form-input" name="department" required>
+          </div>
+        </div>
+
+        <div class="form-grid">
+          <div class="form-row">
+            <label class="form-label">Location <span class="required">*</span></label>
+            <input type="text" class="form-input" name="location" required>
+          </div>
+          <div class="form-row">
+            <label class="form-label">PC name <span class="required">*</span></label>
+            <input type="text" class="form-input" name="pcName" required>
+          </div>
+        </div>
+      </div>
+
+
+      <div class="card">
+        <div class="form-section-title">Reference numbers</div>
+        <div class="form-grid">
+          <div class="form-row">
+            <label class="form-label">PRISM</label>
+            <input type="text" class="form-input" name="prism" placeholder="Optional">
+          </div>
+          <div class="form-row">
+            <label class="form-label">Purchase Order <span class="required">*</span></label>
+            <input type="text" class="form-input" name="purchaseOrder" required>
+          </div>
+        </div>
+        <div class="form-grid">
+          <div class="form-row">
+            <label class="form-label">IHelp number</label>
+            <input type="text" class="form-input" name="ihelpNumber" placeholder="Optional">
+          </div>
+          <div class="form-row">
+            <label class="form-label">Supplier name <span class="required">*</span></label>
+            <input type="text" class="form-input" name="supplierName" required>
+          </div>
+        </div>
+      </div>
+
+
+      <div class="card">
+        <div class="form-section-title">Product</div>
+        <div class="form-grid">
+          <div class="form-row">
+            <label class="form-label">Product type <span class="required">*</span></label>
+            <input type="text" class="form-input" name="productType" placeholder="e.g. Software, Hardware" required>
+          </div>
+          <div class="form-row">
+            <label class="form-label">Product name <span class="required">*</span></label>
+            <input type="text" class="form-input" name="productName" required>
+          </div>
+        </div>
+        <div class="form-grid">
+          <div class="form-row">
+            <label class="form-label">Type of purchase <span class="required">*</span></label>
+            <input type="text" class="form-input" name="typeOfPurchase" placeholder="e.g. New, Renewal" required>
+          </div>
+          <div class="form-row">
+            <label class="form-label">Type of license <span class="required">*</span></label>
+            <input type="text" class="form-input" name="typeOfLicense" placeholder="e.g. 3-year Subscription" required>
+          </div>
+        </div>
+      </div>
+
+
+      <div class="card">
+        <div class="form-section-title">Contract</div>
+        <div class="form-grid">
+          <div class="form-row">
+            <label class="form-label">Contract start date <span class="required">*</span></label>
+            <input type="date" class="form-input" name="contractStart" required>
+          </div>
+          <div class="form-row">
+            <label class="form-label">Contract end date <span class="required">*</span></label>
+            <input type="date" class="form-input" name="contractEnd" required>
+          </div>
+        </div>
+      </div>
+
+
+      <div class="card">
+        <div class="form-section-title">Purpose &amp; attachments</div>
+        <div class="form-row">
+          <label class="form-label">Purpose / remark <span class="required">*</span></label>
+          <textarea class="form-textarea" name="requestorRemark" placeholder="State the purpose of this e-certificate request." required></textarea>
+        </div>
+        <div class="form-row">
+          <label class="form-label">Expected number of attachments</label>
+          <input type="number" class="form-input" name="expectedAttachments" min="0" value="0">
+          <div class="text-tiny text-muted mt-sm">If greater than zero, the request enters Syncing Files state until that many supporting documents are uploaded.</div>
+        </div>
+      </div>
+
+
+      <div class="form-actions">
+        <button type="button" class="btn btn-secondary" onclick="navigateTo('home')">Cancel</button>
+        <button type="submit" class="btn btn-primary">Submit request</button>
+      </div>
+    </form>
+  `;
+}
+
+
+// Called by the router after the form is in the DOM.
+function afterRender_new() {
+  const form = document.getElementById('new-request-form');
+  if (form) form.addEventListener('submit', onNewRequestSubmit);
+}
+
+
+// ─── SUBMIT FLOW ───────────────────────────────────────────
+async function onNewRequestSubmit(e) {
+  e.preventDefault();
+  const form = e.target;
+
+  const err = validateNewRequest(form);
+  if (err) {
+    showToast(err.message, 'error');
+    const el = form.elements[err.field];
+    if (el && typeof el.focus === 'function') el.focus();
+    return;
+  }
+
+  const data = formToObject(form);
+
+  const btn = form.querySelector('button[type="submit"]');
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = 'Submitting…';
+  }
+
+  try {
+    const result = await callServer('submitNewRequest', data);
+    if (result && result.success) {
+      showToast('Request submitted — ' + result.controlNumber, 'success');
+      navigateTo('request', { id: result.requestId });
+    } else {
+      showToast((result && result.message) || 'Failed to submit.', 'error');
+      if (btn) { btn.disabled = false; btn.textContent = 'Submit request'; }
+    }
+  } catch (err) {
+    showToast((err && err.message) || 'Server error.', 'error');
+    if (btn) { btn.disabled = false; btn.textContent = 'Submit request'; }
+  }
+}
+
+
+// Returns { field, message } or null.
+function validateNewRequest(form) {
+  for (let i = 0; i < NEW_REQUEST_REQUIRED.length; i++) {
+    const field = NEW_REQUEST_REQUIRED[i];
+    const el    = form.elements[field];
+    const value = el && el.value ? String(el.value).trim() : '';
+    if (!value) {
+      return {
+        field:   field,
+        message: 'Please fill in: ' + (NEW_REQUEST_LABELS[field] || field),
+      };
+    }
+  }
+  return null;
+}
+
+
+// Convert a <form> into a plain {field: value} object.
+function formToObject(form) {
+  const obj = {};
+  const data = new FormData(form);
+  data.forEach(function (v, k) { obj[k] = v; });
+  return obj;
+}
+</script>
