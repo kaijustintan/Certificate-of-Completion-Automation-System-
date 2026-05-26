@@ -163,7 +163,7 @@ function registerTrigger() {
   // Register the new trigger
   ScriptApp.newTrigger("onSheetChange")
     .forSpreadsheet(SpreadsheetApp.getActiveSpreadsheet())
-    .onChange()
+    .onEdit()
     .create();
 
   Logger.log("registerTrigger(): onSheetChange trigger registered successfully.");
