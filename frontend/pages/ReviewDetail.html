@@ -41,6 +41,10 @@ async function renderReviewDetailPage(params) {
 
   const actionBar = canAct ? renderActionBar() : '';
 
+  // If this approver previously approved (before a later return + resubmit),
+  // remind them — shown only when they're the current approver re-reviewing.
+  const prevApprovalNote = canAct ? renderPreviousApprovalNote(detail, userEmail) : '';
+
   return `
     <div class="page-header">
       <div>
@@ -52,12 +56,30 @@ async function renderReviewDetailPage(params) {
     </div>
 
     ${renderProgressSteps(detail)}
+    ${renderResubmitBanner(detail)}
+    ${prevApprovalNote}
     ${renderRequestSummaryCards(detail)}
     ${renderAttachmentsBlock(detail, false)}
-    ${renderApprovalLog(detail)}
+    ${renderApproversChain(detail, false)}
     ${lockedNotice}
     ${actionBar}
   `;
+}
+
+
+// Reminds the current approver if they already approved this request in an
+// earlier cycle (captured in Resubmit_History before resubmit cleared dates).
+// Returns '' if the active user isn't among the recorded previous approvals.
+function renderPreviousApprovalNote(detail, userEmail) {
+  const mine = (detail.previousApprovals || []).find(function (a) {
+    return a.email === userEmail;
+  });
+  if (!mine) return '';
+  return '' +
+    '<div class="resubmit-banner mt-sm">' +
+      '<strong>Note:</strong> You previously approved this request on ' +
+      escapeHtml(mine.date) + '. Please re-review in light of the return reason above.' +
+    '</div>';
 }
 
 
@@ -105,9 +127,17 @@ function renderActionBar() {
       '<div class="card-header"><div class="card-title">Your decision</div></div>' +
       renderMiga('pending', 'Approve to route this to the next signatory, decline to close it out, or return it to the requestor for changes.') +
       '<div class="form-actions">' +
-        '<button class="btn btn-warning action-btn" onclick="openReviewPanel(\'return-panel\')">Return to requestor</button>' +
-        '<button class="btn btn-danger action-btn"  onclick="openReviewPanel(\'decline-panel\')">Decline</button>' +
-        '<button class="btn btn-success action-btn" onclick="onApproveClick()">Approve</button>' +
+        '<div class="action-item">' +
+          '<button class="btn btn-warning action-btn" id="btn-return" onclick="openReviewPanel(\'return-panel\')">Return to requestor</button>' +
+          '<span class="text-tiny text-muted">Send back to requestor for revision</span>' +
+        '</div>' +
+        '<div class="action-item">' +
+          '<button class="btn btn-danger action-btn" id="btn-decline" onclick="openReviewPanel(\'decline-panel\')">Decline</button>' +
+          '<span class="text-tiny text-muted">Permanently reject this request</span>' +
+        '</div>' +
+        '<div class="action-item">' +
+          '<button class="btn btn-success action-btn" id="btn-approve" onclick="onApproveClick()">Approve</button>' +
+        '</div>' +
       '</div>' +
     '</div>' +
 
@@ -139,6 +169,16 @@ function openReviewPanel(panelId) {
   const el = document.getElementById(panelId);
   if (!el) return;
   el.classList.remove('hidden');
+
+  // Focus the approver on the single action they chose — hide the others.
+  if (panelId === 'decline-panel') {
+    setActionItemHidden('btn-approve', true);
+    setActionItemHidden('btn-return',  true);
+  } else if (panelId === 'return-panel') {
+    setActionItemHidden('btn-approve', true);
+    setActionItemHidden('btn-decline', true);
+  }
+
   const textarea = el.querySelector('textarea');
   if (textarea) textarea.focus();
 }
@@ -148,6 +188,19 @@ function closeReviewPanels() {
     const el = document.getElementById(id);
     if (el) el.classList.add('hidden');
   });
+  // Restore all top-level action buttons.
+  setActionItemHidden('btn-approve', false);
+  setActionItemHidden('btn-return',  false);
+  setActionItemHidden('btn-decline', false);
+}
+
+// Shows/hides a top-level action button by toggling its .action-item wrapper.
+// Restoring via display='' reverts to the CSS-defined flex layout.
+function setActionItemHidden(btnId, hidden) {
+  const btn = document.getElementById(btnId);
+  if (!btn) return;
+  const wrap = btn.closest('.action-item') || btn;
+  wrap.style.display = hidden ? 'none' : '';
 }
 
 // Enable/disable the submit button based on textarea content.

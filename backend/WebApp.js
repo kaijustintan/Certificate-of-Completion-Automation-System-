@@ -131,7 +131,7 @@ function getRequestDetail(requestId) {
   const rowNum = getRowNumberByRequestId(requestId);
   if (rowNum === -1) return null;
 
-  const row       = sheet.getRange(rowNum, 1, 1, 33).getValues()[0];
+  const row       = sheet.getRange(rowNum, 1, 1, 34).getValues()[0];
   const group     = row[CR.GROUP - 1];
   const approvers = getApprovers(group) || {};
 
@@ -177,6 +177,14 @@ function getRequestDetail(requestId) {
     app3Date:             formatDate(row[CR.APP3_DATE - 1]),
     resubmitCount:        row[CR.RESUBMIT_COUNT - 1] || 0,
     resubmitHistory:      row[CR.RESUBMIT_HISTORY - 1] || "",
+    previousApprovals:    (() => {
+      try {
+        const raw = row[CR.PREVIOUS_APPROVALS - 1];
+        return raw ? JSON.parse(raw) : [];
+      } catch (e) {
+        return [];
+      }
+    })(),
     approver1:            approvers.approver1 || "",
     approver2:            approvers.approver2 || "",
     approver3:            approvers.approver3 || "",
@@ -281,6 +289,8 @@ function handleReturn(requestId, remark) {
   // in the workflow where Step still reflects who actually returned.
   const rowData       = sheet.getRange(rowNum, 1, 1, 33).getValues()[0];
   const step          = rowData[CR.STEP - 1];
+  const group         = rowData[CR.GROUP - 1];
+  const approvers     = getApprovers(group) || {};
   const returnerEmail = Session.getActiveUser().getEmail();
   const approverLabel = `Approver ${step}`;
   const timestamp     = formatPHTime(new Date());
@@ -288,6 +298,21 @@ function handleReturn(requestId, remark) {
     `[PENDING] ${approverLabel} (${returnerEmail})\n` +
     `Return date: ${timestamp}\n` +
     `Reason: ${remark || "No reason provided."}`;
+
+  // Capture which approvers had already approved BEFORE resubmit() clears the
+  // AppN_Date columns. Stored as structured JSON in the dedicated AH column —
+  // keeps Resubmit_History (AG) as pure narrative.
+  const previousApprovals = [];
+  if (rowData[CR.APP1_DATE - 1] && approvers.approver1) {
+    previousApprovals.push({ step: 1, email: approvers.approver1, date: formatPHTime(new Date(rowData[CR.APP1_DATE - 1])) });
+  }
+  if (rowData[CR.APP2_DATE - 1] && approvers.approver2) {
+    previousApprovals.push({ step: 2, email: approvers.approver2, date: formatPHTime(new Date(rowData[CR.APP2_DATE - 1])) });
+  }
+  if (rowData[CR.APP3_DATE - 1] && approvers.approver3) {
+    previousApprovals.push({ step: 3, email: approvers.approver3, date: formatPHTime(new Date(rowData[CR.APP3_DATE - 1])) });
+  }
+  sheet.getRange(rowNum, CR.PREVIOUS_APPROVALS).setValue(JSON.stringify(previousApprovals));
 
   const existingHistory = String(rowData[CR.RESUBMIT_HISTORY - 1] || "").trim();
 

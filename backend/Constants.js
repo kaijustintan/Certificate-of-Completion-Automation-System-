@@ -52,6 +52,7 @@ const CR = {
   APP3_DATE:            31,  // AE
   RESUBMIT_COUNT:       32,  // AF
   RESUBMIT_HISTORY:     33,  // AG
+  PREVIOUS_APPROVALS:   34,  // AH — JSON array of approvers who had acted at time of last return
 };
 
 

@@ -5,7 +5,8 @@
        getConfiguredApproverSlots(detail)
        renderProgressSteps(detail)
        renderRequestSummaryCards(detail)
-       renderApprovalLog(detail)
+       renderApproversChain(detail)
+       renderResubmitBanner(detail)
        renderAttachmentsBlock(detail)
      ============================================================ -->
 
@@ -122,22 +123,60 @@ function renderRequestSummaryCards(detail) {
 }
 
 
-// Renders the approval log (which approvers acted and when).
-function renderApprovalLog(detail) {
+// Renders the unified "Approvers" chain — every configured approver in the
+// group with a status indicator. Replaces the old "Approval log" (which only
+// listed approvers who had acted). Shared with ReviewDetail.html.
+//
+// State precedence per slot:
+//   1. slot.date set                                  → Acted    ✓ navy
+//   2. status "Declined" & step === n                 → Declined ✕ red
+//   3. status "Returned to Requestor" & slot.remark   → Returned ↩ amber
+//   4. step === n & status includes "Pending"         → Current  ⏳ amber
+//   5. otherwise                                       → Awaiting ○ gray
+//
+// blurFutureEmails — when true (requestor view), an Awaiting approver's email
+// is hidden (shown as "—") until it's their turn; designation always shows.
+// Approvers (ReviewDetail) pass false and see the full chain.
+function renderApproversChain(detail, blurFutureEmails) {
   const slots = getConfiguredApproverSlots(detail);
   if (slots.length === 0) return '';
 
+  const status = detail.status || '';
+  const step   = Number(detail.step) || 0;
+
   const rows = slots.map(function (s) {
+    let icon, color, label, revealEmail = true;
+    if (s.date) {
+      icon = '✓'; color = 'var(--navy-900)';  label = escapeHtml(s.date);
+    } else if (status === 'Declined' && step === s.n) {
+      icon = '✕'; color = 'var(--red-text)';   label = 'Declined';
+    } else if (status === 'Returned to Requestor' && s.remark) {
+      icon = '↩'; color = 'var(--amber-text)'; label = 'Returned for revision';
+    } else if (step === s.n && status.indexOf('Pending') !== -1) {
+      icon = '⏳'; color = 'var(--amber-text)'; label = 'Pending review';
+    } else {
+      icon = '○'; color = 'var(--gray-400)';   label = 'Awaiting';
+      if (blurFutureEmails) revealEmail = false;
+    }
+
     const remarkBlock = s.remark
       ? '<div class="text-small text-muted mt-sm">Remark: ' + escapeHtml(s.remark) + '</div>'
       : '';
+
+    const emailCell = revealEmail
+      ? escapeHtml(s.approver)
+      : '<span class="text-muted">—</span>';
+
     return '' +
       '<div class="detail-row">' +
-        '<div class="detail-key">Approver ' + s.n + '</div>' +
+        '<div class="detail-key">' +
+          '<span style="color: ' + color + '; margin-right: 6px; font-weight: 600;">' + icon + '</span>' +
+          'Approver ' + s.n +
+        '</div>' +
         '<div class="detail-value">' +
-          escapeHtml(s.approver) +
+          emailCell +
           (s.designation ? '<div class="text-tiny text-muted">' + escapeHtml(s.designation) + '</div>' : '') +
-          (s.date ? '<div class="text-small mt-sm">' + escapeHtml(s.date) + '</div>' : '') +
+          '<div class="text-small mt-sm">' + label + '</div>' +
           remarkBlock +
         '</div>' +
       '</div>';
@@ -145,9 +184,81 @@ function renderApprovalLog(detail) {
 
   return '' +
     '<div class="card">' +
-      '<div class="card-header"><div class="card-title">Approval log</div></div>' +
+      '<div class="card-header"><div class="card-title">Approvers</div></div>' +
       rows +
     '</div>';
+}
+
+
+// Renders the resubmit banner. Shared with ReviewDetail.html. Split into:
+//   Block A — the CURRENT active return ([PENDING] entry): amber alert, always
+//             expanded, no toggle. This is what the requestor must act on now.
+//   Block B — PREVIOUS confirmed resubmit cycles (Resubmit #N entries): lighter
+//             styling, collapsible.
+// Parses detail.resubmitHistory rather than relying on resubmitCount, so the
+// banner also shows on the first return (count still 0, but a [PENDING] exists).
+function renderResubmitBanner(detail) {
+  const history = String(detail.resubmitHistory || '').trim();
+  if (!history) return '';
+
+  const entries = history.split('\n\n---\n\n')
+    .map(function (e) { return e.trim(); })
+    .filter(Boolean);
+
+  const pending   = entries.filter(function (e) { return e.indexOf('[PENDING]') === 0; });
+  const confirmed = entries.filter(function (e) { return e.indexOf('Resubmit #') === 0; });
+
+  if (!pending.length && !confirmed.length) return '';
+
+  // ── Block A — current active return ──
+  let blockA = '';
+  if (pending.length) {
+    const lines = pending[pending.length - 1]   // most recent pending entry
+      .replace(/^\[PENDING\]\s*/, '')           // drop the internal marker
+      .split('\n');
+    // line 0: "Approver 1 (email)" → "Returned by: Approver 1 — email"
+    lines[0] = 'Returned by: ' + lines[0].replace(/\(([^)]+)\)/, '— $1');
+    const body = lines.map(escapeHtml).join('<br>');
+    blockA = '' +
+      '<div class="resubmit-banner">' +
+        '<div class="mb-sm"><strong>⚠ This request has been returned for revision.</strong></div>' +
+        '<div class="text-small">' + body + '</div>' +
+      '</div>';
+  }
+
+  // ── Block B — previous confirmed resubmit history ──
+  let blockB = '';
+  if (confirmed.length) {
+    const n = confirmed.length;
+    const divider = '<div style="border-top: 1px solid var(--gray-200); margin: 8px 0;"></div>';
+    const body = confirmed.map(function (e) {
+      return '<div style="white-space: pre-wrap;">' + escapeHtml(e) + '</div>';
+    }).join(divider);
+    blockB = '' +
+      '<div class="mt-sm">' +
+        '<a href="javascript:void(0)" onclick="toggleResubmitHistory()" ' +
+           'style="color: var(--gray-600); cursor: pointer; font-size: 12px;">' +
+          'Previous return history (' + n + ' cycle' + (n === 1 ? '' : 's') + ') ' +
+          '<span id="resubmit-arrow">▾</span>' +
+        '</a>' +
+        '<div id="resubmit-history" class="hidden text-small mt-sm" ' +
+             'style="border-left: 2px solid var(--gray-200); padding-left: 12px;">' +
+          body +
+        '</div>' +
+      '</div>';
+  }
+
+  return blockA + blockB;
+}
+
+
+// Toggles the previous-return-history block (Block B) under the banner.
+function toggleResubmitHistory() {
+  const block = document.getElementById('resubmit-history');
+  const arrow = document.getElementById('resubmit-arrow');
+  if (!block) return;
+  const nowHidden = block.classList.toggle('hidden');
+  if (arrow) arrow.textContent = nowHidden ? '▾' : '▴';
 }
 
 
@@ -222,16 +333,6 @@ async function renderRequestDetailPage(params) {
 
   const isOwner       = state.user && detail.requestor && state.user.email === detail.requestor;
   const canResubmit   = isOwner && detail.status === 'Returned to Requestor';
-  const showReturned  = detail.status === 'Returned to Requestor';
-
-  const returnedNotice = showReturned
-    ? '<div class="card">' +
-        '<div class="card-header"><div class="card-title">Returned for updates</div></div>' +
-        renderMiga('returned',
-          'An approver returned this request to you for changes. Review their remark in the approval log below, ' +
-          (canResubmit ? 'then click Resubmit to send it back through the workflow.' : 'and the requestor can update and resubmit.')) +
-      '</div>'
-    : '';
 
   const resubmitBar = canResubmit
     ? '<div class="form-actions">' +
@@ -250,10 +351,10 @@ async function renderRequestDetailPage(params) {
     </div>
 
     ${renderProgressSteps(detail)}
-    ${returnedNotice}
+    ${renderResubmitBanner(detail)}
     ${renderRequestSummaryCards(detail)}
     ${renderAttachmentsBlock(detail, isOwner)}
-    ${renderApprovalLog(detail)}
+    ${renderApproversChain(detail, true)}
     ${resubmitBar}
   `;
 }

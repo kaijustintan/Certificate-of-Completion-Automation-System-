@@ -159,7 +159,7 @@ function resubmit(requestId) {
     return { success: false, message: "Request not found." };
   }
 
-  const rowData        = sheet.getRange(rowNum, 1, 1, 33).getValues()[0];
+  const rowData        = sheet.getRange(rowNum, 1, 1, 34).getValues()[0];
   const currentCount   = parseInt(rowData[CR.RESUBMIT_COUNT - 1]) || 0;
   const currentHistory = String(rowData[CR.RESUBMIT_HISTORY - 1] || "").trim();
   const newCount       = currentCount + 1;
@@ -189,6 +189,8 @@ function resubmit(requestId) {
   sheet.getRange(rowNum, CR.APP1_REMARK).setValue("");
   sheet.getRange(rowNum, CR.APP2_REMARK).setValue("");
   sheet.getRange(rowNum, CR.APP3_REMARK).setValue("");
+  // Previous approvals are only relevant during the "returned" phase.
+  sheet.getRange(rowNum, CR.PREVIOUS_APPROVALS).setValue("");
 
   Logger.log(`resubmit(): ${requestId} resubmitted (count: ${newCount}) → ${newStatus}`);
   return { success: true, newStatus };
