@@ -131,7 +131,7 @@ function getRequestDetail(requestId) {
   const rowNum = getRowNumberByRequestId(requestId);
   if (rowNum === -1) return null;
 
-  const row       = sheet.getRange(rowNum, 1, 1, 31).getValues()[0];
+  const row       = sheet.getRange(rowNum, 1, 1, 33).getValues()[0];
   const group     = row[CR.GROUP - 1];
   const approvers = getApprovers(group) || {};
 
@@ -139,16 +139,21 @@ function getRequestDetail(requestId) {
     ? Utilities.formatDate(new Date(val), "Asia/Manila", "MMM dd, yyyy hh:mm a")
     : "";
 
+  const formatDateOnly = (val) => val
+    ? Utilities.formatDate(new Date(val), "Asia/Manila", "MMM dd, yyyy")
+    : "";
+
   return {
     requestId:            row[CR.REQUEST_ID - 1],
     controlNumber:        row[CR.CONTROL_NUMBER - 1],
     status:               row[CR.STATUS - 1],
     step:                 row[CR.STEP - 1],
-    dateFiled:            formatDate(row[CR.DATE_OF_FILING - 1]),
+    dateFiled:            formatDateOnly(row[CR.DATE_OF_FILING - 1]),
     projectTitle:         row[CR.PROJECT_TITLE - 1],
     requestor:            row[CR.REQUESTOR - 1],
     requestorDesig:       row[CR.REQUESTOR_DESIG - 1],
     group:                group,
+    accountablePerson:    row[CR.ACCOUNTABLE_PERSON - 1],
     department:           row[CR.DEPARTMENT - 1],
     location:             row[CR.LOCATION - 1],
     pcName:               row[CR.PC_NAME - 1],
@@ -159,8 +164,8 @@ function getRequestDetail(requestId) {
     productName:          row[CR.PRODUCT_NAME - 1],
     typeOfPurchase:       row[CR.TYPE_OF_PURCHASE - 1],
     typeOfLicense:        row[CR.TYPE_OF_LICENSE - 1],
-    contractStart:        formatDate(row[CR.CONTRACT_START - 1]),
-    contractEnd:          formatDate(row[CR.CONTRACT_END - 1]),
+    contractStart:        formatDateOnly(row[CR.CONTRACT_START - 1]),
+    contractEnd:          formatDateOnly(row[CR.CONTRACT_END - 1]),
     supplierName:         row[CR.SUPPLIER_NAME - 1],
     requestorRemark:      row[CR.REQUESTOR_REMARK - 1],
     app1Remark:           row[CR.APP1_REMARK - 1],
@@ -170,6 +175,8 @@ function getRequestDetail(requestId) {
     app1Date:             formatDate(row[CR.APP1_DATE - 1]),
     app2Date:             formatDate(row[CR.APP2_DATE - 1]),
     app3Date:             formatDate(row[CR.APP3_DATE - 1]),
+    resubmitCount:        row[CR.RESUBMIT_COUNT - 1] || 0,
+    resubmitHistory:      row[CR.RESUBMIT_HISTORY - 1] || "",
     approver1:            approvers.approver1 || "",
     approver2:            approvers.approver2 || "",
     approver3:            approvers.approver3 || "",
@@ -201,7 +208,7 @@ function submitNewRequest(formData) {
   const expected  = parseInt(formData.expectedAttachments) || 0;
   const status    = expected > 0 ? STATUS.SYNCING : STATUS.PENDING_1;
 
-  const newRow                          = new Array(31).fill("");
+  const newRow                          = new Array(33).fill("");
   newRow[CR.REQUEST_ID - 1]            = requestId;
   newRow[CR.CONTROL_NUMBER - 1]        = controlNo;
   newRow[CR.STATUS - 1]                = status;
@@ -227,6 +234,7 @@ function submitNewRequest(formData) {
   newRow[CR.SUPPLIER_NAME - 1]         = formData.supplierName;
   newRow[CR.REQUESTOR_REMARK - 1]      = formData.requestorRemark;
   newRow[CR.EXPECTED_ATTACHMENTS - 1]  = expected;
+  newRow[CR.RESUBMIT_COUNT - 1]        = 0;
 
   sheet.appendRow(newRow);
 
@@ -263,6 +271,45 @@ function handleDecline(requestId, remark) {
 }
 
 function handleReturn(requestId, remark) {
+  const sheet  = getSheet(SHEET_NAMES.CERTIFICATE_REQUESTS);
+  const rowNum = getRowNumberByRequestId(requestId);
+  if (rowNum === -1) return { success: false, message: "Request not found." };
+
+  // Capture returner identity + reason BEFORE state is mutated.
+  // Stored as a [PENDING] entry that resubmit() later promotes to a
+  // numbered "Resubmit #N" entry. This is the only reliable point
+  // in the workflow where Step still reflects who actually returned.
+  const rowData       = sheet.getRange(rowNum, 1, 1, 33).getValues()[0];
+  const step          = rowData[CR.STEP - 1];
+  const returnerEmail = Session.getActiveUser().getEmail();
+  const approverLabel = `Approver ${step}`;
+  const timestamp     = formatPHTime(new Date());
+  const pendingEntry  =
+    `[PENDING] ${approverLabel} (${returnerEmail})\n` +
+    `Return date: ${timestamp}\n` +
+    `Reason: ${remark || "No reason provided."}`;
+
+  const existingHistory = String(rowData[CR.RESUBMIT_HISTORY - 1] || "").trim();
+
+  // A request can only have one active [PENDING] entry at a time.
+  // If one already exists, replace it — do not stack a second one.
+  let newHistory;
+  if (existingHistory.includes("[PENDING]")) {
+    const pendingIndex    = existingHistory.indexOf("[PENDING]");
+    const beforePending   = existingHistory
+      .substring(0, pendingIndex)
+      .replace(/\n\n---\n\n$/, "")
+      .trim();
+    newHistory = beforePending
+      ? beforePending + "\n\n---\n\n" + pendingEntry
+      : pendingEntry;
+  } else {
+    newHistory = existingHistory
+      ? existingHistory + "\n\n---\n\n" + pendingEntry
+      : pendingEntry;
+  }
+  sheet.getRange(rowNum, CR.RESUBMIT_HISTORY).setValue(newHistory);
+
   const result = returnRequest(requestId, remark);
   if (result.success) {
     sendReturnToRequestor(requestId);

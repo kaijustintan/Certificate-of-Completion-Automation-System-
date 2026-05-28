@@ -105,9 +105,9 @@ function renderActionBar() {
       '<div class="card-header"><div class="card-title">Your decision</div></div>' +
       renderMiga('pending', 'Approve to route this to the next signatory, decline to close it out, or return it to the requestor for changes.') +
       '<div class="form-actions">' +
-        '<button class="btn btn-warning" onclick="openReviewPanel(\'return-panel\')">Return to requestor</button>' +
-        '<button class="btn btn-danger"  onclick="openReviewPanel(\'decline-panel\')">Decline</button>' +
-        '<button class="btn btn-success" onclick="onApproveClick()">Approve</button>' +
+        '<button class="btn btn-warning action-btn" onclick="openReviewPanel(\'return-panel\')">Return to requestor</button>' +
+        '<button class="btn btn-danger action-btn"  onclick="openReviewPanel(\'decline-panel\')">Decline</button>' +
+        '<button class="btn btn-success action-btn" onclick="onApproveClick()">Approve</button>' +
       '</div>' +
     '</div>' +
 
@@ -118,7 +118,7 @@ function renderActionBar() {
       '<textarea class="form-textarea" id="decline-remark" placeholder="Reason for decline (required)…" oninput="syncPanelButton(\'decline\')"></textarea>' +
       '<div class="form-actions">' +
         '<button class="btn btn-secondary" onclick="closeReviewPanels()">Cancel</button>' +
-        '<button class="btn btn-danger" id="decline-submit" disabled onclick="onDeclineSubmit()">Confirm decline</button>' +
+        '<button class="btn btn-danger action-btn" id="decline-submit" disabled onclick="onDeclineSubmit()">Confirm decline</button>' +
       '</div>' +
     '</div>' +
 
@@ -129,7 +129,7 @@ function renderActionBar() {
       '<textarea class="form-textarea" id="return-remark" placeholder="What needs to change (required)…" oninput="syncPanelButton(\'return\')"></textarea>' +
       '<div class="form-actions">' +
         '<button class="btn btn-secondary" onclick="closeReviewPanels()">Cancel</button>' +
-        '<button class="btn btn-warning" id="return-submit" disabled onclick="onReturnSubmit()">Confirm return</button>' +
+        '<button class="btn btn-warning action-btn" id="return-submit" disabled onclick="onReturnSubmit()">Confirm return</button>' +
       '</div>' +
     '</div>';
 }
@@ -189,7 +189,7 @@ async function onReturnSubmit() {
 // Shared action runner — disables the action bar, calls the server,
 // shows a toast, and routes back to the pending list.
 async function runReviewAction(serverFn, args, successMessage) {
-  setActionBarBusy(true);
+  lockActionButtons();
   try {
     const result = await callServer.apply(null, [serverFn].concat(args));
     if (result && result.success) {
@@ -197,23 +197,32 @@ async function runReviewAction(serverFn, args, successMessage) {
       navigateTo('approverDashboard');
     } else {
       showToast((result && result.message) || 'Action failed.', 'error');
-      setActionBarBusy(false);
+      unlockActionButtons();
     }
   } catch (err) {
     showToast((err && err.message) || 'Server error.', 'error');
-    setActionBarBusy(false);
+    unlockActionButtons();
   }
 }
 
-function setActionBarBusy(isBusy) {
-  ['decline-submit', 'return-submit'].forEach(function (id) {
-    const el = document.getElementById(id);
-    if (el) el.disabled = isBusy || !document.getElementById(id.replace('-submit', '-remark')) || !document.getElementById(id.replace('-submit', '-remark')).value.trim();
+// Locks every action button (top bar + panel confirms) the instant a
+// server action starts, so a rapid double-click can't fire it twice
+// before the UI updates.
+function lockActionButtons() {
+  document.querySelectorAll('.action-btn').forEach(function (btn) {
+    btn.disabled      = true;
+    btn.style.opacity = '0.5';
+    btn.style.cursor  = 'not-allowed';
   });
-  document.querySelectorAll('.form-actions .btn').forEach(function (b) {
-    // Skip the cancel buttons inside open panels.
-    if (b.classList.contains('btn-secondary')) return;
-    b.disabled = isBusy;
+}
+
+// Re-enables the action buttons after a FAILED action so the approver
+// can retry. On success the page navigates away, so no unlock is needed.
+function unlockActionButtons() {
+  document.querySelectorAll('.action-btn').forEach(function (btn) {
+    btn.disabled      = false;
+    btn.style.opacity = '';
+    btn.style.cursor  = '';
   });
 }
 </script>

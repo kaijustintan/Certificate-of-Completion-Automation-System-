@@ -166,15 +166,10 @@ async function renderNewRequestPage() {
 
 
       <div class="card">
-        <div class="form-section-title">Purpose &amp; attachments</div>
+        <div class="form-section-title">Purpose</div>
         <div class="form-row">
           <label class="form-label">Purpose / remark <span class="required">*</span></label>
           <textarea class="form-textarea" name="requestorRemark" placeholder="State the purpose of this e-certificate request." required></textarea>
-        </div>
-        <div class="form-row">
-          <label class="form-label">Expected number of attachments</label>
-          <input type="number" class="form-input" name="expectedAttachments" min="0" value="0">
-          <div class="text-tiny text-muted mt-sm">If greater than zero, the request enters Syncing Files state until that many supporting documents are uploaded.</div>
         </div>
       </div>
 
@@ -209,6 +204,9 @@ async function onNewRequestSubmit(e) {
   }
 
   const data = formToObject(form);
+  // Expected_Attachments is no longer user-editable — Phase 8 will repurpose
+  // this column. Hardcode to 0 so submitNewRequest skips Syncing Files.
+  data.expectedAttachments = 0;
 
   const btn = form.querySelector('button[type="submit"]');
   if (btn) {

@@ -159,11 +159,25 @@ function resubmit(requestId) {
     return { success: false, message: "Request not found." };
   }
 
-  const rowData            = sheet.getRange(rowNum, 1, 1, 31).getValues()[0];
-  const expectedAttachments = rowData[CR.EXPECTED_ATTACHMENTS - 1];
+  const rowData        = sheet.getRange(rowNum, 1, 1, 33).getValues()[0];
+  const currentCount   = parseInt(rowData[CR.RESUBMIT_COUNT - 1]) || 0;
+  const currentHistory = String(rowData[CR.RESUBMIT_HISTORY - 1] || "").trim();
+  const newCount       = currentCount + 1;
+
+  // handleReturn() wrote a "[PENDING] …" entry at return time, while
+  // Step and the active user still pointed at the actual returner.
+  // Promote that placeholder to a numbered Resubmit entry now.
+  const confirmedHistory = currentHistory.replace(
+    "[PENDING]",
+    `Resubmit #${newCount} —`
+  );
+
+  sheet.getRange(rowNum, CR.RESUBMIT_COUNT).setValue(newCount);
+  sheet.getRange(rowNum, CR.RESUBMIT_HISTORY).setValue(confirmedHistory);
 
   // If attachments are required, go back to Syncing Files first.
   // Otherwise go straight to Pending Approver 1.
+  const expectedAttachments = rowData[CR.EXPECTED_ATTACHMENTS - 1] || 0;
   const newStatus = expectedAttachments > 0 ? STATUS.SYNCING : STATUS.PENDING_1;
 
   // Clear all approval history — same as AppSheet's Resubmit action
@@ -174,7 +188,8 @@ function resubmit(requestId) {
   sheet.getRange(rowNum, CR.APP3_DATE).setValue("");
   sheet.getRange(rowNum, CR.APP1_REMARK).setValue("");
   sheet.getRange(rowNum, CR.APP2_REMARK).setValue("");
+  sheet.getRange(rowNum, CR.APP3_REMARK).setValue("");
 
-  Logger.log(`resubmit(): ${requestId} resubmitted → ${newStatus}`);
+  Logger.log(`resubmit(): ${requestId} resubmitted (count: ${newCount}) → ${newStatus}`);
   return { success: true, newStatus };
 }

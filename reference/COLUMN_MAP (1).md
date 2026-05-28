@@ -90,7 +90,7 @@ function getApprovers(groupName) {
 
 ## Sheet 2: `Certificate_Requests`
 
-**Total columns:** 31  
+**Total columns:** 33  
 **Total data rows:** 0 (no requests submitted yet)  
 **Sheet tab name (exact):** `Certificate_Requests`
 
@@ -127,6 +127,8 @@ function getApprovers(groupName) {
 | AC | 29 | `App1_Date` | DateTime | – | Timestamp of Approver 1's action. Set by Approve action. |
 | AD | 30 | `App2_Date` | DateTime | – | Timestamp of Approver 2's action. |
 | AE | 31 | `App3_Date` | DateTime | – | Timestamp of Approver 3's action. |
+| AF | 32 | `Resubmit_Count` | Number | – | Number of times the requestor has resubmitted. Default 0. Incremented by Resubmit action. |
+| AG | 33 | `Resubmit_History` | LongText | – | Append-only audit log of each resubmit (timestamp, returning approver, their remark). Entries separated by `\n\n---\n\n`. |
 
 ### Status values (all possible states for Col C)
 
@@ -176,6 +178,8 @@ const CR = {
   APP1_DATE:           29,  // AC
   APP2_DATE:           30,  // AD
   APP3_DATE:           31,  // AE
+  RESUBMIT_COUNT:      32,  // AF
+  RESUBMIT_HISTORY:    33,  // AG
 };
 ```
 

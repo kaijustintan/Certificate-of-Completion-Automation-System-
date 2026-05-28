@@ -50,6 +50,8 @@ const CR = {
   APP1_DATE:            29,  // AC
   APP2_DATE:            30,  // AD
   APP3_DATE:            31,  // AE
+  RESUBMIT_COUNT:       32,  // AF
+  RESUBMIT_HISTORY:     33,  // AG
 };
 
 
