@@ -60,6 +60,53 @@ function detectRole(email) {
 
 
 // ============================================================
+// AUTHORIZATION HELPERS
+// Frontend route guards (Cat 2) control visibility, not authority.
+// Any signed-in user can call a google.script.run function directly
+// from the browser console. Every sensitive callable re-verifies the
+// caller server-side using Session.getActiveUser() — never an email
+// passed from the client.
+// ============================================================
+
+// Normalize an email for safe comparison (trim + lowercase).
+// Guards against Google account casing differences.
+function normalizeEmail(email) {
+  return String(email || "").trim().toLowerCase();
+}
+
+// True only if both emails are non-blank and refer to the same account.
+function sameEmail(a, b) {
+  const na = normalizeEmail(a);
+  return na !== "" && na === normalizeEmail(b);
+}
+
+// Read a request's full 34-column row by Request ID.
+// Returns the row array (0-indexed — use CR.* - 1) or null if not found.
+function getRequestRowData(requestId) {
+  const sheet  = getSheet(SHEET_NAMES.CERTIFICATE_REQUESTS);
+  const rowNum = getRowNumberByRequestId(requestId);
+  if (rowNum === -1) return null;
+  return sheet.getRange(rowNum, 1, 1, 34).getValues()[0];
+}
+
+// True if the caller is the approver who should act on this request
+// right now (its current Step/Group).
+function isCurrentApprover(row, callerEmail) {
+  return sameEmail(getCurrentApprover(row[CR.STEP - 1], row[CR.GROUP - 1]), callerEmail);
+}
+
+// True if the caller occupies any of the 3 approver slots for this
+// request's group — used to allow approvers to view a request detail.
+function isChainApprover(row, callerEmail) {
+  const approvers = getApprovers(row[CR.GROUP - 1]);
+  if (!approvers) return false;
+  return sameEmail(approvers.approver1, callerEmail)
+      || sameEmail(approvers.approver2, callerEmail)
+      || sameEmail(approvers.approver3, callerEmail);
+}
+
+
+// ============================================================
 // SERVER-SIDE DATA FUNCTIONS
 // Called from the HTML via google.script.run
 // These are the bridge between the frontend and the Sheet
@@ -125,6 +172,40 @@ function getPendingApprovals() {
 }
 
 
+// Returns all requests the current user has already acted on (approved/declined/returned).
+// Includes a request if the caller occupies any approver slot for its group AND the
+// matching AppN_Date is non-null — regardless of the request's current status.
+// Returns the same DTO shape as getPendingApprovals() so the frontend renders identically.
+function getMyActionedRequests() {
+  const email = Session.getActiveUser().getEmail();
+  const rows  = getDataRows(SHEET_NAMES.CERTIFICATE_REQUESTS);
+
+  return rows
+    .filter(function (row) {
+      const approvers = getApprovers(row[CR.GROUP - 1]);
+      if (!approvers) return false;
+      if (sameEmail(approvers.approver1, email) && row[CR.APP1_DATE - 1]) return true;
+      if (sameEmail(approvers.approver2, email) && row[CR.APP2_DATE - 1]) return true;
+      if (sameEmail(approvers.approver3, email) && row[CR.APP3_DATE - 1]) return true;
+      return false;
+    })
+    .map(function (row) {
+      return {
+        requestId:     row[CR.REQUEST_ID - 1],
+        controlNumber: row[CR.CONTROL_NUMBER - 1],
+        projectTitle:  row[CR.PROJECT_TITLE - 1],
+        requestor:     row[CR.REQUESTOR - 1],
+        group:         row[CR.GROUP - 1],
+        status:        row[CR.STATUS - 1],
+        step:          row[CR.STEP - 1],
+        dateFiled:     row[CR.DATE_OF_FILING - 1]
+          ? Utilities.formatDate(new Date(row[CR.DATE_OF_FILING - 1]), "Asia/Manila", "MMM dd, yyyy")
+          : "",
+      };
+    });
+}
+
+
 // Returns full detail of one request by ID
 function getRequestDetail(requestId) {
   const sheet  = getSheet(SHEET_NAMES.CERTIFICATE_REQUESTS);
@@ -134,6 +215,12 @@ function getRequestDetail(requestId) {
   const row       = sheet.getRange(rowNum, 1, 1, 34).getValues()[0];
   const group     = row[CR.GROUP - 1];
   const approvers = getApprovers(group) || {};
+
+  // Only the requestor or an approver in this request's chain may view it.
+  const caller = Session.getActiveUser().getEmail();
+  if (!sameEmail(row[CR.REQUESTOR - 1], caller) && !isChainApprover(row, caller)) {
+    return null;
+  }
 
   const formatDate = (val) => val
     ? Utilities.formatDate(new Date(val), "Asia/Manila", "MMM dd, yyyy hh:mm a")
@@ -257,6 +344,11 @@ function submitNewRequest(formData) {
 
 // Action handlers — called from the approver detail page
 function handleApprove(requestId) {
+  const caller = Session.getActiveUser().getEmail();
+  const row    = getRequestRowData(requestId);
+  if (!row) return { success: false, error: "Request not found." };
+  if (!isCurrentApprover(row, caller)) return { success: false, error: "Unauthorized" };
+
   const result = approve(requestId);
   if (result.success) {
     if (result.newStatus === STATUS.APPROVED) {
@@ -270,6 +362,11 @@ function handleApprove(requestId) {
 }
 
 function handleDecline(requestId, remark) {
+  const caller = Session.getActiveUser().getEmail();
+  const row    = getRequestRowData(requestId);
+  if (!row) return { success: false, error: "Request not found." };
+  if (!isCurrentApprover(row, caller)) return { success: false, error: "Unauthorized" };
+
   const result = decline(requestId, remark);
   if (result.success) {
     sendDeclineToApprover(requestId);
@@ -292,6 +389,13 @@ function handleReturn(requestId, remark) {
   const group         = rowData[CR.GROUP - 1];
   const approvers     = getApprovers(group) || {};
   const returnerEmail = Session.getActiveUser().getEmail();
+
+  // Only the current approver may return this request. Checked before any
+  // write so an unauthorized caller cannot mutate history or AH.
+  if (!sameEmail(getCurrentApprover(step, group), returnerEmail)) {
+    return { success: false, error: "Unauthorized" };
+  }
+
   const approverLabel = `Approver ${step}`;
   const timestamp     = formatPHTime(new Date());
   const pendingEntry  =
@@ -344,6 +448,14 @@ function handleReturn(requestId, remark) {
 }
 
 function handleResubmit(requestId) {
+  const caller = Session.getActiveUser().getEmail();
+  const row    = getRequestRowData(requestId);
+  if (!row) return { success: false, error: "Request not found." };
+  // Only the requestor may resubmit, and only a returned request can be resubmitted.
+  if (!sameEmail(row[CR.REQUESTOR - 1], caller) || row[CR.STATUS - 1] !== STATUS.RETURNED) {
+    return { success: false, error: "Unauthorized" };
+  }
+
   return resubmit(requestId);
 }
 

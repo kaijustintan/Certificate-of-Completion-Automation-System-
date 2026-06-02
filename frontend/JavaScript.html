@@ -101,6 +101,22 @@ function emotionFor(status) {
 
 
 // ============================================================
+// SORT HELPER
+// Used by both dashboards. Never mutates the source array.
+// dateFiled format: "MMM dd, yyyy" (e.g. "Jun 02, 2025") —
+// parseable by new Date() in modern browsers.
+// ============================================================
+function sortRequests(requests, sortKey) {
+  const arr = requests.slice();
+  if (sortKey === 'newest')  return arr.sort(function (a, b) { return new Date(b.dateFiled) - new Date(a.dateFiled); });
+  if (sortKey === 'oldest')  return arr.sort(function (a, b) { return new Date(a.dateFiled) - new Date(b.dateFiled); });
+  if (sortKey === 'project') return arr.sort(function (a, b) { return String(a.projectTitle).localeCompare(String(b.projectTitle)); });
+  if (sortKey === 'group')   return arr.sort(function (a, b) { return String(a.group).localeCompare(String(b.group)); });
+  return arr;
+}
+
+
+// ============================================================
 // ROUTING
 // Hash format:
 //   #dashboard
@@ -193,6 +209,9 @@ async function navigateTo(page, params) {
       console.error(hookName + ' error:', err);
     }
   }
+
+  // Keep the active nav link in sync with wherever we just landed.
+  updateNavActiveLink();
 }
 
 
@@ -222,6 +241,33 @@ function refreshNavbar() {
 
   const brand = document.querySelector('.navbar-brand');
   if (brand) brand.onclick = function () { navigateTo('home'); };
+
+  const linksEl = document.getElementById('navbar-links');
+  if (linksEl) {
+    let html = '<span class="navbar-link" data-page="approverDashboard" onclick="navigateTo(\'approverDashboard\')">My Approvals</span>';
+    if (state.user.role === 'approver') {
+      html += '<span class="navbar-link" data-page="dashboard" onclick="navigateTo(\'dashboard\')">My Requests</span>';
+    } else {
+      html = '<span class="navbar-link" data-page="dashboard" onclick="navigateTo(\'dashboard\')">My Requests</span>';
+    }
+    linksEl.innerHTML = html;
+  }
+
+  updateNavActiveLink();
+}
+
+// Syncs the .active class on navbar links to the current page.
+// Called after every navigateTo() so the highlight always reflects
+// where the user is.
+function updateNavActiveLink() {
+  const links = document.querySelectorAll('.navbar-link[data-page]');
+  links.forEach(function (link) {
+    if (link.getAttribute('data-page') === state.currentPage) {
+      link.classList.add('active');
+    } else {
+      link.classList.remove('active');
+    }
+  });
 }
 
 

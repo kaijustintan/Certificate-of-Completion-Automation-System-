@@ -62,6 +62,14 @@ function checkAttachmentSync(requestId) {
 // Replaces AppSheet's automatic child row creation on file upload.
 // ============================================================
 function addAttachment(requestId, fileLink, description) {
+  // Only the requestor who owns the parent request may attach files to it.
+  const caller    = Session.getActiveUser().getEmail();
+  const parentRow = getRequestRowData(requestId);
+  if (!parentRow) return { success: false, error: "Request not found." };
+  if (!sameEmail(parentRow[CR.REQUESTOR - 1], caller)) {
+    return { success: false, error: "Unauthorized" };
+  }
+
   const sheet       = getSheet(SHEET_NAMES.REQUEST_ATTACHMENTS);
   const attachmentId = generateRequestId() + "-ATT"; // e.g. A3F-ATT
 
@@ -87,11 +95,17 @@ function addAttachment(requestId, fileLink, description) {
 // Called if a requestor removes a file before resubmitting.
 // ============================================================
 function deleteAttachment(attachmentId) {
+  const caller  = Session.getActiveUser().getEmail();
   const sheet   = getSheet(SHEET_NAMES.REQUEST_ATTACHMENTS);
   const allData = getAllData(SHEET_NAMES.REQUEST_ATTACHMENTS);
 
   for (let i = 1; i < allData.length; i++) {
     if (allData[i][RA.ATTACHMENT_ID - 1] === attachmentId) {
+      // Only the requestor who owns the parent request may delete its files.
+      const parentRow = getRequestRowData(allData[i][RA.REQUEST_ID - 1]);
+      if (!parentRow || !sameEmail(parentRow[CR.REQUESTOR - 1], caller)) {
+        return { success: false, error: "Unauthorized" };
+      }
       sheet.deleteRow(i + 1); // +1 because sheet rows are 1-based
       Logger.log(`deleteAttachment(): Removed ${attachmentId}`);
       return { success: true };

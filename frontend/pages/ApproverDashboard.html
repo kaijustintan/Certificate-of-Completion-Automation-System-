@@ -1,57 +1,161 @@
 <!-- ApproverDashboard.html -->
 <!-- ============================================================
      Approver dashboard
-     Lists every request currently pending the active user's
-     approval. Clicking a row opens the full review page.
+     Both datasets (pending + actioned) are pre-loaded in parallel
+     on page entry so the stat grid has all four counts immediately.
+     View dropdown (Awaiting / Actioned) + sort dropdown replace
+     the old tab row. No lazy-loading.
      ============================================================ -->
 
 
 <script>
-async function renderApproverDashboardPage() {
-  const pending = await callServer('getPendingApprovals');
+let _approverPendingCache  = [];
+let _approverActionedCache = [];
+let _approverCurrentView   = 'awaiting';
+let _approverCurrentSort   = 'newest';
 
-  const listHtml = (pending.length === 0)
-    ? renderEmptyState({
-        title:   'All caught up',
-        message: 'Nothing is currently waiting for your approval.',
-        emotion: 'approved',
-      })
-    : renderApproverTable(pending);
+async function renderApproverDashboardPage() {
+  // Pre-load both in parallel so stat grid is complete from the start.
+  [_approverPendingCache, _approverActionedCache] = await Promise.all([
+    callServer('getPendingApprovals'),
+    callServer('getMyActionedRequests'),
+  ]);
+  _approverCurrentView = 'awaiting';
+  _approverCurrentSort = 'newest';
+
+  const awaitingCount = _approverPendingCache.length;
+  const approvedCount = _approverActionedCache.filter(function (r) { return r.status === 'Fully Approved'; }).length;
+  const declinedCount = _approverActionedCache.filter(function (r) { return r.status === 'Declined'; }).length;
+  const returnedCount = _approverActionedCache.filter(function (r) { return r.status === 'Returned to Requestor'; }).length;
 
   return `
     <div class="page-header">
       <div>
-        <div class="page-title">Pending approvals</div>
-        <div class="page-subtitle">Requests routed to you for action.</div>
+        <div class="page-title">My approvals</div>
+        <div class="page-subtitle">Your approval queue and history.</div>
       </div>
-      <button class="btn btn-secondary" onclick="navigateTo('dashboard')">My submitted requests</button>
     </div>
 
     ${renderMiga('pending',
-        pending.length === 0
+        awaitingCount === 0
           ? 'Inbox zero! Nothing needs you right now.'
-          : 'You have ' + pending.length + ' request' + (pending.length === 1 ? '' : 's') + ' waiting on you. Click any row to review.')}
+          : 'You have ' + awaitingCount + ' request' + (awaitingCount === 1 ? '' : 's') + ' waiting on you. Click any row to review.')}
 
     <div class="stat-grid">
       <div class="stat-card">
-        <div class="stat-number blue">${pending.length}</div>
-        <div class="stat-label">Pending your approval</div>
+        <div class="stat-number blue">${awaitingCount}</div>
+        <div class="stat-label">Awaiting your approval</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-number green">${approvedCount}</div>
+        <div class="stat-label">Approved by you</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-number red">${declinedCount}</div>
+        <div class="stat-label">Declined by you</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-number">${returnedCount}</div>
+        <div class="stat-label">Returned by you</div>
       </div>
     </div>
 
     <div class="card">
-      <div class="card-header">
-        <div class="card-title">Awaiting your action</div>
+      ${renderApproverControls()}
+      <div id="approver-list">
+        ${renderApproverAwaitingList(sortRequests(_approverPendingCache, 'newest'))}
       </div>
-      ${listHtml}
     </div>
   `;
 }
 
 
-// ─── Local helpers ────────────────────────────────────────
-function renderApproverTable(pending) {
-  const rows = pending.map(function (r) {
+// ─── View + sort controls ─────────────────────────────────
+
+function renderApproverControls() {
+  const viewOptions = [
+    { value: 'awaiting', label: 'Awaiting your action' },
+    { value: 'actioned', label: 'Actioned by you'      },
+  ];
+  const sortOptions = [
+    { value: 'newest',  label: 'Most Recent'  },
+    { value: 'oldest',  label: 'Oldest First' },
+    { value: 'project', label: 'Project A→Z' },
+    { value: 'group',   label: 'Group A→Z'   },
+  ];
+
+  const viewHtml = viewOptions.map(function (o) {
+    return '<option value="' + o.value + '"' +
+      (o.value === _approverCurrentView ? ' selected' : '') + '>' + o.label + '</option>';
+  }).join('');
+
+  const sortHtml = sortOptions.map(function (o) {
+    return '<option value="' + o.value + '"' +
+      (o.value === _approverCurrentSort ? ' selected' : '') + '>' + o.label + '</option>';
+  }).join('');
+
+  return '<div class="filter-bar">' +
+    '<div class="filter-group">' +
+      '<label class="filter-label">View</label>' +
+      '<select class="filter-select" onchange="approverViewChange(this)">' + viewHtml + '</select>' +
+    '</div>' +
+    '<div class="filter-group">' +
+      '<label class="filter-label">Sort by</label>' +
+      '<select class="filter-select" onchange="approverSortChange(this)">' + sortHtml + '</select>' +
+    '</div>' +
+  '</div>';
+}
+
+function approverViewChange(el) {
+  _approverCurrentView = el.value;
+  applyApproverView();
+}
+
+function approverSortChange(el) {
+  _approverCurrentSort = el.value;
+  applyApproverView();
+}
+
+function applyApproverView() {
+  const cache  = _approverCurrentView === 'awaiting' ? _approverPendingCache : _approverActionedCache;
+  const sorted = sortRequests(cache, _approverCurrentSort);
+  const listEl = document.getElementById('approver-list');
+  if (!listEl) return;
+  listEl.innerHTML = _approverCurrentView === 'awaiting'
+    ? renderApproverAwaitingList(sorted)
+    : renderApproverActionedList(sorted);
+}
+
+
+// ─── List renderers ───────────────────────────────────────
+
+function renderApproverAwaitingList(pending) {
+  if (pending.length === 0) {
+    return renderEmptyState({
+      title:   'All caught up',
+      message: 'Nothing is currently waiting for your approval.',
+      emotion: 'approved',
+    });
+  }
+  return renderApproverTable(pending);
+}
+
+function renderApproverActionedList(actioned) {
+  if (actioned.length === 0) {
+    return renderEmptyState({
+      title:   'No history yet',
+      message: 'Requests you have approved, declined, or returned will appear here.',
+      emotion: 'default',
+    });
+  }
+  return renderApproverTable(actioned);
+}
+
+
+// ─── Shared table ─────────────────────────────────────────
+
+function renderApproverTable(rows) {
+  const tableRows = rows.map(function (r) {
     const idAttr = escapeHtml(r.requestId);
     return '' +
       '<tr onclick="navigateTo(\'review\', {id: \'' + idAttr + '\'})">' +
@@ -74,7 +178,7 @@ function renderApproverTable(pending) {
         '<th>Status</th>' +
         '<th>Filed</th>' +
       '</tr></thead>' +
-      '<tbody>' + rows + '</tbody>' +
+      '<tbody>' + tableRows + '</tbody>' +
     '</table>';
 }
 </script>
