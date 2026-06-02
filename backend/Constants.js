@@ -53,6 +53,7 @@ const CR = {
   RESUBMIT_COUNT:       32,  // AF
   RESUBMIT_HISTORY:     33,  // AG
   PREVIOUS_APPROVALS:   34,  // AH — JSON array of approvers who had acted at time of last return
+  LAST_ACTION_BY:       35,  // AI — email of whoever most recently approved/declined/returned (audit + actioned-list)
 };
 
 

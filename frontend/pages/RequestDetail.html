@@ -362,7 +362,11 @@ async function renderRequestDetailPage(params) {
 
 // ─── ACTIONS ───────────────────────────────────────────────
 async function onResubmitClick(requestId) {
-  const ok = confirm('Resubmit this request? It will be routed back to Approver 1 from the start.');
+  const ok = await showConfirm({
+    title:        'Resubmit request',
+    message:      'This request will be routed back to Approver 1 from the start of the approval chain. Continue?',
+    confirmLabel: 'Resubmit',
+  });
   if (!ok) return;
 
   try {

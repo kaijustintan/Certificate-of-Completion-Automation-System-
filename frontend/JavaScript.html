@@ -76,6 +76,54 @@ function showToast(message, type) {
 
 
 // ============================================================
+// CONFIRM MODAL
+// Promise-based replacement for the native confirm() dialog.
+// Usage:  if (!(await showConfirm({ title, message, confirmLabel, danger }))) return;
+// Resolves true on confirm, false on cancel / backdrop click.
+// Mounts itself onto document.body and removes itself on resolve.
+// ============================================================
+function showConfirm(opts) {
+  opts = opts || {};
+  return new Promise(function (resolve) {
+    const overlay = document.createElement('div');
+    overlay.className = 'modal-overlay';
+    overlay.innerHTML =
+      '<div class="modal" role="dialog" aria-modal="true">' +
+        '<div class="modal-title">' + escapeHtml(opts.title || 'Please confirm') + '</div>' +
+        '<div class="modal-message">' + escapeHtml(opts.message || '') + '</div>' +
+        '<div class="modal-actions">' +
+          '<button class="btn btn-secondary" data-act="cancel">' + escapeHtml(opts.cancelLabel || 'Cancel') + '</button>' +
+          '<button class="btn ' + (opts.danger ? 'btn-danger' : 'btn-primary') + '" data-act="ok">' + escapeHtml(opts.confirmLabel || 'Confirm') + '</button>' +
+        '</div>' +
+      '</div>';
+
+    let settled = false;
+    function close(val) {
+      if (settled) return;
+      settled = true;
+      document.removeEventListener('keydown', onKey);
+      overlay.remove();
+      resolve(val);
+    }
+    function onKey(e) {
+      if (e.key === 'Escape') close(false);
+      if (e.key === 'Enter')  close(true);
+    }
+
+    overlay.addEventListener('click', function (e) {
+      if (e.target === overlay) { close(false); return; }
+      const act = e.target.getAttribute('data-act');
+      if (act === 'ok')     close(true);
+      if (act === 'cancel') close(false);
+    });
+    document.addEventListener('keydown', onKey);
+
+    document.body.appendChild(overlay);
+  });
+}
+
+
+// ============================================================
 // STATUS HELPERS
 // Single mapping from STATUS string → semantic info.
 // Pages and components read from here so we don't sprinkle
@@ -108,8 +156,14 @@ function emotionFor(status) {
 // ============================================================
 function sortRequests(requests, sortKey) {
   const arr = requests.slice();
-  if (sortKey === 'newest')  return arr.sort(function (a, b) { return new Date(b.dateFiled) - new Date(a.dateFiled); });
-  if (sortKey === 'oldest')  return arr.sort(function (a, b) { return new Date(a.dateFiled) - new Date(b.dateFiled); });
+  if (sortKey === 'newest')  return arr.sort(function (a, b) {
+    const d = new Date(b.dateFiled) - new Date(a.dateFiled);
+    return d !== 0 ? d : String(b.controlNumber).localeCompare(String(a.controlNumber));
+  });
+  if (sortKey === 'oldest')  return arr.sort(function (a, b) {
+    const d = new Date(a.dateFiled) - new Date(b.dateFiled);
+    return d !== 0 ? d : String(a.controlNumber).localeCompare(String(b.controlNumber));
+  });
   if (sortKey === 'project') return arr.sort(function (a, b) { return String(a.projectTitle).localeCompare(String(b.projectTitle)); });
   if (sortKey === 'group')   return arr.sort(function (a, b) { return String(a.group).localeCompare(String(b.group)); });
   return arr;
@@ -292,9 +346,14 @@ async function bootstrap() {
     state.user = user;
     refreshNavbar();
 
-    // Honor an explicit hash if the user landed via a shared link.
+    // Priority 1: a per-request deep-link from an email (doGet forwards
+    // ?page=&id= into window.__INITIAL_ROUTE). Priority 2: an explicit hash
+    // from a shared link. Priority 3: role-based home.
+    const initial = window.__INITIAL_ROUTE || {};
     const { page, params } = parseHash();
-    if (page && page !== 'home' && page !== 'login') {
+    if (initial.page && initial.id) {
+      await navigateTo(initial.page, { id: initial.id });
+    } else if (page && page !== 'home' && page !== 'login') {
       await navigateTo(page, params);
     } else {
       await navigateTo('home');

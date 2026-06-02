@@ -44,6 +44,12 @@
   <?!= include('frontend/pages/ApproverDashboard'); ?>
   <?!= include('frontend/pages/ReviewDetail'); ?>
 
+  <!-- Deep-link target forwarded by doGet() via query params (?page=&id=).
+       bootstrap() reads this before falling back to hash/role-home. -->
+  <script>
+    window.__INITIAL_ROUTE = { page: "<?= initialPage ?>", id: "<?= initialId ?>" };
+  </script>
+
   <!-- JavaScript router LAST — needs all the render functions defined above -->
   <?!= include('frontend/JavaScript'); ?>
 

@@ -217,7 +217,12 @@ async function onApproveClick() {
   const id = __reviewDetail && __reviewDetail.requestId;
   if (!id) return;
 
-  if (!confirm('Approve this request? It will be routed to the next approver or marked fully approved.')) return;
+  const ok = await showConfirm({
+    title:        'Approve request',
+    message:      'This request will be forwarded to the next approver, or marked fully approved if you are the final signatory. Continue?',
+    confirmLabel: 'Approve',
+  });
+  if (!ok) return;
   await runReviewAction('handleApprove', [id], 'Request approved.');
 }
 
@@ -226,7 +231,13 @@ async function onDeclineSubmit() {
   const remark = (document.getElementById('decline-remark') || {}).value;
   if (!id || !remark || !remark.trim()) return;
 
-  if (!confirm('Decline this request? This closes the request and the requestor cannot resubmit.')) return;
+  const ok = await showConfirm({
+    title:        'Decline request',
+    message:      'This will permanently close the request. The requestor will not be able to resubmit it. Continue?',
+    confirmLabel: 'Decline',
+    danger:       true,
+  });
+  if (!ok) return;
   await runReviewAction('handleDecline', [id, remark.trim()], 'Request declined.');
 }
 

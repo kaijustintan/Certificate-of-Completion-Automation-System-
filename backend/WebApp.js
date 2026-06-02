@@ -19,22 +19,23 @@
 // Google calls this automatically when someone opens the web app URL
 // ============================================================
 function doGet(e) {
-  const page     = e.parameter.page || "dashboard";
-  const id       = e.parameter.id   || "";
-  const userEmail = Session.getActiveUser().getEmail();
+  // Empty (not "dashboard") so the client can resolve role-based home when
+  // there's no deep-link target. Email deep-links pass ?page=review&id=XXX.
+  const page = (e && e.parameter && e.parameter.page) || "";
+  const id   = (e && e.parameter && e.parameter.id)   || "";
 
-  // Detect role — is this user an approver or a requestor?
-  const role = detectRole(userEmail);
+  // Forward the deep-link target into the page so bootstrap() can honor it.
+  // Query params (not hash) are used because the app runs in a sandboxed
+  // iframe where the client cannot read the outer URL's hash.
+  const template = HtmlService.createTemplateFromFile("frontend/Index");
+  template.initialPage = page;
+  template.initialId   = id;
 
-  // Build the HTML page
-  const html = HtmlService
-    .createTemplateFromFile("frontend/Index")
+  return template
     .evaluate()
     .setTitle("E-Certificate Portal — Megaworld")
     .addMetaTag("viewport", "width=device-width, initial-scale=1")
     .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
-
-  return html;
 }
 
 
@@ -182,6 +183,9 @@ function getMyActionedRequests() {
 
   return rows
     .filter(function (row) {
+      // Most-recent actioner stamp covers declines/returns (which leave no AppN_Date).
+      if (sameEmail(row[CR.LAST_ACTION_BY - 1], email)) return true;
+      // AppN_Date still surfaces an earlier approver whose stamp persists after a later action.
       const approvers = getApprovers(row[CR.GROUP - 1]);
       if (!approvers) return false;
       if (sameEmail(approvers.approver1, email) && row[CR.APP1_DATE - 1]) return true;
@@ -355,7 +359,9 @@ function handleApprove(requestId) {
       sendFullyApprovedToApprover(requestId);
       sendFullyApprovedToRequestor(requestId);
     } else {
-      sendApprovalRequest(requestId);
+      sendApprovalRequest(requestId);           // next approver — action needed
+      sendApproveConfirmToApprover(requestId);  // actioner receipt (symmetric with decline/return)
+      sendProgressUpdateToRequestor(requestId); // requestor mid-chain progress update
     }
   }
   return result;
@@ -441,8 +447,9 @@ function handleReturn(requestId, remark) {
 
   const result = returnRequest(requestId, remark);
   if (result.success) {
-    sendReturnToRequestor(requestId);
-    sendReturnConfirmToApprover(requestId);
+    sendReturnToRequestor(requestId, approverLabel);
+    sendReturnConfirmToApprover(requestId, approverLabel);
+    sendReturnedChainNotification(requestId, previousApprovals, remark, approverLabel);
   }
   return result;
 }
@@ -456,7 +463,19 @@ function handleResubmit(requestId) {
     return { success: false, error: "Unauthorized" };
   }
 
-  return resubmit(requestId);
+  // Capture return reason + count BEFORE resubmit() clears the remark columns.
+  const returnReason  = row[CR.APP3_REMARK - 1] || row[CR.APP2_REMARK - 1] || row[CR.APP1_REMARK - 1] || "No reason provided.";
+  const resubmitCount = (parseInt(row[CR.RESUBMIT_COUNT - 1]) || 0) + 1; // +1 mirrors what resubmit() will write
+
+  const result = resubmit(requestId);
+  if (result.success) {
+    sendResubmitConfirmToRequestor(requestId, returnReason, resubmitCount);
+    if (result.newStatus === STATUS.PENDING_1) {
+      sendResubmitApprovalRequest(requestId, returnReason, resubmitCount); // dedicated resubmit email for Approver 1
+    }
+    // If newStatus === STATUS.SYNCING, approval email fires when attachments are finalized
+  }
+  return result;
 }
 
 

@@ -155,7 +155,8 @@ async function renderNewRequestPage() {
         <div class="form-grid">
           <div class="form-row">
             <label class="form-label">Contract start date <span class="required">*</span></label>
-            <input type="date" class="form-input" name="contractStart" required>
+            <input type="date" class="form-input" name="contractStart" required
+              oninput="var e=this.closest('form').elements['contractEnd']; if(e) e.min=this.value;">
           </div>
           <div class="form-row">
             <label class="form-label">Contract end date <span class="required">*</span></label>
@@ -243,6 +244,13 @@ function validateNewRequest(form) {
       };
     }
   }
+  // Date range: end must not be before start
+  const startEl = form.elements['contractStart'];
+  const endEl   = form.elements['contractEnd'];
+  if (startEl && endEl && startEl.value && endEl.value && endEl.value < startEl.value) {
+    return { field: 'contractEnd', message: 'Contract end date must be on or after the start date.' };
+  }
+
   return null;
 }
 

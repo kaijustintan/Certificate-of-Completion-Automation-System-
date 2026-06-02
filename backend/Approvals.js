@@ -67,6 +67,7 @@ function approve(requestId) {
   sheet.getRange(rowNum, CR.STEP).setValue(newStep);
   sheet.getRange(rowNum, CR.STATUS).setValue(newStatus);
   sheet.getRange(rowNum, dateCol).setValue(now);
+  sheet.getRange(rowNum, CR.LAST_ACTION_BY).setValue(Session.getActiveUser().getEmail());
 
   Logger.log(`approve(): ${requestId} approved at Step ${step} → ${newStatus}`);
   return { success: true, newStatus, step: newStep };
@@ -102,6 +103,7 @@ function decline(requestId, approverRemark) {
   }
 
   sheet.getRange(rowNum, CR.STATUS).setValue(STATUS.DECLINED);
+  sheet.getRange(rowNum, CR.LAST_ACTION_BY).setValue(Session.getActiveUser().getEmail());
 
   Logger.log(`decline(): ${requestId} declined at Step ${step}`);
   return { success: true, newStatus: STATUS.DECLINED };
@@ -138,6 +140,7 @@ function returnRequest(requestId, approverRemark) {
 
   sheet.getRange(rowNum, CR.STEP).setValue(0);
   sheet.getRange(rowNum, CR.STATUS).setValue(STATUS.RETURNED);
+  sheet.getRange(rowNum, CR.LAST_ACTION_BY).setValue(Session.getActiveUser().getEmail());
 
   Logger.log(`returnRequest(): ${requestId} returned at Step ${step}`);
   return { success: true, newStatus: STATUS.RETURNED };
