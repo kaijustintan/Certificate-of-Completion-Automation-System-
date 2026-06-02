@@ -1,3 +1,29 @@
+<!-- ════════════════════════════════════════════════════════════
+     FILE: Index.html — SPA shell served by doGet()
+     ════════════════════════════════════════════════════════════
+
+     LAYMAN (Tropang Ex):
+     Ito ang "balat" ng buong web app — isang HTML file lang ang
+     pinapadala sa browser. Lahat ng ibang pages ay nilo-load dito
+     bilang <script> includes at ino-render sa #app div ng router.
+
+     TECHNICAL:
+     Evaluated by HtmlService (Apps Script templating). Template
+     variables: initialPage, initialId — set by doGet() for deep-links
+     and emitted into window.__INITIAL_ROUTE for bootstrap() to read.
+
+     LOAD ORDER (critical — do not reorder):
+       1. Stylesheet.html              — global CSS
+       2. Components (StatusBadge, EmptyState, MigaWidget)
+       3. Pages (Login, Dashboard, NewRequest, RequestDetail,
+                  ApproverDashboard, ReviewDetail)
+       4. window.__INITIAL_ROUTE scriptlet
+       5. JavaScript.html             — router + bootstrap (last, needs all render fns)
+
+     NOTE: deep-links use query params (?page=&id=), NOT hash fragments.
+     The sandboxed iframe can't read the outer URL hash, but doGet()
+     receives query params server-side and forwards them here.
+═══════════════════════════════════════════════════════════════ -->
 <!DOCTYPE html>
 <html lang="en">
 <head>

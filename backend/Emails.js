@@ -1,25 +1,74 @@
 // Emails.js
-// ============================================================
-// Emails.js
-// All email notification functions.
-// Replaces AppSheet's 5 bots and their email templates.
-// AppSheet used <<[ColumnName]>> merge syntax.
-// Here we use JavaScript template literals (backtick strings).
-//
-// Conventions (Cat 4 Round 2):
-//   - Subjects: emailSubject(controlNumber, statusLabel, audience)
-//     → "[COC Request]: <ctrl> | <Status>" (+ optional [FOR ...] dev tag)
-//   - Bodies: greeting → buildInfoBlock() labeled fields → optional
-//     sections → action line → portal deep-link (getPortalUrl).
-// ============================================================
+/*
+  ════════════════════════════════════════════════════════════
+  FILE: Emails.js
+  ════════════════════════════════════════════════════════════
+
+  LAYMAN (Tropang Ex):
+  Lahat ng email na pinapadala ng portal — mula "may bagong request" hanggang
+  "approved na!", kasama ang bawat decline, return, resubmit at progress
+  update — narito. Kapalit ito ng AppSheet's 5 notification bots. Ang bawat
+  email function ay inaalam ang detalye ng request galing sa sheet, nagtatayo
+  ng body + subject, at nagpapadala gamit ang GmailApp.
+
+  TECHNICAL:
+  12 send* functions (one per notification event) + 7 shared helpers. All
+  called by the handle* functions in WebApp.js immediately after a successful
+  state change. Identity for actioner-confirmation emails comes from
+  Session.getActiveUser(); caller-independent data comes from getRequestData().
+
+  ⚠️ PRODUCTION FLAG:
+    EMAIL_DEV_TAG = true in dev (adds [FOR APPROVER]/[FOR REQUESTOR] prefix).
+    Set to FALSE before go-live — one line toggle.
+
+  ────────────────────────────────────────────────────────────
+  HELPERS
+    - EMAIL_DEV_TAG          flag: dev subject prefix on/off
+    - emailSubject()         builds subject line
+    - buildInfoBlock()       labeled request-info block (title/ID/requestor/group)
+    - getPortalUrl()         deep-link into the portal for a specific request
+    - buildAttachmentList()  supporting-documents list string
+    - buildApprovalLog()     approval progress log string
+    - getLatestRemark()      most-recent non-blank approver remark
+    - getRequestData()       flat {rowData, rowNum, group, approvers} for email use
+
+  ────────────────────────────────────────────────────────────
+  EMAIL FUNCTIONS (12)
+  #   Function                          To              Fires when
+  1   sendApprovalRequest               next approver   submit + resubmit (SYNCING→PENDING)
+  2   sendDeclineToApprover             decliner        declined
+  3   sendDeclineToRequestor            requestor       declined
+  4   sendFullyApprovedToApprover       last approver   fully approved
+  5   sendFullyApprovedToRequestor      requestor       fully approved
+  6   sendReturnToRequestor             requestor       returned
+  7   sendReturnConfirmToApprover       returner        returned
+  8   sendApproveConfirmToApprover      approver        intermediate approval only
+  9   sendProgressUpdateToRequestor     requestor       intermediate approval
+  10  sendReturnedChainNotification     prior approvers any return
+  11  sendResubmitConfirmToRequestor    requestor       resubmit
+  12  sendResubmitApprovalRequest       approver 1      resubmit
+*/
 
 
 // TEMP DEV AID: while testing with a single account (requestor == approver),
 // prefix every subject with [FOR APPROVER] / [FOR REQUESTOR] so the same inbox
 // can tell them apart. Set to false for production — one-line toggle.
+// ⚠️ FLIP TO FALSE BEFORE GO-LIVE
 const EMAIL_DEV_TAG = true;
 
 
+/*
+  Function Name: emailSubject
+  LAYMAN    : Gumawa ng standard na subject line para sa lahat ng emails —
+              "[COC Request]: EC-2026-00042 | Action Needed". Sa dev mode,
+              may "[FOR APPROVER]" prefix para madaling i-distinguish sa iisang inbox.
+  TECHNICAL : Composes `${tag}[COC Request]: ${controlNumber}${suffix}`. The
+              dev tag and suffix are conditionally added.
+  PARAMS    : controlNumber — the request's control number string.
+              statusLabel — status label suffix (e.g. "Action Needed", "Approved").
+              audience — 'APPROVER' | 'REQUESTOR' (only used when EMAIL_DEV_TAG is true).
+  RETURNS   : Subject string.
+*/
 // Helper — standard minimal subject line.
 // audience = 'APPROVER' | 'REQUESTOR'; statusLabel e.g. 'Action Needed', 'Approved'.
 function emailSubject(controlNumber, statusLabel, audience) {
@@ -29,6 +78,16 @@ function emailSubject(controlNumber, statusLabel, audience) {
 }
 
 
+/*
+  Function Name: buildInfoBlock
+  LAYMAN    : Gumawa ng 4-linyang summary ng request para sa email body —
+              title, ID, requestor, group — para alam agad ng tatanggap kung
+              anong request ang pinag-uusapan.
+  TECHNICAL : Joins 4 labeled lines (one per field) with "\n". No padding
+              alignment — plain-text emails use proportional fonts.
+  PARAMS    : rowData — the 0-indexed request row array (from getRequestData).
+  RETURNS   : Multi-line string.
+*/
 // Helper — labeled request-info block shared by every email body.
 // No fake colon-alignment: plain-text email uses proportional fonts,
 // so "Label: value" per line is the cleanest scannable format.
@@ -42,6 +101,18 @@ function buildInfoBlock(rowData) {
 }
 
 
+/*
+  Function Name: getPortalUrl
+  LAYMAN    : Bumuo ng link para direktang mapuntahan sa portal ang isang
+              partikular na request — para sa approver (review page) o sa
+              requestor (request page). Inilalagay ito sa dulo ng bawat email.
+  TECHNICAL : Appends ?page=<page>&id=<requestId> to the deployed /exec URL.
+              Query params are used (not hash) because the sandboxed iframe
+              can't read the outer URL's hash — doGet() picks them up server-side.
+  PARAMS    : requestId — the request ID to link to.
+              page — 'request' (requestor view) | 'review' (approver view).
+  RETURNS   : Full URL string.
+*/
 // Helper — per-request deep-link into the portal.
 // Uses QUERY PARAMS (not hash): the Apps Script app runs in a sandboxed
 // iframe, so hash fragments aren't readable by the client, but query params
@@ -52,6 +123,15 @@ function getPortalUrl(requestId, page) {
 }
 
 
+/*
+  Function Name: buildAttachmentList
+  LAYMAN    : Lista ng mga naka-attach na files ng request — para makita ng
+              approver sa email kung anong documents ang kasama.
+  TECHNICAL : getAttachmentsForRequest, maps each row to "- description — link".
+              Empty → "No supporting documents uploaded."
+  PARAMS    : requestId — the request whose attachments to list.
+  RETURNS   : Multi-line string (one attachment per line, or fallback text).
+*/
 // Helper — builds the supporting documents list for email body
 // Replaces AppSheet's <<Start: [Related Request_Attachments]>> loop
 function buildAttachmentList(requestId) {
@@ -63,6 +143,17 @@ function buildAttachmentList(requestId) {
 }
 
 
+/*
+  Function Name: buildApprovalLog
+  LAYMAN    : Para sa email, ipakita kung sino-sino nang nag-approve at kailan.
+              Lalabas lang ang slots na may laman; walang laman → "No approvals
+              recorded yet."
+  TECHNICAL : Reads APP1/2/3_DATE; for each non-empty slot, appends
+              "Approver N: email\nApproved: timestamp". Replaces AppSheet's
+              <<If: ISNOTBLANK([App1_Date])>> blocks.
+  PARAMS    : rowData — the 0-indexed row array; approvers — from getApprovers().
+  RETURNS   : Multi-line string.
+*/
 // Helper — builds the approval progress log shown in emails
 // Replaces AppSheet's <<If: ISNOTBLANK([App1_Date])>> blocks
 function buildApprovalLog(rowData, approvers) {
@@ -83,6 +174,16 @@ function buildApprovalLog(rowData, approvers) {
 }
 
 
+/*
+  Function Name: getLatestRemark
+  LAYMAN    : Kunin ang pinakabagong remark/dahilan ng approver — kung step 3
+              ang nag-remark, yun ang gagamitin; kung wala step 2; kung wala
+              step 1; kung lahat wala, "No reason provided."
+  TECHNICAL : Returns the first non-blank value from APP3 → APP2 → APP1_REMARK,
+              with a fallback string. Replaces AppSheet's IFS(ISNOTBLANK…) chain.
+  PARAMS    : rowData — the 0-indexed row array.
+  RETURNS   : Remark string.
+*/
 // Helper — gets the most recent non-blank remark from any approver
 // Replaces AppSheet's IFS(ISNOTBLANK([App3's Remark]), ...) pattern
 function getLatestRemark(rowData) {
@@ -93,6 +194,16 @@ function getLatestRemark(rowData) {
 }
 
 
+/*
+  Function Name: getRequestData
+  LAYMAN    : I-load ang request galing sa sheet bilang madaling gamitin na
+              object — kasama ang rowData, group, at approvers — para handa
+              na ang lahat ng kailangan ng isang email function.
+  TECHNICAL : Reads 31 cols (NOTE: PREVIOUS_APPROVALS at col 34 is NOT included —
+              email functions that need it receive it as a param instead).
+  PARAMS    : requestId — the request to load.
+  RETURNS   : { rowData, rowNum, group, approvers } — or null if not found.
+*/
 // Helper — loads a full request row as a flat object for easy reference
 function getRequestData(requestId) {
   const sheet  = getSheet(SHEET_NAMES.CERTIFICATE_REQUESTS);
@@ -109,6 +220,17 @@ function getRequestData(requestId) {
 // EMAIL 1 — Send approval request to current approver
 // AppSheet equivalent: Next Approver Bot → Step_Update_To_Requestor
 // ============================================================
+/*
+  Function Name: sendApprovalRequest
+  LAYMAN    : Email sa approver na "May bagong request para sa iyo." Kasama ang
+              detalye ng request, attachments, at progress ng approval. Ginagamit
+              sa first-time submit at sa bawat intermediate approval (para sa next
+              approver). May deep-link para diretso mapuntahan ang review page.
+  TECHNICAL : TO: getCurrentApprover(step, group). Includes buildInfoBlock,
+              buildAttachmentList, buildApprovalLog, and the review deep-link.
+  FIRES     : submitNewRequest (first submit, no attachments) + handleApprove
+              (intermediate step, for the next approver) + checkAttachmentSync.
+*/
 function sendApprovalRequest(requestId) {
   const data = getRequestData(requestId);
   if (!data) return;
@@ -148,6 +270,12 @@ Open this request: ${getPortalUrl(requestId, "review")}`;
 // EMAIL 2 — Confirm decline to the approver who declined
 // AppSheet equivalent: Decline Bot → Confirm_Decline_To_Approver
 // ============================================================
+/*
+  Function Name: sendDeclineToApprover
+  LAYMAN    : Resibo sa approver na nagdecline: "Confirmed, dinecline mo ito."
+  TECHNICAL : TO: Session.getActiveUser() (the decliner). Date of action from nowFormatted().
+  FIRES     : handleDecline (on success).
+*/
 function sendDeclineToApprover(requestId) {
   const data = getRequestData(requestId);
   if (!data) return;
@@ -178,6 +306,14 @@ Open this request: ${getPortalUrl(requestId, "review")}`;
 // EMAIL 3 — Notify requestor their request was declined
 // AppSheet equivalent: Decline Bot → Process_NotifyDecline
 // ============================================================
+/*
+  Function Name: sendDeclineToRequestor
+  LAYMAN    : Email sa requestor: "Tinanggihan ang request mo." Kasama ang dahilan
+              at sinabi na hindi na maaaring i-resubmit — bagong request na lang.
+  TECHNICAL : TO: REQUESTOR column. Includes getLatestRemark (the decline reason).
+              Links to the requestor's 'request' page (not 'review').
+  FIRES     : handleDecline (on success).
+*/
 function sendDeclineToRequestor(requestId) {
   const data = getRequestData(requestId);
   if (!data) return;
@@ -212,6 +348,13 @@ Open this request: ${getPortalUrl(requestId, "request")}`;
 // EMAIL 4 — Confirm full approval to the last approver
 // AppSheet equivalent: Fully Approved Bot → Step_Final_Receipt_To_Approver
 // ============================================================
+/*
+  Function Name: sendFullyApprovedToApprover
+  LAYMAN    : Resibo sa huling approver: "Fully approved na, salamat sa pag-sign."
+  TECHNICAL : TO: last configured approver slot (approver3 → 2 → 1 fallback).
+              Uses the last non-empty AppN_DATE for "Final Approval Date".
+  FIRES     : handleApprove (final step, newStatus === APPROVED).
+*/
 function sendFullyApprovedToApprover(requestId) {
   const data = getRequestData(requestId);
   if (!data) return;
@@ -252,6 +395,14 @@ Open this request: ${getPortalUrl(requestId, "review")}`;
 // EMAIL 5 — Notify requestor their request is fully approved
 // AppSheet equivalent: Fully Approved Bot → Process_Notify_Success
 // ============================================================
+/*
+  Function Name: sendFullyApprovedToRequestor
+  LAYMAN    : Email sa requestor: "Approved na lahat!" Kasama ang buong
+              approval log (sino nag-sign at kailan).
+  TECHNICAL : TO: REQUESTOR column. Includes buildApprovalLog for transparency.
+              Links to the requestor 'request' page.
+  FIRES     : handleApprove (final step, newStatus === APPROVED).
+*/
 function sendFullyApprovedToRequestor(requestId) {
   const data = getRequestData(requestId);
   if (!data) return;
@@ -284,6 +435,15 @@ Open this request: ${getPortalUrl(requestId, "request")}`;
 // EMAIL 6 — Notify requestor their request was returned
 // AppSheet equivalent: Return Bot → Process_NotifyReturn
 // ============================================================
+/*
+  Function Name: sendReturnToRequestor
+  LAYMAN    : Email sa requestor: "Ibinalik ang request mo — may baguhin pa."
+              Kasama kung sino ang nagbalik (e.g. "Approver 2") at ang dahilan.
+  TECHNICAL : TO: REQUESTOR. approverLabel param (captured in handleReturn before
+              state is cleared) appears as "Approver N (email)" in the body.
+  PARAMS    : requestId; approverLabel — e.g. "Approver 2" (optional, from handleReturn).
+  FIRES     : handleReturn (on success).
+*/
 function sendReturnToRequestor(requestId, approverLabel) {
   const data = getRequestData(requestId);
   if (!data) return;
@@ -319,6 +479,14 @@ Open this request: ${getPortalUrl(requestId, "request")}`;
 // EMAIL 7 — Confirm return to the approver who returned it
 // AppSheet equivalent: Return Bot → Confirm_Return_To_Approver
 // ============================================================
+/*
+  Function Name: sendReturnConfirmToApprover
+  LAYMAN    : Resibo sa approver na nagbalik: "Naipadala na sa requestor ang
+              pagbabalik." Kasama kung sino ang requestor at kailan.
+  TECHNICAL : TO: Session.getActiveUser() (the returner). approverLabel in role note.
+  PARAMS    : requestId; approverLabel — e.g. "Approver 2" (optional).
+  FIRES     : handleReturn (on success).
+*/
 function sendReturnConfirmToApprover(requestId, approverLabel) {
   const data = getRequestData(requestId);
   if (!data) return;
@@ -353,6 +521,17 @@ Open this request: ${getPortalUrl(requestId, "review")}`;
 // Closes the symmetry gap: decline/return both confirm to actioner; now approve does too.
 // Only fires on intermediate steps — final approval uses sendFullyApprovedToApprover.
 // ============================================================
+/*
+  Function Name: sendApproveConfirmToApprover
+  LAYMAN    : Resibo sa approver na na-approve ng intermediate step: "Nai-approve
+              mo, forwarded na sa next approver." Tinapos ang asymmetry — decline
+              at return ay may confirm, dapat approve din.
+  TECHNICAL : TO: Session.getActiveUser() (the actioner). Symmetric twin of
+              sendDeclineToApprover/sendReturnConfirmToApprover.
+  NOTE      : Only fires on INTERMEDIATE approvals. Final step uses
+              sendFullyApprovedToApprover instead.
+  FIRES     : handleApprove (intermediate step only, in the else branch).
+*/
 function sendApproveConfirmToApprover(requestId) {
   const data = getRequestData(requestId);
   if (!data) return;
@@ -385,6 +564,16 @@ Open this request: ${getPortalUrl(requestId, "review")}`;
 // N/M count uses AppN_DATE columns + configured approver slots (not Step number)
 // because approve() skips blank slots — counting dates is gap-proof.
 // ============================================================
+/*
+  Function Name: sendProgressUpdateToRequestor
+  LAYMAN    : Mid-chain progress email sa requestor: "Cleared mo na N of M steps."
+              Para hindi sila naghihintay sa dilim kung ilang approver pa kailangan.
+  TECHNICAL : TO: REQUESTOR. N = count of non-empty APP dates; M = count of
+              non-null approver slots (gap-proof; Step count would be wrong if
+              approver slots are skipped). Includes buildApprovalLog.
+  NOTE      : Only fires on INTERMEDIATE approvals — not final (that sends #4+#5).
+  FIRES     : handleApprove (intermediate step only, in the else branch).
+*/
 function sendProgressUpdateToRequestor(requestId) {
   const data = getRequestData(requestId);
   if (!data) return;
@@ -426,6 +615,20 @@ Open this request: ${getPortalUrl(requestId, "request")}`;
 // Empty array (Approver 1 returned before anyone else approved) → no-op.
 // The returner is never in previousApprovals so there is no double-send risk.
 // ============================================================
+/*
+  Function Name: sendReturnedChainNotification
+  LAYMAN    : Email sa mga DATING approver na nag-approve noon, para ipaalam
+              na ibinalik ang request na dati nilang pinirmahan — at kapag
+              na-resubmit, kailangan nila ulit mag-approve. Kapag walang dating
+              approver (e.g. Approver 1 agad nagbalik), walang pinapadala.
+  TECHNICAL : TO: each entry.email in previousApprovals (BCC-style loop, one
+              send per recipient). previousApprovals is passed from handleReturn
+              (NOT from getRequestData — col 34 is out of the 31-col read range).
+              The returner is never in the array → no double-send risk.
+  PARAMS    : requestId; previousApprovals — [{step,email,date}]; reason — return
+              reason; approverLabel — e.g. "Approver 2".
+  FIRES     : handleReturn (on success).
+*/
 function sendReturnedChainNotification(requestId, previousApprovals, reason, approverLabel) {
   if (!previousApprovals || previousApprovals.length === 0) return;
 
@@ -465,6 +668,16 @@ Open this request: ${getPortalUrl(requestId, "review")}`;
 // returnReason + resubmitCount are passed from handleResubmit —
 // captured BEFORE resubmit() clears the remark columns.
 // ============================================================
+/*
+  Function Name: sendResubmitConfirmToRequestor
+  LAYMAN    : Resibo sa requestor: "Na-resubmit na, naghihintay na sa Approver 1."
+              Kasama ang dating dahilan ng pagbabalik para reference.
+  TECHNICAL : TO: REQUESTOR. resubmitCount > 1 adds "(Resubmission #N)" to subject.
+              returnReason and resubmitCount MUST be captured before resubmit()
+              clears the remark columns.
+  PARAMS    : requestId; returnReason — the prior return reason; resubmitCount — new count.
+  FIRES     : handleResubmit (on success).
+*/
 function sendResubmitConfirmToRequestor(requestId, returnReason, resubmitCount) {
   const data = getRequestData(requestId);
   if (!data) return;
@@ -501,6 +714,19 @@ Open this request: ${getPortalUrl(requestId, "request")}`;
 // approver knows what was supposedly fixed.
 // returnReason + resubmitCount captured before resubmit() clears remarks.
 // ============================================================
+/*
+  Function Name: sendResubmitApprovalRequest
+  LAYMAN    : Email sa Approver 1: "Ito ay RESUBMISSION — ito ang dating dahilan
+              ng pagbabalik, paki-review kung na-ayos na." Mas informative kaysa
+              sa generic #1 sendApprovalRequest, para alam ng approver ang context.
+  TECHNICAL : TO: getCurrentApprover(step, group) — always Approver 1 after resubmit.
+              countNote adds "#N" to the subject if resubmitCount > 1. Includes
+              the prior returnReason prominently in the body.
+  PARAMS    : requestId; returnReason — prior return reason; resubmitCount — new count.
+  NOTE      : Only fires if newStatus === PENDING_1. If SYNCING (attachments needed),
+              this email is deferred until checkAttachmentSync fires #1 instead.
+  FIRES     : handleResubmit (on success AND newStatus === PENDING_1).
+*/
 function sendResubmitApprovalRequest(requestId, returnReason, resubmitCount) {
   const data = getRequestData(requestId);
   if (!data) return;

@@ -1,4 +1,51 @@
-<!-- placeholder -->
+<!-- Stylesheet.html -->
+<!--
+  ════════════════════════════════════════════════════════════
+  FILE: Stylesheet.html — Global CSS for the entire portal
+  ════════════════════════════════════════════════════════════
+
+  LAYMAN (Tropang Ex):
+  Lahat ng kulay, spacing, card styles, buttons, at layout rules
+  ng portal ay narito. Isang lugar lang para sa lahat ng CSS para
+  consistent ang design sa bawat page. Huwag maglagay ng CSS sa
+  ibang files — palaging dito.
+
+  TECHNICAL:
+  Included as a <?!= include('frontend/Stylesheet'); ?> scriptlet
+  in Index.html. Defines the :root design-token variables consumed
+  by all other CSS rules. One file = one global stylesheet.
+
+  ────────────────────────────────────────────────────────────
+  SECTIONS (search by comment header)
+  ────────────────────────────────────────────────────────────
+  RESET                  box-sizing, body defaults, font-smoothing
+  DESIGN TOKENS (:root)  all color + layout custom properties
+  TYPOGRAPHY             h1/h2/h3, p, a, .text-muted/.text-small
+  LAYOUT — APP SHELL     .app-shell (flex-row), .app-main (1280px max), .page-header
+  SIDEBAR                .sidebar + .navbar-brand/links/user (was top navbar)
+  CARDS                  .card, .card-header, .card-title
+  STAT CARDS             .stat-grid, .stat-card + clickable/active variants,
+                         .stat-number (+ .blue/.green/.red/.amber), .stat-label
+  BUTTONS                .btn + 5 variants (primary/secondary/success/warning/danger)
+  BADGES                 .badge + 5 status variants
+  TABLES                 .data-table (header/body/hover)
+  FORMS                  .form-section, .form-grid, .form-label, .form-input/select/textarea, .form-actions
+  DETAIL ROWS            .detail-row, .detail-key, .detail-value
+  PROGRESS STEPS         .progress-steps, .step-dot (done/active/declined), .step-line
+  RESUBMIT BANNER        .resubmit-banner
+  ACTION BAR             .action-item, .form-actions
+  FILTER BAR             .filter-bar, .filter-group, .filter-label, .filter-select
+  TWO-COLUMN LAYOUT      .detail-layout, .detail-main, .detail-rail, .action-card overrides
+  LOADING OVERLAY        .loading-overlay, .loading-box, .loading-msg
+  TOASTS                 .toast + .success/.error
+  CONFIRM MODAL          .modal-overlay, .modal, .modal-title/.message/.actions
+  MIGA WIDGET            .miga-widget, .miga-img, .miga-bubble-*
+  EMPTY STATE            .empty-state
+  LOGIN SPLASH           .login-shell, .login-card
+  TAB ROW                .tab-row, .tab, .tab-count (kept for reference)
+  UTILITIES              .hidden, .flex, .gap-sm/md, .mt/mb-sm/md, .text-right, .required
+  RESPONSIVE             @media (max-width:1024px), (max-width:768px), (max-width:640px)
+-->
 <style>
   /* ============================================================
      STYLESHEET.HTML

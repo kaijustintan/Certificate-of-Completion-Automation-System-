@@ -1,10 +1,27 @@
 <!-- NewRequest.html -->
-<!-- ============================================================
-     New request form
-     Loads the approver-group list on first render and caches it
-     on state. Client-side validates the 15 required fields,
-     then calls submitNewRequest().
-     ============================================================ -->
+<!--
+  ════════════════════════════════════════════════════════════
+  FILE: NewRequest.html  (page)
+  ════════════════════════════════════════════════════════════
+
+  LAYMAN (Tropang Ex):
+  Ito ang form para sa bagong request. Nandito ang lahat ng 15 required
+  fields (Request info, Reference numbers, Product, Contract, Purpose).
+  Kapag na-submit, nini-validate muna bago ipadala sa server — kasama na
+  ang "contract end date hindi pwedeng bago sa start date" na rule.
+
+  TECHNICAL:
+  Single-page form (not stepped). 15 required fields + 3 optional. Approver
+  groups cached in state.approverGroups to avoid a re-fetch on each visit.
+  afterRender_new() wires the submit listener once the DOM exists.
+
+  FUNCTIONS:
+    - renderNewRequestPage()    main renderer; loads group list from cache/server
+    - afterRender_new()         hook: wires submit event listener on #new-request-form
+    - onNewRequestSubmit(e)     submit handler; validates → showLoading → callServer
+    - validateNewRequest(form)  checks 15 required fields + contract date logic
+    - formToObject(form)        FormData → plain {field: value} object
+-->
 
 
 <script>
@@ -31,6 +48,14 @@ const NEW_REQUEST_LABELS = {
 const NEW_REQUEST_REQUIRED = Object.keys(NEW_REQUEST_LABELS);
 
 
+/*
+  Function Name: renderNewRequestPage
+  LAYMAN    : Ipakita ang bagong request form. Isang beses lang iload ang group
+              list galing sa server; ulit-ulit na nabubuksan pero cached na.
+  TECHNICAL : Checks state.approverGroups cache; callServer('getApproverGroups')
+              on first open; returns the full form HTML with 5 card sections.
+  RETURNS   : HTML string.
+*/
 async function renderNewRequestPage() {
   // Cache the approver-group list — the form opens often, the list rarely changes.
   if (!state.approverGroups) {
@@ -184,6 +209,13 @@ async function renderNewRequestPage() {
 }
 
 
+/*
+  Function Name: afterRender_new
+  LAYMAN    : Router hook — ginagamit para i-wire ang submit listener pagkatapos
+              malagay ang form sa DOM. Kailangan ito kasi ang form ay nasa innerHTML
+              na, hindi pa nandoon noong nag-render.
+  TECHNICAL : afterRender hook; attaches 'submit' event listener to #new-request-form.
+*/
 // Called by the router after the form is in the DOM.
 function afterRender_new() {
   const form = document.getElementById('new-request-form');
@@ -192,6 +224,17 @@ function afterRender_new() {
 
 
 // ─── SUBMIT FLOW ───────────────────────────────────────────
+/*
+  Function Name: onNewRequestSubmit
+  LAYMAN    : Kapag na-submit ang form: i-validate, ipakita ang loading overlay,
+              itawag ang server, at pumunta sa request detail page kapag matagumpay.
+              Kapag may error, ibalik ang button at ipakita ang toast.
+  TECHNICAL : validateNewRequest first; sets btn.disabled + "Submitting…" text;
+              showLoading; callServer('submitNewRequest'); on success navigateTo
+              'request'; on failure hideLoading + restore btn. expectedAttachments
+              hardcoded to 0 (Phase 8 will repurpose).
+  PARAMS    : e — form submit event.
+*/
 async function onNewRequestSubmit(e) {
   e.preventDefault();
   const form = e.target;
@@ -235,6 +278,16 @@ async function onNewRequestSubmit(e) {
 }
 
 
+/*
+  Function Name: validateNewRequest
+  LAYMAN    : Suriin kung kumpleto ang form bago ipadala. Kung may kulang o mali,
+              ibalik kung anong field at anong mensahe ang ipapakita. Kasama na
+              ang date range check: contract end date hindi pwedeng mas maaga sa start.
+  TECHNICAL : Iterates NEW_REQUEST_REQUIRED; blank trim → return {field, message}.
+              Then contractEnd >= contractStart check.
+  PARAMS    : form — the HTMLFormElement.
+  RETURNS   : { field, message } on first error; null if all valid.
+*/
 // Returns { field, message } or null.
 function validateNewRequest(form) {
   for (let i = 0; i < NEW_REQUEST_REQUIRED.length; i++) {
@@ -259,6 +312,14 @@ function validateNewRequest(form) {
 }
 
 
+/*
+  Function Name: formToObject
+  LAYMAN    : I-convert ang form data sa simpleng object para madaling ipadala
+              sa server.
+  TECHNICAL : FormData → plain {key: value} object via forEach.
+  PARAMS    : form — HTMLFormElement.
+  RETURNS   : Plain object with one key per named form field.
+*/
 // Convert a <form> into a plain {field: value} object.
 function formToObject(form) {
   const obj = {};

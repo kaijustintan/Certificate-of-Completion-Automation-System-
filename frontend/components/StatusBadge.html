@@ -1,13 +1,32 @@
 <!-- StatusBadge.html -->
-<!-- ============================================================
-     StatusBadge component
-     Returns an HTML snippet for a status pill.
-     Status → CSS class mapping lives in JavaScript.html
-     (badgeClassFor) so every consumer stays in sync.
-     ============================================================ -->
+<!--
+  ════════════════════════════════════════════════════════════
+  FILE: StatusBadge.html  (component)
+  ════════════════════════════════════════════════════════════
+
+  LAYMAN (Tropang Ex):
+  Gagawa ng kulay na pill badge para sa status ng request (hal. 🔵 Pending
+  Approver 1, 🟢 Fully Approved). Ginagamit ito sa bawat listahan at sa
+  detail pages. Ang kulay ay nakuha galing sa STATUS_LABELS sa JavaScript.html
+  para consistent sa lahat ng lugar.
+
+  TECHNICAL:
+  Single render function; delegates class resolution to badgeClassFor()
+  so the mapping is centralized in JavaScript.html STATUS_LABELS.
+-->
 
 
 <script>
+/*
+  Function Name: renderStatusBadge
+  LAYMAN    : Gumawa ng HTML na kulay na "pill" para sa status na ito.
+              Ginagamit sa mga table rows at page headers.
+  TECHNICAL : Composes <span class="badge <class>"> using badgeClassFor(status).
+  PARAMS    : status — a STATUS string (or any fallback string).
+  RETURNS   : HTML string — a .badge <span>.
+  EXAMPLE   : renderStatusBadge("Pending Approver 1")
+              → '<span class="badge badge-pending">Pending Approver 1</span>'
+*/
 function renderStatusBadge(status) {
   const cls = badgeClassFor(status);
   return '<span class="badge ' + cls + '">' + escapeHtml(status) + '</span>';

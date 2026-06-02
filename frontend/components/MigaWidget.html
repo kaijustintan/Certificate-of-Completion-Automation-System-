@@ -1,10 +1,22 @@
 <!-- MigaWidget.html -->
-<!-- ============================================================
-     Miga mascot widget
-     Uses placeholder images for now — swap MIGA_IMAGES with real
-     Drive URLs once the PNGs are generated and hosted.
-     Emotions: default | welcome | approved | pending | declined | returned
-     ============================================================ -->
+<!--
+  ════════════════════════════════════════════════════════════
+  FILE: MigaWidget.html  (component)
+  ════════════════════════════════════════════════════════════
+
+  LAYMAN (Tropang Ex):
+  Si Miga ang mascot ng portal. Nagbabago ang kanyang mukha depende sa
+  sitwasyon — masaya kapag approved, nag-aabala kapag may pending, etc.
+  Ginagamit sa dashboards, empty states, at locked notices.
+
+  TECHNICAL:
+  Defines MIGA_IMAGES (currently placehold.co; swap for real Drive URLs),
+  migaImageFor() (emotion→URL), and renderMiga() (full widget HTML).
+
+  ⚠️ TO REPLACE IMAGES:
+    Swap the placehold.co URLs in MIGA_IMAGES with the real hosted PNG URLs.
+    Emotions: default | welcome | approved | pending | declined | returned
+-->
 
 
 <script>
@@ -17,10 +29,25 @@ const MIGA_IMAGES = {
   returned: 'https://placehold.co/64x64/ba7517/ffffff?text=Back',
 };
 
+/*
+  Function Name: migaImageFor
+  LAYMAN    : Anong URL ang larawan ni Miga para sa emotion na ito?
+  TECHNICAL : Falls back to MIGA_IMAGES.default for unknown emotions.
+*/
 function migaImageFor(emotion) {
   return MIGA_IMAGES[emotion] || MIGA_IMAGES.default;
 }
 
+/*
+  Function Name: renderMiga
+  LAYMAN    : Gumawa ng .miga-widget HTML — larawan ni Miga + bubble ng mensahe.
+              Ginagamit sa dashboards, empty states, login splash, at locked notices.
+  TECHNICAL : Returns a .miga-widget div with .miga-img, .miga-bubble-name, and
+              .miga-bubble-text. message/name are escaped.
+  PARAMS    : emotion — one of the 6 variants; message — bubble text; name — label
+              (default 'Miga').
+  RETURNS   : HTML string.
+*/
 // Renders the full mascot widget (image + name + message bubble).
 // Used on dashboards, empty states, login splash, etc.
 function renderMiga(emotion, message, name) {

@@ -1,16 +1,33 @@
 <!-- EmptyState.html -->
-<!-- ============================================================
-     EmptyState component
-     Shown when a list is empty or a page hits an unrecoverable
-     state. Pairs Miga with a short message.
-     Accepts: { title, message, emotion }
-       - title   — required headline
-       - message — optional supporting HTML (already escaped if needed)
-       - emotion — Miga image variant (default | declined | etc.)
-     ============================================================ -->
+<!--
+  ════════════════════════════════════════════════════════════
+  FILE: EmptyState.html  (component)
+  ════════════════════════════════════════════════════════════
+
+  LAYMAN (Tropang Ex):
+  Kapag walang laman ang isang listahan (hal. walang pending requests),
+  hindi lang blank na page ang nakikita — lalabas si Miga na may mensahe.
+  Ginagamit din ito kapag may error sa pag-load ng page.
+
+  TECHNICAL:
+  Single render function that pairs migaImageFor (from MigaWidget) with a
+  title + optional message. Accepts { title, message, emotion }.
+-->
 
 
 <script>
+/*
+  Function Name: renderEmptyState
+  LAYMAN    : Gumawa ng "walang laman" na display — Miga + headline + optional
+              supporting text. Para sa empty lists at unrecoverable errors.
+  TECHNICAL : Uses migaImageFor(emotion) for the image. title is escaped;
+              message is inserted as-is (caller is responsible for escaping).
+  PARAMS    : opts — { title, message, emotion }.
+              title   — headline (default 'Nothing here yet.').
+              message — optional HTML or text (default '').
+              emotion — Miga variant (default 'default').
+  RETURNS   : HTML string — .empty-state div.
+*/
 function renderEmptyState(opts) {
   opts = opts || {};
   const title   = opts.title   || 'Nothing here yet.';

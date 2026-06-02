@@ -1,9 +1,61 @@
 <!-- JavaScript.html -->
-<!-- ============================================================
-     JavaScript.html — Router and runtime brain for the SPA.
-     Includes all component and page partials below so their
-     render functions are available globally before bootstrap runs.
-     ============================================================ -->
+<!--
+  ════════════════════════════════════════════════════════════
+  FILE: JavaScript.html
+  ════════════════════════════════════════════════════════════
+
+  LAYMAN (Tropang Ex):
+  Ito ang "utak" ng buong SPA. Hawak niya: yung global state (sino ang
+  naka-login, nasa anong page), yung router (pag pupunta sa ibang page),
+  yung mga shared utilities (toast, loading overlay, confirm modal, sorting,
+  HTML escaping), at yung bootstrap na nagtatakbo sa simula para malaman kung
+  sino ka at saan ka dadalhin. Lahat ng component at page render functions
+  ay available sa global scope kasi naka-include silang lahat sa Index.html.
+
+  TECHNICAL:
+  Single global script (Apps Script HtmlService, one scope). Loaded LAST in
+  Index.html so all page render functions (defined in page .html includes)
+  are available when bootstrap() runs.
+
+  ────────────────────────────────────────────────────────────
+  OUTLINE
+  ────────────────────────────────────────────────────────────
+  STATE
+    - state                          global {user, currentPage, params, approverGroups}
+
+  SERVER BRIDGE
+    - callServer(fnName, ...args)    Promise wrapper for google.script.run
+
+  UTILITIES
+    - escapeHtml(value)              XSS-safe HTML escaping
+    - showToast(message, type)       auto-dismiss notification
+    - showLoading(message)           full-screen blocking overlay
+    - hideLoading()                  dismiss loading overlay
+    - showConfirm(opts)              Promise-based confirm dialog
+
+  STATUS HELPERS
+    - STATUS_LABELS                  status → {badge, emotion} map
+    - badgeClassFor(status)          badge CSS class
+    - emotionFor(status)             Miga emotion string
+
+  SORT
+    - sortRequests(requests, sortKey) non-mutating array sort
+
+  ROUTING
+    - parseHash()                    parse location.hash → {page, params}
+    - buildHash(page, params)        assemble a hash string
+    - LOADING_HTML                   spinner placeholder between renders
+    - navigateTo(page, params)       main router; renders page; calls hooks
+    - onHashChange()                 browser back/forward handler
+
+  SIDEBAR
+    - refreshNavbar()                populate sidebar with user + role links
+    - updateNavActiveLink()          sync .active class to current page
+
+  BOOTSTRAP
+    - bootstrap()                    on DOMContentLoaded; detects user, routes
+  ════════════════════════════════════════════════════════════
+-->
 
 
 <!-- Reusable components -->
@@ -18,6 +70,14 @@
 // One source of truth for the active user and the current route.
 // Pages read from this; the router writes to it.
 // ============================================================
+/*
+  state — Global singleton
+  LAYMAN    : Isang lugar para sa lahat ng "shared facts" — sino ang naka-login,
+              nasa anong page, at anong params. Dito nagbabasa ang bawat page;
+              dito nagsusulat ang router.
+  TECHNICAL : Mutable object; user is null until bootstrap resolves. Pages
+              should READ but not write state directly — go through navigateTo.
+*/
 const state = {
   user:            null,   // { email, role } once getCurrentUser() resolves
   currentPage:     null,   // string — last page navigated to
@@ -31,6 +91,18 @@ const state = {
 // Wraps google.script.run in a Promise so we can use async/await.
 // Usage:  const user = await callServer('getCurrentUser');
 // ============================================================
+/*
+  Function Name: callServer
+  LAYMAN    : Parang "tawag sa server" — pero naka-async/await friendly para
+              hindi pa kailangang mag-nesting ng callbacks. Ginagamit sa lahat
+              ng tawag sa backend (getMyRequests, handleApprove, etc.).
+  TECHNICAL : google.script.run is callback-based; this wraps it in a Promise
+              so pages can use async/await. fnName is the Apps Script function
+              name (string); remaining args are forwarded.
+  PARAMS    : fnName — server function name; ...args — forwarded arguments.
+  RETURNS   : Promise resolving to the server function's return value.
+  EXAMPLE   : const data = await callServer('getMyRequests');
+*/
 function callServer(fnName, ...args) {
   return new Promise((resolve, reject) => {
     google.script.run
@@ -47,6 +119,16 @@ function callServer(fnName, ...args) {
 // into innerHTML. Project titles can contain quotes / angle
 // brackets that otherwise break layout.
 // ============================================================
+/*
+  Function Name: escapeHtml
+  LAYMAN    : Siguraduhin na ligtas ang text bago ilagay sa HTML — para hindi
+              mabago ang layout kung may "&", "<", ">", '"', o "'" ang
+              pangalan ng project.
+  TECHNICAL : Escapes the 5 HTML special chars. Null/undefined → "".
+  PARAMS    : value — any value (coerced to string).
+  RETURNS   : HTML-safe string.
+  ⚠️ NOTE   : Always use this before inserting user data into innerHTML.
+*/
 function escapeHtml(value) {
   if (value === null || value === undefined) return '';
   return String(value)
@@ -62,6 +144,15 @@ function escapeHtml(value) {
 // TOAST NOTIFICATIONS
 // Auto-dismiss after 3 seconds. Types: 'success' | 'error' | ''.
 // ============================================================
+/*
+  Function Name: showToast
+  LAYMAN    : Ipakita ang maliit na notification sa ibaba-kanan ng screen
+              (hal. "Request approved.") na mawawala pagkatapos ng 3 segundo.
+  TECHNICAL : Toggles .show class and sets .className for the type; auto-removes
+              via setTimeout (3000ms). Clears any prior pending timer so rapid
+              calls don't stack.
+  PARAMS    : message — text to display; type — 'success' | 'error' | '' (default navy).
+*/
 let toastTimer = null;
 function showToast(message, type) {
   const el = document.getElementById('toast');
@@ -81,6 +172,15 @@ function showToast(message, type) {
 // Mounts onto document.body so it survives navigateTo() swapping #app.
 // Always pair showLoading() with hideLoading() in every code path.
 // ============================================================
+/*
+  Function Name: showLoading
+  LAYMAN    : Ipakita ang buong-screen na loading spinner na may mensahe
+              (hal. "Approving…") habang naghihintay ang server response.
+              Naka-mount sa document.body para hindi mabura kapag nag-navigate.
+  TECHNICAL : Creates or reuses #loading-overlay; sets .show class. z-index 2500
+              (above modals at 2000). Always call hideLoading() in all branches.
+  PARAMS    : message — optional label inside the spinner (default "Working…").
+*/
 function showLoading(message) {
   let el = document.getElementById('loading-overlay');
   if (!el) {
@@ -97,6 +197,12 @@ function showLoading(message) {
   el.classList.add('show');
 }
 
+/*
+  Function Name: hideLoading
+  LAYMAN    : I-dismiss ang loading overlay. Palagi itong tawagin sa success,
+              error, at catch branches pagkatapos ng callServer().
+  TECHNICAL : Removes .show from #loading-overlay (if it exists).
+*/
 function hideLoading() {
   const el = document.getElementById('loading-overlay');
   if (el) el.classList.remove('show');
@@ -110,6 +216,21 @@ function hideLoading() {
 // Resolves true on confirm, false on cancel / backdrop click.
 // Mounts itself onto document.body and removes itself on resolve.
 // ============================================================
+/*
+  Function Name: showConfirm
+  LAYMAN    : Pag kailangan ng kumpirmasyon (hal. "Sure ka bang i-approve?"),
+              ito ang ginagamit imbes na yung default na confirm() ng browser.
+              Mas maganda at mas consistent sa design. OK → true; Cancel/X/Esc → false.
+  TECHNICAL : Creates a .modal-overlay dynamically on document.body; returns a
+              Promise that settles exactly once (settled guard prevents double-fire).
+              Supports Escape (cancel) and Enter (confirm) keyboard shortcuts.
+              Removes itself from the DOM on settle.
+  PARAMS    : opts — { title, message, confirmLabel, cancelLabel, danger (bool) }.
+  RETURNS   : Promise<boolean> — true if confirmed, false otherwise.
+
+  EXAMPLE
+    if (!(await showConfirm({ title:'Approve request', confirmLabel:'Approve' }))) return;
+*/
 function showConfirm(opts) {
   opts = opts || {};
   return new Promise(function (resolve) {
@@ -157,6 +278,14 @@ function showConfirm(opts) {
 // Pages and components read from here so we don't sprinkle
 // magic strings across files.
 // ============================================================
+/*
+  STATUS_LABELS — canonical status → {badge, emotion} map.
+  LAYMAN    : Para sa bawat status value, anong kulay ang badge at anong
+              Miga expression ang gagamitin. Iisang lugar para hindi
+              mag-iba-iba ang colors sa iba't ibang page.
+  TECHNICAL : Key = STATUS string; value = {badge: CSS class, emotion: Miga variant}.
+              Consumers use badgeClassFor() and emotionFor() — not this directly.
+*/
 const STATUS_LABELS = {
   'Syncing Files':         { badge: 'badge-syncing',  emotion: 'pending'  },
   'Pending Approver 1':    { badge: 'badge-pending',  emotion: 'pending'  },
@@ -167,10 +296,20 @@ const STATUS_LABELS = {
   'Returned to Requestor': { badge: 'badge-returned', emotion: 'returned' },
 };
 
+/*
+  Function Name: badgeClassFor
+  LAYMAN    : Ano ang CSS class ng badge para sa status na ito?
+  TECHNICAL : Looks up STATUS_LABELS[status].badge; falls back to 'badge-pending'.
+*/
 function badgeClassFor(status) {
   return (STATUS_LABELS[status] && STATUS_LABELS[status].badge) || 'badge-pending';
 }
 
+/*
+  Function Name: emotionFor
+  LAYMAN    : Ano ang expression ni Miga para sa status na ito?
+  TECHNICAL : Looks up STATUS_LABELS[status].emotion; falls back to 'default'.
+*/
 function emotionFor(status) {
   return (STATUS_LABELS[status] && STATUS_LABELS[status].emotion) || 'default';
 }
@@ -182,6 +321,18 @@ function emotionFor(status) {
 // dateFiled format: "MMM dd, yyyy" (e.g. "Jun 02, 2025") —
 // parseable by new Date() in modern browsers.
 // ============================================================
+/*
+  Function Name: sortRequests
+  LAYMAN    : I-sort ang listahan ng requests base sa piniling order
+              (pinakabago, pinakamatanda, alphabetical by project, alphabetical
+              by group). Hindi binabago ang original array — bago array ang ibinabalik.
+  TECHNICAL : Returns a shallow copy (.slice()) sorted by the chosen key.
+              newest/oldest: date sort with controlNumber as a tiebreaker.
+              project/group: localeCompare. Unknown key → unsorted copy.
+  PARAMS    : requests — array of request DTOs; sortKey — 'newest' | 'oldest' |
+              'project' | 'group'.
+  RETURNS   : New sorted array (original unchanged).
+*/
 function sortRequests(requests, sortKey) {
   const arr = requests.slice();
   if (sortKey === 'newest')  return arr.sort(function (a, b) {
@@ -208,6 +359,13 @@ function sortRequests(requests, sortKey) {
 //   #approverDashboard
 // Empty hash → role-based home (resolved inside navigateTo).
 // ============================================================
+/*
+  Function Name: parseHash
+  LAYMAN    : Basahin ang URL hash at i-convert sa { page, params }.
+  TECHNICAL : Strips "#", splits on "/"; first segment = page, rest join as id.
+              Empty hash → { page:'home', params:{} }.
+  RETURNS   : { page: string, params: { id?: string } }.
+*/
 function parseHash() {
   const raw = (location.hash || '').replace(/^#/, '');
   if (!raw) return { page: 'home', params: {} };
@@ -217,6 +375,11 @@ function parseHash() {
   return { page, params };
 }
 
+/*
+  Function Name: buildHash
+  LAYMAN    : Gumawa ng hash string (e.g. "#request/REQ-9b1") para sa URL bar.
+  TECHNICAL : Inverse of parseHash. home/"" → '#'.
+*/
 function buildHash(page, params) {
   if (!page || page === 'home') return '#';
   if (params && params.id) return '#' + page + '/' + params.id;
@@ -230,6 +393,39 @@ const LOADING_HTML =
   '<div>Loading…</div>' +
   '</div>';
 
+/*
+  Function Name: navigateTo
+  LAYMAN    : Pumunta sa ibang page. Lahat ng page-change dito dumadaan —
+              papalitan ang laman ng #app, ia-update ang URL hash, at
+              tatawagan ang afterRender_<page> hook kung may nakarehistro.
+  TECHNICAL : Resolves 'home' to role-based dashboard; writes state; shows
+              LOADING_HTML; calls the page renderer; swaps app.innerHTML;
+              syncs the hash; calls afterRender_<page>(params) if defined.
+              Renders an error-state on exception so the user never sees a blank page.
+  PARAMS    : page — route key or 'home'; params — { id?, ...others }.
+
+  STEPS
+    Step 1 — Resolve 'home' + update state
+      Layman    : 'home' → correct dashboard per role; sulat sa state.
+      Technical : approver→approverDashboard, else→dashboard.
+    Step 2 — Show loading placeholder
+      Layman    : Ipakita muna ang spinner habang nag-a-await.
+      Technical : app.innerHTML = LOADING_HTML.
+    Step 3 — Call the page renderer
+      Layman    : Itawag ang tamang render function (switch on page key).
+      Technical : Each case returns an HTML string; errors → error-state HTML.
+    Step 4 — Swap content + sync URL
+      Layman    : Palitan ang laman ng app, i-update ang hash.
+      Technical : app.innerHTML = html; history.replaceState.
+    Step 5 — Call afterRender hook + update nav
+      Layman    : Kung may registered na event-listener hook para sa page na
+                  ito, tawagin ito; i-sync ang active link.
+      Technical : window['afterRender_' + page](params); updateNavActiveLink().
+
+  EXAMPLE
+    navigateTo('request', { id: 'REQ-9b1' })
+    // → URL becomes #request/REQ-9b1; request detail page renders
+*/
 // Main navigation function — every page change goes through here.
 async function navigateTo(page, params) {
   params = params || {};
@@ -297,7 +493,11 @@ async function navigateTo(page, params) {
 }
 
 
-// Re-route on browser back/forward.
+/*
+  Function Name: onHashChange
+  LAYMAN    : Kapag pinindot ang Back/Forward button ng browser, dito tumutugon.
+  TECHNICAL : window 'hashchange' listener; re-routes to the hash's page+params.
+*/
 function onHashChange() {
   const { page, params } = parseHash();
   navigateTo(page, params);
@@ -305,11 +505,20 @@ function onHashChange() {
 
 
 // ============================================================
-// NAVBAR HOOKS
-// Navbar.html ships with hardcoded onclick="navigateTo('dashboard')".
-// Override after we know the role so approvers also land on their
-// pending list when they click the brand.
+// SIDEBAR HOOKS
+// Sidebar (formerly Navbar) ships with the brand, #navbar-links slot,
+// and #navbar-user-name / #navbar-avatar elements. After user/role is
+// known, refreshNavbar() populates them with the correct links.
 // ============================================================
+/*
+  Function Name: refreshNavbar
+  LAYMAN    : Lagyan ng tamang laman ang sidebar: email ng user, initial
+              letter ng avatar, at mga nav links base sa role (approver →
+              My Approvals + My Requests; requestor → My Requests only).
+  TECHNICAL : Writes display name / initial to #navbar-user-name / #navbar-avatar;
+              rebuilds #navbar-links innerHTML; calls updateNavActiveLink().
+              Depends on state.user being set (bootstrap does this first).
+*/
 function refreshNavbar() {
   if (!state.user) return;
   const email   = state.user.email || '';
@@ -338,9 +547,13 @@ function refreshNavbar() {
   updateNavActiveLink();
 }
 
-// Syncs the .active class on navbar links to the current page.
-// Called after every navigateTo() so the highlight always reflects
-// where the user is.
+/*
+  Function Name: updateNavActiveLink
+  LAYMAN    : I-highlight ang tamang link sa sidebar depende sa nasa anong
+              page tayo ngayon.
+  TECHNICAL : Queries all .navbar-link[data-page]; adds .active to the one
+              matching state.currentPage, removes from others.
+*/
 function updateNavActiveLink() {
   const links = document.querySelectorAll('.navbar-link[data-page]');
   links.forEach(function (link) {
@@ -357,6 +570,42 @@ function updateNavActiveLink() {
 // BOOTSTRAP
 // Runs once on initial page load. Detects role, then routes.
 // ============================================================
+/*
+  Function Name: bootstrap
+  LAYMAN    : Ang unang nagtatakbo pagload ng app. Ipinipinta muna ang login
+              splash (para may makita agad), tapos kinukuha ang user + role
+              mula sa server, pino-populate ang sidebar, at niruruta papunta sa
+              tamang page (deep-link > hash > role-home).
+  TECHNICAL : Renders login first; calls getCurrentUser(); on success sets
+              state.user and refreshNavbar(); then routing priority:
+              1. __INITIAL_ROUTE (email deep-link, doGet-forwarded),
+              2. existing URL hash,
+              3. navigateTo('home').
+  PARAMS    : (none) — fires on DOMContentLoaded.
+
+  STEPS
+    Step 1 — Render login splash
+      Layman    : Ipakita ang login page agad para may makita agad yung user.
+      Technical : await navigateTo('login', {}); (non-blocking render).
+    Step 2 — Fetch user from server
+      Layman    : Itanong sa Google kung sino ka at approver ka ba o requestor.
+      Technical : callServer('getCurrentUser') → { email, role }.
+    Step 3 — Set state + populate sidebar
+      Layman    : Itago ang user info; lagyan ng tamang links ang sidebar.
+      Technical : state.user = user; refreshNavbar().
+    Step 4 — Route based on priority
+      Layman    : Deep-link mula email > may hash na → go there > default home.
+      Technical : window.__INITIAL_ROUTE (doGet) → hash → navigateTo('home').
+    Step 5 — Error fallback
+      Layman    : Kapag may error (e.g. wrong Google account), ipakita ang login
+                  page na may mensahe.
+      Technical : catch → window.__loginError = err.message; navigateTo('login', {error:true}).
+
+  EXAMPLE
+    // User opens portal from email deep-link ?page=review&id=REQ-9b1
+    bootstrap()
+    // → login splash shown briefly → user resolved → directed to review page
+*/
 async function bootstrap() {
   // Mount the login splash immediately so the user sees Miga, not a blank screen.
   await navigateTo('login', {});

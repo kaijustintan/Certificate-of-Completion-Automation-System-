@@ -1,3 +1,23 @@
+<!--
+  ════════════════════════════════════════════════════════════
+  FILE: Navbar.html  (component — markup only)
+  ════════════════════════════════════════════════════════════
+
+  LAYMAN (Tropang Ex):
+  Ito ang left sidebar ng portal. Tatlong parte: brand name sa taas,
+  nav links sa gitna (dinagdagan ni refreshNavbar() depende sa role),
+  at user info + sign-out sa ibaba. Static HTML lang ito — ang JS logic
+  ay nasa refreshNavbar() at updateNavActiveLink() sa JavaScript.html.
+
+  TECHNICAL:
+  Static aside.sidebar markup. Three key hooks used by JavaScript.html:
+    #navbar-links     — innerHTML replaced by refreshNavbar() with role-based links
+    #navbar-user-name — textContent set to the user's email prefix
+    #navbar-avatar    — textContent set to the initial letter
+  .navbar-brand onclick is overridden by refreshNavbar() to navigateTo('home').
+
+  ⚠️ NOTE: Do NOT rename the above IDs/classes — JavaScript.html relies on them.
+-->
 <aside class="sidebar">
 
   <!-- Brand — top of sidebar -->

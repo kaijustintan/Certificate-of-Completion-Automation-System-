@@ -1,13 +1,36 @@
 <!-- Login.html -->
-<!-- ============================================================
-     Login / role-detection splash
-     Shown briefly while bootstrap() resolves getCurrentUser().
-     On failure (empty email returned, or RPC error) renders a
-     welcome-style fallback with a Try again button.
-     ============================================================ -->
+<!--
+  ════════════════════════════════════════════════════════════
+  FILE: Login.html  (page)
+  ════════════════════════════════════════════════════════════
+
+  LAYMAN (Tropang Ex):
+  Ito ang unang nakikita ng user habang nag-aabang ang app ng confirmation
+  galing sa Google kung sino siya. May dalawang estado: (1) loading splash
+  na may Miga at spinner — normal flow habang nag-aabang, at (2) error state
+  kapag hindi matukoy ang Google account.
+
+  TECHNICAL:
+  Transitional page — bootstrap() navigates here first, then immediately
+  routes to the real destination once getCurrentUser() resolves. On error,
+  bootstrap() sets window.__loginError before navigating here with {error:true}.
+
+  FUNCTIONS:
+    - renderLoginPage(params)    happy-path splash | error fallback
+-->
 
 
 <script>
+/*
+  Function Name: renderLoginPage
+  LAYMAN    : Ipakita ang loading screen o ang error page, depende kung may
+              problema sa pag-sign-in.
+  TECHNICAL : Two branches: params.error=true → error state using
+              window.__loginError; else → welcome spinner (auto-advances when
+              bootstrap() finishes and calls navigateTo again).
+  PARAMS    : params — { error?: true } passed by bootstrap on failure.
+  RETURNS   : HTML string.
+*/
 async function renderLoginPage(params) {
   // Error fallback — bootstrap sets window.__loginError before navigating here.
   if (params && params.error) {

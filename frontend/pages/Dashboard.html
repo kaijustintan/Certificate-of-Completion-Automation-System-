@@ -1,10 +1,34 @@
 <!-- Dashboard.html -->
-<!-- ============================================================
-     Dashboard — requestor view
-     Lists every certificate request submitted by the current user
-     plus quick stats. Filter dropdown + sort dropdown replace the
-     old tab row. All filtering/sorting is client-side (no re-fetch).
-     ============================================================ -->
+<!--
+  ════════════════════════════════════════════════════════════
+  FILE: Dashboard.html  (page — requestor view)
+  ════════════════════════════════════════════════════════════
+
+  LAYMAN (Tropang Ex):
+  Ito ang "My Requests" page ng requestor. Makikita dito lahat ng request
+  na isinumite niya, may quick stats (total, in-progress, approved, declined),
+  at pwedeng mag-filter at mag-sort. Ang mga stat cards ay clickable —
+  pag pinindot, nafi-filter agad ang listahan. Lahat ng filtering/sorting
+  ay client-side (iisang server call lang sa load).
+
+  TECHNICAL:
+  Single callServer('getMyRequests') on load; all filter/sort done client-side
+  from cached _dashboardRequests. Stat cards are clickable filters.
+
+  FUNCTIONS:
+    - renderDashboardPage()          main page renderer
+    - renderDashboardControls()      filter-bar HTML (status + sort dropdowns)
+    - afterRender_dashboard()        hook: sync active stat card on first render
+    - dashboardStatClick(filter)     stat card click handler
+    - syncDashboardStatCards()       highlights the active filter's stat card
+    - dashboardFilterChange(el)      status dropdown change
+    - dashboardSortChange(el)        sort dropdown change
+    - applyDashboardView()           filter + sort + re-render #dashboard-list
+    - computeDashboardTabCounts()    {all,pending,approved,returned,declined} counts
+    - getDashboardFilter(status)     status string → filter bucket key
+    - computeRequestorStats()        {total,pending,approved,declined} for stat grid
+    - renderRequestorTable()         <table> HTML for request rows
+-->
 
 
 <script>
@@ -13,6 +37,15 @@ let _dashboardRequests      = [];
 let _dashboardCurrentFilter = 'all';
 let _dashboardCurrentSort   = 'newest';
 
+/*
+  Function Name: renderDashboardPage
+  LAYMAN    : I-load ang lahat ng request ng naka-login na user at ipakita ang
+              buong requestor dashboard — stat cards, filter/sort controls, at
+              ang listahan.
+  TECHNICAL : Awaits getMyRequests(); resets filter/sort state; returns full
+              page HTML including 4 clickable stat cards and #dashboard-list.
+  RETURNS   : HTML string.
+*/
 async function renderDashboardPage() {
   _dashboardRequests      = await callServer('getMyRequests');
   _dashboardCurrentFilter = 'all';
@@ -72,6 +105,15 @@ async function renderDashboardPage() {
 
 // ─── Filter + sort controls ───────────────────────────────
 
+/*
+  Function Name: renderDashboardControls
+  LAYMAN    : Gumawa ng HTML para sa Status dropdown at Sort by dropdown.
+              Kasama ang count per status bucket sa bawat option.
+  TECHNICAL : Builds .filter-bar with two .filter-select elements; options
+              seeded from current _dashboardCurrentFilter and _dashboardCurrentSort.
+  PARAMS    : requests — the full request list (used for counts).
+  RETURNS   : HTML string — the .filter-bar div.
+*/
 function renderDashboardControls(requests) {
   const counts = computeDashboardTabCounts(requests);
   const filterOptions = [
@@ -122,12 +164,23 @@ function dashboardSortChange(el) {
   applyDashboardView();
 }
 
-// Highlight the active stat card on first render (filter starts as 'all').
+/*
+  Function Name: afterRender_dashboard
+  LAYMAN    : Tinatawag ng router pagkatapos ma-render ang dashboard para
+              ma-highlight agad ang tamang stat card (default: "All").
+  TECHNICAL : afterRender hook (called by navigateTo); just calls syncDashboardStatCards().
+*/
 function afterRender_dashboard() {
   syncDashboardStatCards();
 }
 
-// Clicking a stat card sets the status filter and keeps the dropdown in sync.
+/*
+  Function Name: dashboardStatClick
+  LAYMAN    : Kapag pinindot ang isang stat card, i-set ang filter at i-sync
+              ang dropdown at ang highlight ng card.
+  TECHNICAL : Sets _dashboardCurrentFilter; updates dropdown .value; calls applyDashboardView.
+  PARAMS    : filter — one of 'all' | 'pending' | 'approved' | 'declined'.
+*/
 function dashboardStatClick(filter) {
   _dashboardCurrentFilter = filter;
   const sel = document.querySelector('#dashboard-controls .filter-select');
@@ -135,7 +188,12 @@ function dashboardStatClick(filter) {
   applyDashboardView();
 }
 
-// Highlights the stat card matching the active filter (none for 'returned').
+/*
+  Function Name: syncDashboardStatCards
+  LAYMAN    : I-update ang highlight ng stat cards para sa active filter.
+  TECHNICAL : Queries .stat-card[data-filter]; adds/removes .active matching
+              _dashboardCurrentFilter. ('returned' has no stat card → all cards unhighlighted.)
+*/
 function syncDashboardStatCards() {
   const cards = document.querySelectorAll('.stat-card[data-filter]');
   cards.forEach(function (card) {
@@ -147,6 +205,13 @@ function syncDashboardStatCards() {
   });
 }
 
+/*
+  Function Name: applyDashboardView
+  LAYMAN    : I-re-render ang listahan base sa kasalukuyang filter at sort.
+              Tinatawag pagkatapos ng anumang change sa filter, sort, o stat card.
+  TECHNICAL : Syncs stat cards → filters _dashboardRequests → sorts →
+              updates #dashboard-list innerHTML (table or empty state).
+*/
 function applyDashboardView() {
   syncDashboardStatCards();
   const filtered = _dashboardCurrentFilter === 'all'
@@ -183,6 +248,11 @@ function applyDashboardView() {
 
 // ─── Tab count helper (reused for dropdown option labels) ─
 
+/*
+  Function Name: computeDashboardTabCounts
+  LAYMAN    : Bilang ng requests sa bawat bucket para ipakita sa dropdown options.
+  TECHNICAL : Returns {all, pending, approved, returned, declined} counts using getDashboardFilter.
+*/
 function computeDashboardTabCounts(requests) {
   const counts = { all: 0, pending: 0, approved: 0, returned: 0, declined: 0 };
   for (const r of requests) {
@@ -192,6 +262,14 @@ function computeDashboardTabCounts(requests) {
   return counts;
 }
 
+/*
+  Function Name: getDashboardFilter
+  LAYMAN    : Anong bucket ang status na ito? Ginagamit sa pag-filter at sa
+              pagbibilang ng tabs. Lahat ng "Pending Approver N" + "Syncing Files"
+              ay mapupunta sa 'pending' para walang mawala.
+  TECHNICAL : Maps status string → 'approved' | 'declined' | 'returned' | 'pending'.
+              Shared with ApproverDashboard.html and JavaScript.html.
+*/
 // Maps a status string to one of the 4 filter bucket keys.
 function getDashboardFilter(status) {
   if (status === 'Fully Approved')        return 'approved';
@@ -203,6 +281,12 @@ function getDashboardFilter(status) {
 
 // ─── Stats + table ────────────────────────────────────────
 
+/*
+  Function Name: computeRequestorStats
+  LAYMAN    : Bilang para sa stat grid — total, in-progress, approved, declined.
+              NOTE: "returned" ay hindi hiwalay na stat dito (nabibilang sa pending).
+  TECHNICAL : Counts total, approved (Fully Approved), declined, and everything else as pending.
+*/
 function computeRequestorStats(requests) {
   const stats = { total: 0, pending: 0, approved: 0, declined: 0 };
   for (const r of requests) {
@@ -214,6 +298,12 @@ function computeRequestorStats(requests) {
   return stats;
 }
 
+/*
+  Function Name: renderRequestorTable
+  LAYMAN    : Gumawa ng HTML table na may lahat ng requests na ipinasa.
+              Bawat row ay clickable — mapupunta sa request detail page.
+  TECHNICAL : Returns a .data-table HTML string; each <tr> has onclick navigateTo('request',{id}).
+*/
 function renderRequestorTable(requests) {
   const rows = requests.map(function (r) {
     const idAttr = escapeHtml(r.requestId);

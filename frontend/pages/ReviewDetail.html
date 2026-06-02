@@ -1,9 +1,43 @@
 <!-- ReviewDetail.html -->
-<!-- ============================================================
-     ReviewDetail — approver's full-page review with action bar.
-     Reuses helpers defined in RequestDetail.html
-     (renderProgressSteps, renderRequestSummaryCards, etc).
-     ============================================================ -->
+<!--
+  ════════════════════════════════════════════════════════════
+  FILE: ReviewDetail.html  (page — approver view)
+  ════════════════════════════════════════════════════════════
+
+  LAYMAN (Tropang Ex):
+  Ito ang review page ng approver — may buong detalye ng request at ang
+  "Your decision" action card sa right rail (Approve / Return to Requestor /
+  Decline). Ang decline at return ay may inline panel na lumabas para sa remark.
+  Kapag hindi ang naka-login ang dapat kumilos, lalabas ang "locked notice"
+  imbes na action buttons.
+
+  TECHNICAL:
+  Two-column layout: main content left (shared helpers from RequestDetail.html),
+  action rail right (approver chain + locked notice/action bar). Action bar is
+  sticky in the rail (position:sticky on .detail-rail). Action handlers share
+  runReviewAction() for consistent loading + lock behavior.
+
+  SHARED HELPERS USED (defined in RequestDetail.html):
+  renderProgressSteps, renderRequestSummaryCards, renderApproversChain,
+  renderAttachmentsBlock, renderResubmitBanner, getConfiguredApproverSlots
+
+  FUNCTIONS (this file only):
+    - renderReviewDetailPage(params)     main renderer; getRequestDetail + auth check
+    - renderPreviousApprovalNote()       amber notice if approver approved in prior cycle
+    - isCurrentApproverFor()             is the session user the one due to act?
+    - renderLockedNotice()               card explaining why the user can't act
+    - renderActionBar()                  "Your decision" card + inline decline/return panels
+    - openReviewPanel(panelId)           show decline or return panel; hide action buttons
+    - closeReviewPanels()               restore action buttons; hide all panels
+    - setActionItemHidden(btnId, hidden) show/hide a button's .action-item wrapper
+    - syncPanelButton(kind)              enable/disable submit when textarea is filled
+    - onApproveClick()                  showConfirm → runReviewAction('handleApprove', 'Approving…')
+    - onDeclineSubmit()                 showConfirm → runReviewAction('handleDecline', 'Declining…')
+    - onReturnSubmit()                  runReviewAction('handleReturn', 'Returning…')
+    - runReviewAction()                 shared: lockButtons + showLoading + callServer
+    - lockActionButtons()               disables all .action-btn during a call
+    - unlockActionButtons()             re-enables on failure so user can retry
+-->
 
 
 <script>
@@ -12,6 +46,18 @@
 let __reviewDetail = null;
 
 
+/*
+  Function Name: renderReviewDetailPage
+  LAYMAN    : Ipakita ang buong review page ng approver para sa isang request.
+              Kung hindi siya ang current approver, lalabas ang locked notice
+              imbes na action bar. May resubmit banner at previous-approval note
+              kapag naaangkop.
+  TECHNICAL : callServer('getRequestDetail',id); null → empty state. Two-column
+              detail-layout: shared info cards left; approver chain + locked/action
+              right rail. __reviewDetail set for action handlers.
+  PARAMS    : params — { id: requestId }.
+  RETURNS   : HTML string.
+*/
 async function renderReviewDetailPage(params) {
   const id = params && params.id;
   if (!id) {
@@ -80,6 +126,14 @@ async function renderReviewDetailPage(params) {
 // Reminds the current approver if they already approved this request in an
 // earlier cycle (captured in Resubmit_History before resubmit cleared dates).
 // Returns '' if the active user isn't among the recorded previous approvals.
+/*
+  Function Name: renderPreviousApprovalNote
+  LAYMAN    : Kapag nag-approve na ang approver noon (bago i-return ng next
+              approver), ipakita ang reminder: "Nag-approve ka noon — re-review
+              mo please base sa bagong pagbabalik."
+  TECHNICAL : Checks detail.previousApprovals for a matching email; renders
+              amber banner if found. Returns '' if not a prior approver.
+*/
 function renderPreviousApprovalNote(detail, userEmail) {
   const mine = (detail.previousApprovals || []).find(function (a) {
     return a.email === userEmail;
@@ -94,6 +148,15 @@ function renderPreviousApprovalNote(detail, userEmail) {
 
 
 // Returns true if the active user is the approver currently waiting on this request.
+/*
+  Function Name: isCurrentApproverFor
+  LAYMAN    : Ang naka-login ba ang dapat kumilos sa request ngayon? Para lang
+              malaman kung ipapakita ang action bar o ang locked notice.
+  TECHNICAL : Returns true if status starts with "Pending Approver" AND the user
+              matches the current-step slot in the configured approvers.
+  PARAMS    : detail — DTO; userEmail — session email.
+  RETURNS   : Boolean.
+*/
 function isCurrentApproverFor(detail, userEmail) {
   if (!detail || !userEmail) return false;
   if (!String(detail.status || '').startsWith('Pending Approver')) return false;
@@ -106,6 +169,15 @@ function isCurrentApproverFor(detail, userEmail) {
 
 
 // Inline notice shown when the active user is not allowed to act on this request.
+/*
+  Function Name: renderLockedNotice
+  LAYMAN    : Kapag hindi ang naka-login ang dapat kumilos, ipakita ang card na
+              nagsasabing "Hindi ka ang dapat kumilos dito" at kung bakit.
+  TECHNICAL : Returns a .card with Miga + contextual reason (not your request,
+              different step, already declined/approved/returned, etc.).
+  PARAMS    : detail — DTO; userEmail — session email.
+  RETURNS   : HTML string (.card), or '' if user can act.
+*/
 function renderLockedNotice(detail, userEmail) {
   let reason;
   if (!userEmail) {
@@ -131,6 +203,16 @@ function renderLockedNotice(detail, userEmail) {
 
 
 // ─── ACTION BAR + INLINE PANELS ────────────────────────────
+/*
+  Function Name: renderActionBar
+  LAYMAN    : Gumawa ng "Your decision" card na may Approve, Return, at Decline
+              buttons. Kasama rin ang 2 hidden panels na lalabas kapag pinindot ang
+              Return o Decline para makapag-enter ng remark.
+  TECHNICAL : Returns HTML for the .action-card + #decline-panel + #return-panel
+              (both start .hidden). Buttons are .action-btn class (for lock/unlock).
+  NOTE      : The class .action-card scopes the vertical-stack CSS for buttons
+              in the narrow rail layout.
+*/
 function renderActionBar() {
   return '' +
     '<div class="card action-card">' +
@@ -174,6 +256,14 @@ function renderActionBar() {
     '</div>';
 }
 
+/*
+  Function Name: openReviewPanel
+  LAYMAN    : Ipakita ang decline o return remark panel; itago ang ibang
+              action buttons para focused ang UX.
+  TECHNICAL : Removes .hidden from the target panel; hides the other action
+              buttons via setActionItemHidden.
+  PARAMS    : panelId — 'decline-panel' | 'return-panel'.
+*/
 function openReviewPanel(panelId) {
   closeReviewPanels();
   const el = document.getElementById(panelId);
@@ -193,6 +283,12 @@ function openReviewPanel(panelId) {
   if (textarea) textarea.focus();
 }
 
+/*
+  Function Name: closeReviewPanels
+  LAYMAN    : Itago ang decline/return panel at ibalik ang action buttons.
+              Tinatawag ng Cancel buttons sa loob ng mga panel.
+  TECHNICAL : Adds .hidden to both panels; restores action button visibility.
+*/
 function closeReviewPanels() {
   ['decline-panel', 'return-panel'].forEach(function (id) {
     const el = document.getElementById(id);
@@ -214,6 +310,13 @@ function setActionItemHidden(btnId, hidden) {
 }
 
 // Enable/disable the submit button based on textarea content.
+/*
+  Function Name: syncPanelButton
+  LAYMAN    : I-enable ang "Confirm decline/return" button ONLY kapag may laman
+              na ang remark textarea. Huwag pahintulutan ang walang dahilan.
+  TECHNICAL : Reads the textarea value; enables/disables the matching submit button.
+  PARAMS    : kind — 'decline' | 'return'.
+*/
 function syncPanelButton(kind) {
   const remark = document.getElementById(kind + '-remark');
   const button = document.getElementById(kind + '-submit');
@@ -262,6 +365,18 @@ async function onReturnSubmit() {
 
 // Shared action runner — disables the action bar, calls the server,
 // shows a toast, and routes back to the pending list.
+/*
+  Function Name: runReviewAction
+  LAYMAN    : Shared runner para sa Approve, Decline, at Return. Nagla-lock ng
+              buttons, nagpapakita ng loading overlay, tinatawag ang server, at
+              (kapag tagumpay) nag-navigate pabalik sa dashboard. Kapag nag-fail,
+              nag-ibalik ng buttons para makapag-retry.
+  TECHNICAL : lockActionButtons + showLoading → callServer → on success hideLoading
+              + navigateTo('approverDashboard'); on failure hideLoading + showToast
+              + unlockActionButtons.
+  PARAMS    : serverFn — function name; args — array of args; successMessage —
+              toast text; loadingMessage — overlay label.
+*/
 async function runReviewAction(serverFn, args, successMessage, loadingMessage) {
   lockActionButtons();
   showLoading(loadingMessage);
@@ -286,6 +401,12 @@ async function runReviewAction(serverFn, args, successMessage, loadingMessage) {
 // Locks every action button (top bar + panel confirms) the instant a
 // server action starts, so a rapid double-click can't fire it twice
 // before the UI updates.
+/*
+  Function Name: lockActionButtons
+  LAYMAN    : I-disable ang lahat ng action buttons para hindi makapag-double-click
+              habang naghihintay ang server.
+  TECHNICAL : Sets disabled=true, opacity=0.5, cursor=not-allowed on all .action-btn.
+*/
 function lockActionButtons() {
   document.querySelectorAll('.action-btn').forEach(function (btn) {
     btn.disabled      = true;
@@ -296,6 +417,12 @@ function lockActionButtons() {
 
 // Re-enables the action buttons after a FAILED action so the approver
 // can retry. On success the page navigates away, so no unlock is needed.
+/*
+  Function Name: unlockActionButtons
+  LAYMAN    : I-re-enable ang action buttons kapag may error — para makapag-retry
+              ang approver. Hindi kailangan sa success kasi lalayo na sa page.
+  TECHNICAL : Restores disabled=false, clears opacity/cursor overrides on .action-btn.
+*/
 function unlockActionButtons() {
   document.querySelectorAll('.action-btn').forEach(function (btn) {
     btn.disabled      = false;

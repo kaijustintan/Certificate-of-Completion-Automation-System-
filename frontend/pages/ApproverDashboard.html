@@ -1,11 +1,36 @@
 <!-- ApproverDashboard.html -->
-<!-- ============================================================
-     Approver dashboard
-     Both datasets (pending + actioned) are pre-loaded in parallel
-     on page entry so the stat grid has all four counts immediately.
-     View dropdown (Awaiting / Actioned) + sort dropdown replace
-     the old tab row. No lazy-loading.
-     ============================================================ -->
+<!--
+  ════════════════════════════════════════════════════════════
+  FILE: ApproverDashboard.html  (page — approver view)
+  ════════════════════════════════════════════════════════════
+
+  LAYMAN (Tropang Ex):
+  Ito ang "My Approvals" page ng approver. Dalawang listahan: (1) mga
+  naghihintay ng kanyang aksyon ("Awaiting"), at (2) mga ginawa na niya
+  noon ("Actioned by you"). May 4 stat cards na clickable — pag pinindot,
+  diretso sa tamang view + status filter. Sa Actioned view, may additional
+  Status dropdown para ma-filter by Approved/Declined/Returned.
+
+  TECHNICAL:
+  Both datasets fetched in parallel (Promise.all) on page entry — no lazy
+  loading — so the stat grid has all 4 counts immediately. All filtering/
+  sorting is client-side from the caches.
+
+  FUNCTIONS:
+    - renderApproverDashboardPage()         main renderer; parallel fetch
+    - renderApproverControls()              view + sort + conditional status dropdowns
+    - computeApproverActionedCounts()       {all,approved,declined,returned} for status dropdown
+    - afterRender_approverDashboard()       hook: sync active stat card
+    - approverViewChange(el)               view dropdown change
+    - approverSortChange(el)               sort dropdown change
+    - approverActionedStatusChange(el)     status sub-filter change
+    - approverStatClick(view, status)      stat card click handler
+    - syncApproverStatCards()              highlights active stat card
+    - applyApproverView()                  re-render #approver-list + controls
+    - renderApproverAwaitingList(rows)     awaiting list or empty state
+    - renderApproverActionedList(rows)     actioned list or empty state
+    - renderApproverTable(rows)            shared <table> HTML renderer
+-->
 
 
 <script>
@@ -15,6 +40,15 @@ let _approverCurrentView    = 'awaiting';
 let _approverCurrentSort    = 'newest';
 let _approverActionedStatus = 'all'; // 'all' | 'approved' | 'declined' | 'returned' (actioned view only)
 
+/*
+  Function Name: renderApproverDashboardPage
+  LAYMAN    : I-load ang dalawang listahan (pending + actioned) nang sabay-sabay
+              para kumpleto agad ang 4 stat cards pagkakita ng page.
+  TECHNICAL : Promise.all([getPendingApprovals, getMyActionedRequests]); computes
+              4 stat counts; returns full page HTML with clickable stat grid and
+              #approver-controls + #approver-list slots.
+  RETURNS   : HTML string.
+*/
 async function renderApproverDashboardPage() {
   // Pre-load both in parallel so stat grid is complete from the start.
   [_approverPendingCache, _approverActionedCache] = await Promise.all([
@@ -76,6 +110,14 @@ async function renderApproverDashboardPage() {
 
 // ─── View + sort controls ─────────────────────────────────
 
+/*
+  Function Name: renderApproverControls
+  LAYMAN    : Gumawa ng filter bar: View dropdown (Awaiting/Actioned), at
+              kapag Actioned ang pinili, lalabas pa ang Status dropdown na
+              may count bawat outcome (Approved/Declined/Returned/All).
+  TECHNICAL : Renders .filter-bar; conditionally adds status group when
+              _approverCurrentView === 'actioned'. Seeded from current state vars.
+*/
 function renderApproverControls() {
   const viewOptions = [
     { value: 'awaiting', label: 'Awaiting your action' },
@@ -133,7 +175,13 @@ function renderApproverControls() {
   '</div>';
 }
 
-// Counts actioned requests per status bucket (reuses the global getDashboardFilter mapper).
+/*
+  Function Name: computeApproverActionedCounts
+  LAYMAN    : Para sa Status dropdown, bilangin kung ilan ang approved, declined,
+              returned, at lahat sa actioned cache.
+  TECHNICAL : Iterates _approverActionedCache; maps via getDashboardFilter. Returns
+              {all, approved, declined, returned}.
+*/
 function computeApproverActionedCounts() {
   const counts = { all: 0, approved: 0, declined: 0, returned: 0 };
   for (const r of _approverActionedCache) {
@@ -160,19 +208,35 @@ function approverActionedStatusChange(el) {
   applyApproverView();
 }
 
-// Highlight the active stat card on first render (view starts as 'awaiting').
+/*
+  Function Name: afterRender_approverDashboard
+  LAYMAN    : Hook ng router para ma-highlight agad ang "Awaiting" stat card sa simula.
+  TECHNICAL : afterRender hook; calls syncApproverStatCards().
+*/
 function afterRender_approverDashboard() {
   syncApproverStatCards();
 }
 
-// Clicking a stat card sets the view (and status when actioned).
+/*
+  Function Name: approverStatClick
+  LAYMAN    : Pag pinindot ang stat card, diretso sa tamang view at status filter.
+              "Awaiting" card → awaiting view; "Approved/Declined/Returned" cards
+              → actioned view + the matching status.
+  TECHNICAL : Sets _approverCurrentView + _approverActionedStatus; calls applyApproverView.
+  PARAMS    : view — 'awaiting' | 'actioned'; status — 'all' | 'approved' | 'declined' | 'returned'.
+*/
 function approverStatClick(view, status) {
   _approverCurrentView    = view;
   _approverActionedStatus = status || 'all';
   applyApproverView();
 }
 
-// Highlights the stat card matching the active view/status.
+/*
+  Function Name: syncApproverStatCards
+  LAYMAN    : I-highlight ang tamang stat card depende sa active view/status.
+  TECHNICAL : Queries .stat-card[data-statkey]; key is 'awaiting' for the awaiting
+              view, or the status bucket key for the actioned sub-filters.
+*/
 function syncApproverStatCards() {
   const activeKey = _approverCurrentView === 'awaiting' ? 'awaiting' : _approverActionedStatus;
   const cards = document.querySelectorAll('.stat-card[data-statkey]');
@@ -185,6 +249,14 @@ function syncApproverStatCards() {
   });
 }
 
+/*
+  Function Name: applyApproverView
+  LAYMAN    : Mag-re-render ng controls at listahan base sa kasalukuyang view/sort/status.
+              Tinatawag pagkatapos ng anumang stat card click o dropdown change.
+  TECHNICAL : Re-renders #approver-controls (so Status dropdown appears/disappears);
+              syncs stat cards; builds the filtered + sorted rows from the correct cache;
+              updates #approver-list innerHTML.
+*/
 function applyApproverView() {
   // Re-render the controls so the Status dropdown appears/disappears and stays in sync.
   const controlsEl = document.getElementById('approver-controls');
@@ -213,6 +285,11 @@ function applyApproverView() {
 
 // ─── List renderers ───────────────────────────────────────
 
+/*
+  Function Name: renderApproverAwaitingList
+  LAYMAN    : Gumawa ng listahan ng mga naghihintay ng aksyon, o empty state kapag wala.
+  TECHNICAL : Returns renderApproverTable(pending) or empty-state HTML.
+*/
 function renderApproverAwaitingList(pending) {
   if (pending.length === 0) {
     return renderEmptyState({
@@ -224,6 +301,11 @@ function renderApproverAwaitingList(pending) {
   return renderApproverTable(pending);
 }
 
+/*
+  Function Name: renderApproverActionedList
+  LAYMAN    : Gumawa ng listahan ng mga dati nang ginawa, o empty state kapag wala.
+  TECHNICAL : Returns renderApproverTable(actioned) or empty-state HTML.
+*/
 function renderApproverActionedList(actioned) {
   if (actioned.length === 0) {
     return renderEmptyState({
@@ -238,6 +320,14 @@ function renderApproverActionedList(actioned) {
 
 // ─── Shared table ─────────────────────────────────────────
 
+/*
+  Function Name: renderApproverTable
+  LAYMAN    : Gumawa ng HTML table na may approver-specific columns (Control No.,
+              Project, Requestor, Group, Status, Filed). Bawat row ay clickable
+              papunta sa review detail page.
+  TECHNICAL : Returns .data-table HTML; each <tr> onclick navigateTo('review',{id}).
+              Used by both awaiting and actioned list renderers.
+*/
 function renderApproverTable(rows) {
   const tableRows = rows.map(function (r) {
     const idAttr = escapeHtml(r.requestId);

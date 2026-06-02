@@ -1,19 +1,53 @@
 <!-- RequestDetail.html -->
-<!-- ============================================================
-     RequestDetail — requestor's read-only view of one request
-     Also exposes shared helpers that ReviewDetail.html consumes:
-       getConfiguredApproverSlots(detail)
-       renderProgressSteps(detail)
-       renderRequestSummaryCards(detail)
-       renderApproversChain(detail)
-       renderResubmitBanner(detail)
-       renderAttachmentsBlock(detail)
-     ============================================================ -->
+<!--
+  ════════════════════════════════════════════════════════════
+  FILE: RequestDetail.html  (page — requestor read-only view)
+  ════════════════════════════════════════════════════════════
+
+  LAYMAN (Tropang Ex):
+  Ito ang "view your request" page ng requestor. Lahat ng field, approvers,
+  attachments, at resubmit history ay makikita dito. Kung "Returned to
+  Requestor" ang status, lalabas ang "Resubmit request" button. Read-only
+  ang lahat ng iba pa.
+
+  IMPORTANT — SHARED HELPERS:
+  Maraming helpers na naka-define dito ay ginagamit DIN ng ReviewDetail.html.
+  Apps Script shares one global scope, kaya accessible sila kahit ibang file.
+  Huwag i-rename o ilipat nang hindi inuupdate ang ReviewDetail.
+
+  TECHNICAL:
+  Two-column layout (detail-layout): summary cards + attachments on the left,
+  approvers chain + resubmit button on the right rail.
+
+  SHARED HELPERS (consumed by ReviewDetail.html too):
+    - getConfiguredApproverSlots(detail)   non-empty approver slots array
+    - dotStateFor(slotNumber, detail)      'done'|'active'|'declined'|''
+    - renderProgressSteps(detail)          step dots + connecting lines
+    - renderDetailRow(key, value)          single labeled row in .detail-row
+    - renderRequestSummaryCards(detail)    4 info cards (Request/Product/Contract/Purpose)
+    - renderApproversChain(detail, blur)   approver chain with icons + conditional email blur
+    - renderResubmitBanner(detail)         current return entry + collapsible history
+    - renderAttachmentsBlock(detail, canManage)  attachments card
+
+  PAGE FUNCTIONS:
+    - renderRequestDetailPage(params)     main renderer; getRequestDetail + auth
+    - onResubmitClick(requestId)          resubmit handler with confirm + loading overlay
+    - toggleResubmitHistory()             expands/collapses old resubmit history
+-->
 
 
 <script>
 // ─── SHARED HELPERS (also used by ReviewDetail) ────────────
 
+/*
+  Function Name: getConfiguredApproverSlots
+  LAYMAN    : Kuhanin ang listahan ng mga approver ng request (1, 2, o 3),
+              laktawan ang blangkong slots.
+  TECHNICAL : Maps up to 3 approver slots from detail; omits slots where
+              approver is blank. Returns [{n, approver, designation, date, remark}].
+  PARAMS    : detail — the getRequestDetail DTO.
+  RETURNS   : Array of configured slot objects (length 1–3).
+*/
 // Returns the configured approver slots for a request.
 // Slots without a configured approver are omitted.
 function getConfiguredApproverSlots(detail) {
@@ -25,6 +59,15 @@ function getConfiguredApproverSlots(detail) {
 }
 
 
+/*
+  Function Name: dotStateFor
+  LAYMAN    : Para sa isang step-dot sa progress bar, anong kulay/estado ito?
+              Done (nag-approve na), active (naghihintay), declined (tinanggihan
+              dito), o walang laman (hindi pa naaabot).
+  TECHNICAL : Maps slotNumber + detail.status + detail.step to a CSS state string.
+  PARAMS    : slotNumber — 1/2/3; detail — DTO.
+  RETURNS   : 'done' | 'active' | 'declined' | '' (inactive).
+*/
 // Computes the visual state of a single step-dot.
 // Returns one of: 'done' | 'active' | 'declined' | '' (inactive).
 function dotStateFor(slotNumber, detail) {
@@ -47,6 +90,13 @@ function dotStateFor(slotNumber, detail) {
 }
 
 
+/*
+  Function Name: renderProgressSteps
+  LAYMAN    : Iguhit ang mga bilog sa taas ng page para makita kung gaano na
+              ka-advanced ang approval (1→2→3 na may connecting lines).
+  TECHNICAL : Renders .progress-steps with .step-dot divs and .step-line divs;
+              state class from dotStateFor(). Empty slots array → ''.
+*/
 function renderProgressSteps(detail) {
   const slots = getConfiguredApproverSlots(detail);
   if (slots.length === 0) return '';
@@ -68,6 +118,11 @@ function renderProgressSteps(detail) {
 
 
 // Renders one key/value pair as a .detail-row.
+/*
+  Function Name: renderDetailRow
+  LAYMAN    : Isang row ng key-value pair sa request info card.
+  TECHNICAL : Returns a .detail-row div with .detail-key and .detail-value.
+*/
 function renderDetailRow(key, value) {
   const v = (value === null || value === undefined || value === '')
     ? '<span class="text-muted">—</span>'
@@ -81,6 +136,14 @@ function renderDetailRow(key, value) {
 
 
 // Renders the three "summary" cards (request info / product / contract).
+/*
+  Function Name: renderRequestSummaryCards
+  LAYMAN    : Gumawa ng 4 info cards: Request Information, Product Details,
+              Contract, at Purpose/Remark. Ginagamit sa requestor view AT
+              approver review view.
+  TECHNICAL : Returns 4 .card HTML blocks using renderDetailRow per field.
+              Reused by ReviewDetail.html (shared global scope).
+*/
 function renderRequestSummaryCards(detail) {
   return '' +
     '<div class="card">' +
@@ -137,6 +200,17 @@ function renderRequestSummaryCards(detail) {
 // blurFutureEmails — when true (requestor view), an Awaiting approver's email
 // is hidden (shown as "—") until it's their turn; designation always shows.
 // Approvers (ReviewDetail) pass false and see the full chain.
+/*
+  Function Name: renderApproversChain
+  LAYMAN    : I-render ang "Approvers" card sa right rail — sino ang approver,
+              approved na ba, may remark ba, at kailan. Ang mga approver na hindi
+              pa kailangan ay maaaring itago ang email (para sa requestor view).
+  TECHNICAL : Maps configured slots to rows with status icons (✓/✕/↩/⏳/○);
+              blurFutureEmails=true hides emails for awaiting slots (requestor view).
+              blurFutureEmails=false shows all (approver view).
+  PARAMS    : detail — DTO; blurFutureEmails — bool.
+  RETURNS   : .card HTML string.
+*/
 function renderApproversChain(detail, blurFutureEmails) {
   const slots = getConfiguredApproverSlots(detail);
   if (slots.length === 0) return '';
@@ -197,6 +271,15 @@ function renderApproversChain(detail, blurFutureEmails) {
 //             styling, collapsible.
 // Parses detail.resubmitHistory rather than relying on resubmitCount, so the
 // banner also shows on the first return (count still 0, but a [PENDING] exists).
+/*
+  Function Name: renderResubmitBanner
+  LAYMAN    : Kapag may pagbabalik, ipakita ang amber alert na nagsasabi kung
+              BAKIT ibinalik at (kung marami nang resubmit), may collapsible
+              history ng mga nakaraang returns.
+  TECHNICAL : Parses detail.resubmitHistory (separator: "\n\n---\n\n"). Block A
+              = the [PENDING] entry (current return, always shown). Block B =
+              numbered entries (collapsible toggle). Empty history → ''.
+*/
 function renderResubmitBanner(detail) {
   const history = String(detail.resubmitHistory || '').trim();
   if (!history) return '';
@@ -253,6 +336,11 @@ function renderResubmitBanner(detail) {
 
 
 // Toggles the previous-return-history block (Block B) under the banner.
+/*
+  Function Name: toggleResubmitHistory
+  LAYMAN    : Expand/collapse ang old resubmit history sa banner.
+  TECHNICAL : Toggles .hidden on #resubmit-history-block; rotates arrow indicator.
+*/
 function toggleResubmitHistory() {
   const block = document.getElementById('resubmit-history');
   const arrow = document.getElementById('resubmit-arrow');
@@ -264,6 +352,15 @@ function toggleResubmitHistory() {
 
 // Renders the attachments card.
 // canManage = true → show the (disabled) upload placeholder.
+/*
+  Function Name: renderAttachmentsBlock
+  LAYMAN    : Ipakita ang listahan ng mga attachments ng request. Kung
+              requestor at may pahintulot na mag-manage, lalabas ang upload
+              placeholder (Phase 8 feature). Para sa approver view, read-only.
+  TECHNICAL : Renders .card; if canManage=true renders a disabled upload placeholder.
+              blurFutureEmails logic is in renderApproversChain, not here.
+  PARAMS    : detail — DTO; canManage — bool (requestor=true for upload controls).
+*/
 function renderAttachmentsBlock(detail, canManage) {
   const attachments = detail.attachments || [];
   const expected    = Number(detail.expectedAttachments) || 0;
@@ -312,6 +409,18 @@ function renderAttachmentsBlock(detail, canManage) {
 
 
 // ─── PAGE RENDERER ─────────────────────────────────────────
+/*
+  Function Name: renderRequestDetailPage
+  LAYMAN    : Ipakita ang buong detalye ng isang request sa requestor.
+              Kung "Returned" ang status, lalabas ang Resubmit button sa kanang
+              rail. Kung hindi siya ang may-ari → null lang ibabalik ng server
+              at lalabas ang "not found" empty state.
+  TECHNICAL : callServer('getRequestDetail',id); null → empty state. Two-column
+              detail-layout: summary cards + attachments left; approvers chain +
+              resubmit button right rail.
+  PARAMS    : params — { id: requestId }.
+  RETURNS   : HTML string.
+*/
 async function renderRequestDetailPage(params) {
   const id = params && params.id;
   if (!id) {
@@ -371,6 +480,16 @@ async function renderRequestDetailPage(params) {
 
 
 // ─── ACTIONS ───────────────────────────────────────────────
+/*
+  Function Name: onResubmitClick
+  LAYMAN    : Pag pinindot ng requestor ang "Resubmit request": tanungin muna
+              ("Sure ka ba?"), tapos ipakita ang loading overlay, tapos itawag
+              ang server, tapos i-refresh ang page para makita ang bagong status.
+  TECHNICAL : showConfirm → showLoading → callServer('handleResubmit') →
+              on success hideLoading + navigateTo 'request' (same page);
+              on failure hideLoading + showToast.
+  PARAMS    : requestId — the request to resubmit.
+*/
 async function onResubmitClick(requestId) {
   const ok = await showConfirm({
     title:        'Resubmit request',
