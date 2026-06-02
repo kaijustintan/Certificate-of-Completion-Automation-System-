@@ -9,10 +9,11 @@
 
 
 <script>
-let _approverPendingCache  = [];
-let _approverActionedCache = [];
-let _approverCurrentView   = 'awaiting';
-let _approverCurrentSort   = 'newest';
+let _approverPendingCache   = [];
+let _approverActionedCache  = [];
+let _approverCurrentView    = 'awaiting';
+let _approverCurrentSort    = 'newest';
+let _approverActionedStatus = 'all'; // 'all' | 'approved' | 'declined' | 'returned' (actioned view only)
 
 async function renderApproverDashboardPage() {
   // Pre-load both in parallel so stat grid is complete from the start.
@@ -20,8 +21,9 @@ async function renderApproverDashboardPage() {
     callServer('getPendingApprovals'),
     callServer('getMyActionedRequests'),
   ]);
-  _approverCurrentView = 'awaiting';
-  _approverCurrentSort = 'newest';
+  _approverCurrentView    = 'awaiting';
+  _approverCurrentSort    = 'newest';
+  _approverActionedStatus = 'all';
 
   const awaitingCount = _approverPendingCache.length;
   const approvedCount = _approverActionedCache.filter(function (r) { return r.status === 'Fully Approved'; }).length;
@@ -42,26 +44,28 @@ async function renderApproverDashboardPage() {
           : 'You have ' + awaitingCount + ' request' + (awaitingCount === 1 ? '' : 's') + ' waiting on you. Click any row to review.')}
 
     <div class="stat-grid">
-      <div class="stat-card">
+      <div class="stat-card clickable" data-statkey="awaiting" onclick="approverStatClick('awaiting','all')">
         <div class="stat-number blue">${awaitingCount}</div>
         <div class="stat-label">Awaiting your approval</div>
       </div>
-      <div class="stat-card">
+      <div class="stat-card clickable" data-statkey="approved" onclick="approverStatClick('actioned','approved')">
         <div class="stat-number green">${approvedCount}</div>
         <div class="stat-label">Approved by you</div>
       </div>
-      <div class="stat-card">
+      <div class="stat-card clickable" data-statkey="declined" onclick="approverStatClick('actioned','declined')">
         <div class="stat-number red">${declinedCount}</div>
         <div class="stat-label">Declined by you</div>
       </div>
-      <div class="stat-card">
+      <div class="stat-card clickable" data-statkey="returned" onclick="approverStatClick('actioned','returned')">
         <div class="stat-number">${returnedCount}</div>
         <div class="stat-label">Returned by you</div>
       </div>
     </div>
 
     <div class="card">
-      ${renderApproverControls()}
+      <div id="approver-controls">
+        ${renderApproverControls()}
+      </div>
       <div id="approver-list">
         ${renderApproverAwaitingList(sortRequests(_approverPendingCache, 'newest'))}
       </div>
@@ -94,11 +98,34 @@ function renderApproverControls() {
       (o.value === _approverCurrentSort ? ' selected' : '') + '>' + o.label + '</option>';
   }).join('');
 
+  // Status sub-filter only applies to the "Actioned by you" view.
+  let statusGroup = '';
+  if (_approverCurrentView === 'actioned') {
+    const counts = computeApproverActionedCounts();
+    const statusOptions = [
+      { value: 'all',      label: 'All'      },
+      { value: 'approved', label: 'Approved' },
+      { value: 'declined', label: 'Declined' },
+      { value: 'returned', label: 'Returned' },
+    ];
+    const statusHtml = statusOptions.map(function (o) {
+      return '<option value="' + o.value + '"' +
+        (o.value === _approverActionedStatus ? ' selected' : '') + '>' +
+        o.label + ' (' + counts[o.value] + ')</option>';
+    }).join('');
+    statusGroup =
+      '<div class="filter-group">' +
+        '<label class="filter-label">Status</label>' +
+        '<select class="filter-select" onchange="approverActionedStatusChange(this)">' + statusHtml + '</select>' +
+      '</div>';
+  }
+
   return '<div class="filter-bar">' +
     '<div class="filter-group">' +
       '<label class="filter-label">View</label>' +
       '<select class="filter-select" onchange="approverViewChange(this)">' + viewHtml + '</select>' +
     '</div>' +
+    statusGroup +
     '<div class="filter-group">' +
       '<label class="filter-label">Sort by</label>' +
       '<select class="filter-select" onchange="approverSortChange(this)">' + sortHtml + '</select>' +
@@ -106,8 +133,20 @@ function renderApproverControls() {
   '</div>';
 }
 
+// Counts actioned requests per status bucket (reuses the global getDashboardFilter mapper).
+function computeApproverActionedCounts() {
+  const counts = { all: 0, approved: 0, declined: 0, returned: 0 };
+  for (const r of _approverActionedCache) {
+    counts.all++;
+    const bucket = getDashboardFilter(r.status);
+    if (counts[bucket] !== undefined) counts[bucket]++;
+  }
+  return counts;
+}
+
 function approverViewChange(el) {
   _approverCurrentView = el.value;
+  if (_approverCurrentView === 'awaiting') _approverActionedStatus = 'all';
   applyApproverView();
 }
 
@@ -116,9 +155,54 @@ function approverSortChange(el) {
   applyApproverView();
 }
 
+function approverActionedStatusChange(el) {
+  _approverActionedStatus = el.value;
+  applyApproverView();
+}
+
+// Highlight the active stat card on first render (view starts as 'awaiting').
+function afterRender_approverDashboard() {
+  syncApproverStatCards();
+}
+
+// Clicking a stat card sets the view (and status when actioned).
+function approverStatClick(view, status) {
+  _approverCurrentView    = view;
+  _approverActionedStatus = status || 'all';
+  applyApproverView();
+}
+
+// Highlights the stat card matching the active view/status.
+function syncApproverStatCards() {
+  const activeKey = _approverCurrentView === 'awaiting' ? 'awaiting' : _approverActionedStatus;
+  const cards = document.querySelectorAll('.stat-card[data-statkey]');
+  cards.forEach(function (card) {
+    if (card.getAttribute('data-statkey') === activeKey) {
+      card.classList.add('active');
+    } else {
+      card.classList.remove('active');
+    }
+  });
+}
+
 function applyApproverView() {
-  const cache  = _approverCurrentView === 'awaiting' ? _approverPendingCache : _approverActionedCache;
-  const sorted = sortRequests(cache, _approverCurrentSort);
+  // Re-render the controls so the Status dropdown appears/disappears and stays in sync.
+  const controlsEl = document.getElementById('approver-controls');
+  if (controlsEl) controlsEl.innerHTML = renderApproverControls();
+  syncApproverStatCards();
+
+  let rows;
+  if (_approverCurrentView === 'awaiting') {
+    rows = _approverPendingCache;
+  } else if (_approverActionedStatus === 'all') {
+    rows = _approverActionedCache;
+  } else {
+    rows = _approverActionedCache.filter(function (r) {
+      return getDashboardFilter(r.status) === _approverActionedStatus;
+    });
+  }
+  const sorted = sortRequests(rows, _approverCurrentSort);
+
   const listEl = document.getElementById('approver-list');
   if (!listEl) return;
   listEl.innerHTML = _approverCurrentView === 'awaiting'

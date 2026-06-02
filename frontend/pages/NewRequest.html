@@ -214,17 +214,21 @@ async function onNewRequestSubmit(e) {
     btn.disabled = true;
     btn.textContent = 'Submitting…';
   }
+  showLoading('Submitting…');
 
   try {
     const result = await callServer('submitNewRequest', data);
     if (result && result.success) {
+      hideLoading();
       showToast('Request submitted — ' + result.controlNumber, 'success');
       navigateTo('request', { id: result.requestId });
     } else {
+      hideLoading();
       showToast((result && result.message) || 'Failed to submit.', 'error');
       if (btn) { btn.disabled = false; btn.textContent = 'Submit request'; }
     }
   } catch (err) {
+    hideLoading();
     showToast((err && err.message) || 'Server error.', 'error');
     if (btn) { btn.disabled = false; btn.textContent = 'Submit request'; }
   }

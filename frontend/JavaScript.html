@@ -76,6 +76,34 @@ function showToast(message, type) {
 
 
 // ============================================================
+// LOADING OVERLAY
+// Full-screen blocking spinner for in-flight server actions.
+// Mounts onto document.body so it survives navigateTo() swapping #app.
+// Always pair showLoading() with hideLoading() in every code path.
+// ============================================================
+function showLoading(message) {
+  let el = document.getElementById('loading-overlay');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'loading-overlay';
+    el.className = 'loading-overlay';
+    document.body.appendChild(el);
+  }
+  el.innerHTML =
+    '<div class="loading-box">' +
+      '<div class="spinner"></div>' +
+      '<div class="loading-msg">' + escapeHtml(message || 'Working…') + '</div>' +
+    '</div>';
+  el.classList.add('show');
+}
+
+function hideLoading() {
+  const el = document.getElementById('loading-overlay');
+  if (el) el.classList.remove('show');
+}
+
+
+// ============================================================
 // CONFIRM MODAL
 // Promise-based replacement for the native confirm() dialog.
 // Usage:  if (!(await showConfirm({ title, message, confirmLabel, danger }))) return;

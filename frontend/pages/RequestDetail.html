@@ -352,10 +352,20 @@ async function renderRequestDetailPage(params) {
 
     ${renderProgressSteps(detail)}
     ${renderResubmitBanner(detail)}
-    ${renderRequestSummaryCards(detail)}
-    ${renderAttachmentsBlock(detail, isOwner)}
-    ${renderApproversChain(detail, true)}
-    ${resubmitBar}
+
+    <div class="detail-layout">
+
+      <div class="detail-main">
+        ${renderRequestSummaryCards(detail)}
+        ${renderAttachmentsBlock(detail, isOwner)}
+      </div>
+
+      <div class="detail-rail">
+        ${renderApproversChain(detail, true)}
+        ${resubmitBar}
+      </div>
+
+    </div>
   `;
 }
 
@@ -369,15 +379,19 @@ async function onResubmitClick(requestId) {
   });
   if (!ok) return;
 
+  showLoading('Resubmitting…');
   try {
     const result = await callServer('handleResubmit', requestId);
     if (result && result.success) {
+      hideLoading();
       showToast('Request resubmitted.', 'success');
       navigateTo('request', { id: requestId });
     } else {
+      hideLoading();
       showToast((result && result.message) || 'Failed to resubmit.', 'error');
     }
   } catch (err) {
+    hideLoading();
     showToast((err && err.message) || 'Server error.', 'error');
   }
 }

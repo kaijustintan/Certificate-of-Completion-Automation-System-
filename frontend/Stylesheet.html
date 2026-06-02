@@ -59,9 +59,9 @@
 
 
   /* ─── TYPOGRAPHY ────────────────────────────────────────── */
-  h1 { font-size: 22px; font-weight: 500; color: var(--gray-900); }
+  h1 { font-size: 28px; font-weight: 600; color: var(--gray-900); }
   h2 { font-size: 18px; font-weight: 500; color: var(--gray-900); }
-  h3 { font-size: 15px; font-weight: 500; color: var(--gray-900); }
+  h3 { font-size: 16px; font-weight: 500; color: var(--gray-900); }
   p  { color: var(--gray-900); }
   a  { color: var(--blue-text); text-decoration: none; }
   a:hover { text-decoration: underline; }
@@ -75,15 +75,16 @@
   .app-shell {
     min-height: 100vh;
     display: flex;
-    flex-direction: column;
+    flex-direction: row; /* sidebar + content side by side */
   }
 
   .app-main {
     flex: 1;
-    max-width: 1100px;
+    min-width: 0;         /* prevent flex-row table/grid overflow */
+    max-width: 1280px;
     width: 100%;
     margin: 0 auto;
-    padding: 24px 32px 64px;
+    padding: 28px 36px 64px;
   }
 
   .page-header {
@@ -95,34 +96,80 @@
     gap: 12px;
   }
 
-  .page-title { font-size: 22px; font-weight: 500; margin-bottom: 2px; }
+  .page-title { font-size: 28px; font-weight: 600; margin-bottom: 4px; }
   .page-subtitle { font-size: 13px; color: var(--gray-600); }
 
 
-  /* ─── NAVBAR ────────────────────────────────────────────── */
-  .navbar {
+  /* ─── SIDEBAR (was NAVBAR — same inner IDs/classes, no JS change needed) ─ */
+  .sidebar {
+    width: 240px;
+    flex-shrink: 0;
     background: var(--navy-900);
     color: var(--white);
-    height: 56px;
+    height: 100vh;
+    position: sticky;
+    top: 0;
     display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 0 32px;
-    box-shadow: var(--shadow-sm);
+    flex-direction: column;
+    padding: 0;
+    overflow-y: auto;
+    z-index: 100;
   }
   .navbar-brand {
-    font-size: 14px;
-    font-weight: 500;
+    font-size: 13px;
+    font-weight: 600;
     letter-spacing: 0.02em;
     color: var(--white);
     cursor: pointer;
+    padding: 24px 20px 20px;
+    line-height: 1.4;
+    border-bottom: 1px solid rgba(255,255,255,0.08);
   }
+  /* Nav links — vertical stack, grows to fill, pushes user block down */
+  .navbar-links {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    flex: 1;
+    padding: 12px 8px;
+  }
+  .navbar-link {
+    display: flex;
+    align-items: center;
+    height: auto;
+    padding: 10px 14px;
+    font-size: 13px;
+    color: #c5d4e3;
+    cursor: pointer;
+    border-radius: var(--radius-md);
+    border-bottom: none;
+    transition: background 0.15s ease, color 0.15s ease;
+    user-select: none;
+  }
+  .navbar-link:hover:not(.active) {
+    background: var(--navy-800);
+    color: var(--white);
+  }
+  .navbar-link.active {
+    background: var(--navy-700);
+    color: var(--white);
+    font-weight: 500;
+    box-shadow: inset 3px 0 0 rgba(255,255,255,0.6);
+  }
+  /* User block — pinned to bottom */
   .navbar-user {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 16px 20px;
+    border-top: 1px solid rgba(255,255,255,0.08);
+    font-size: 12px;
+    color: #c5d4e3;
+  }
+  .navbar-user-row {
     display: flex;
     align-items: center;
     gap: 10px;
-    font-size: 13px;
-    color: #c5d4e3;
   }
   .navbar-avatar {
     width: 32px;
@@ -132,34 +179,28 @@
     color: var(--white);
     font-size: 12px;
     font-weight: 500;
+    flex-shrink: 0;
     display: flex;
     align-items: center;
     justify-content: center;
   }
-  .navbar-links {
-    display: flex;
-    align-items: center;
-    height: 100%;
-    gap: 2px;
-  }
-  .navbar-link {
-    display: flex;
-    align-items: center;
-    height: 100%;
-    padding: 0 14px;
-    font-size: 13px;
-    color: #c5d4e3;
-    cursor: pointer;
-    border-bottom: 2px solid transparent;
-    transition: color 0.15s ease, border-color 0.15s ease;
-    user-select: none;
-  }
-  .navbar-link:hover:not(.active) { color: var(--white); }
-  .navbar-link.active {
+  .navbar-user-name {
+    font-size: 12px;
     color: var(--white);
-    border-bottom-color: var(--white);
     font-weight: 500;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
+  .navbar-signout {
+    font-size: 11px;
+    color: #8ba3bc;
+    text-decoration: none;
+    display: block;
+    padding-left: 42px; /* aligned under username (avatar 32 + gap 10) */
+    transition: color 0.15s;
+  }
+  .navbar-signout:hover { color: var(--white); text-decoration: none; }
 
 
   /* ─── CARDS ─────────────────────────────────────────────── */
@@ -167,7 +208,8 @@
     background: var(--white);
     border: 1px solid var(--gray-200);
     border-radius: var(--radius-lg);
-    padding: 20px 24px;
+    box-shadow: var(--shadow-sm);
+    padding: 22px 24px;
     margin-bottom: 16px;
   }
   .card-header {
@@ -176,9 +218,9 @@
     align-items: center;
     margin-bottom: 16px;
     padding-bottom: 12px;
-    border-bottom: 1px solid var(--gray-200);
+    border-bottom: 1px solid var(--gray-100);
   }
-  .card-title { font-size: 15px; font-weight: 500; }
+  .card-title { font-size: 16px; font-weight: 600; }
 
 
   /* ─── STAT CARDS (dashboard summary) ────────────────────── */
@@ -191,12 +233,30 @@
   .stat-card {
     background: var(--white);
     border: 1px solid var(--gray-200);
+    border-left: 3px solid var(--gray-200); /* colored per variant below */
     border-radius: var(--radius-md);
+    box-shadow: var(--shadow-sm);
     padding: 16px 18px;
   }
+  /* Colored left border keyed to the number variant (:has() — safe in Chrome/Edge) */
+  .stat-card:has(.stat-number.blue)  { border-left-color: var(--blue-text); }
+  .stat-card:has(.stat-number.green) { border-left-color: var(--green-text); }
+  .stat-card:has(.stat-number.red)   { border-left-color: var(--red-text); }
+  .stat-card:has(.stat-number.amber) { border-left-color: var(--amber-text); }
+  .stat-card.clickable {
+    cursor: pointer;
+    transition: box-shadow 0.15s ease, transform 0.15s ease;
+  }
+  .stat-card.clickable:hover {
+    box-shadow: var(--shadow-md);
+    transform: translateY(-1px);
+  }
+  .stat-card.active {
+    box-shadow: inset 0 0 0 2px var(--navy-700);
+  }
   .stat-number {
-    font-size: 26px;
-    font-weight: 500;
+    font-size: 28px;
+    font-weight: 600;
     line-height: 1.2;
     color: var(--gray-900);
   }
@@ -271,8 +331,9 @@
     display: inline-block;
     font-size: 11px;
     font-weight: 500;
-    padding: 3px 10px;
+    padding: 4px 12px;
     border-radius: 12px;
+    line-height: 1;
     white-space: nowrap;
   }
   .badge-pending  { background: var(--blue-bg);   color: var(--blue-text); }
@@ -389,6 +450,9 @@
     color: var(--gray-900);
     text-align: right;
     flex: 1;
+    overflow-wrap: break-word;
+    word-break: break-word;
+    min-width: 0; /* flex child must declare this to allow shrinking */
   }
 
 
@@ -574,6 +638,110 @@
   }
 
 
+  /* ─── TWO-COLUMN DETAIL LAYOUT ─────────────────────────── */
+  /* Used by ReviewDetail and RequestDetail for main+rail layout */
+  .detail-layout {
+    display: grid;
+    grid-template-columns: 1fr 320px;
+    gap: 20px;
+    align-items: start; /* required for sticky rail to work */
+  }
+  /* Grid children must have min-width:0 or content wider than the track
+     will overflow the grid and cause a horizontal scrollbar */
+  .detail-main,
+  .detail-rail {
+    min-width: 0;
+  }
+  .detail-rail {
+    position: sticky;
+    top: 24px;
+    max-height: calc(100vh - 48px);
+    overflow-y: auto;
+    overflow-x: hidden;
+  }
+
+  /* Inside the narrow rail, switch detail-rows to a stacked layout
+     (label on top, value below) so long emails don't overflow or overlap */
+  .detail-rail .detail-row {
+    flex-direction: column;
+    gap: 2px;
+  }
+  .detail-rail .detail-key {
+    min-width: 0;
+    font-size: 11px;
+  }
+  .detail-rail .detail-value {
+    text-align: left;
+    overflow-wrap: break-word;
+    word-break: break-word;
+  }
+
+  /* Action buttons in the sticky rail: stack vertically, full width */
+  .action-card .form-actions {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
+  }
+  .action-card .form-actions .btn {
+    width: 100%;
+    justify-content: center;
+  }
+  /* Collapse to single column on narrower viewports */
+  @media (max-width: 1024px) {
+    .detail-layout {
+      grid-template-columns: 1fr;
+    }
+    .detail-main,
+    .detail-rail {
+      min-width: 0;
+    }
+    .detail-rail {
+      position: static;
+      max-height: none;
+      overflow-x: visible;
+    }
+    /* Restore normal row layout when stacked single-column */
+    .detail-rail .detail-row {
+      flex-direction: row;
+      gap: 16px;
+    }
+    .detail-rail .detail-key { min-width: 160px; font-size: 12px; }
+    .detail-rail .detail-value { text-align: right; }
+  }
+
+
+  /* ─── LOADING OVERLAY (in-flight server actions) ────────── */
+  .loading-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(15, 23, 42, 0.45);
+    display: none;
+    align-items: center;
+    justify-content: center;
+    z-index: 2500; /* above the confirm modal (2000) so it can cover one */
+  }
+  .loading-overlay.show {
+    display: flex;
+  }
+  .loading-box {
+    background: var(--white);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-md);
+    padding: 24px 32px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 12px;
+  }
+  .loading-box .spinner {
+    margin-bottom: 0;
+  }
+  .loading-msg {
+    font-size: 13px;
+    color: var(--gray-600);
+  }
+
+
   /* ─── TOASTS / NOTIFICATIONS ────────────────────────────── */
   .toast {
     position: fixed;
@@ -681,9 +849,58 @@
 
 
   /* ─── RESPONSIVE ────────────────────────────────────────── */
+
+  /* Sidebar collapses to a horizontal top bar at narrow widths */
+  @media (max-width: 768px) {
+    .app-shell { flex-direction: column; }
+    .sidebar {
+      width: 100%;
+      height: auto;
+      position: static;
+      flex-direction: row;
+      flex-wrap: wrap;
+      align-items: center;
+      padding: 0 12px;
+    }
+    .navbar-brand {
+      padding: 12px 8px;
+      border-bottom: none;
+      border-right: 1px solid rgba(255,255,255,0.08);
+      margin-right: 4px;
+      flex-shrink: 0;
+    }
+    .navbar-links {
+      flex-direction: row;
+      flex: 1;
+      padding: 0;
+      gap: 0;
+      overflow-x: auto;
+    }
+    .navbar-link {
+      padding: 14px 12px;
+      border-radius: 0;
+      white-space: nowrap;
+    }
+    .navbar-link.active {
+      box-shadow: none;
+      border-bottom: 2px solid var(--white);
+      background: transparent;
+    }
+    .navbar-user {
+      flex-direction: row;
+      align-items: center;
+      border-top: none;
+      border-left: 1px solid rgba(255,255,255,0.08);
+      padding: 0 12px;
+      gap: 8px;
+      margin-left: auto;
+    }
+    .navbar-user-row { gap: 6px; }
+    .navbar-signout { padding-left: 0; }
+  }
+
   @media (max-width: 640px) {
     .app-main { padding: 16px; }
-    .navbar { padding: 0 16px; }
     .form-grid { grid-template-columns: 1fr; }
     .page-header { flex-direction: column; }
   }

@@ -1,22 +1,25 @@
-<nav class="navbar">
+<aside class="sidebar">
 
-  <!-- Left side: brand -->
+  <!-- Brand — top of sidebar -->
   <div class="navbar-brand" onclick="navigateTo('dashboard')">
-    Megaworld E-Certificate Portal
+    Megaworld<br>E-Certificate Portal
   </div>
 
-  <!-- Center: role-based nav links (populated by refreshNavbar()) -->
+  <!-- Role-based nav links — populated by refreshNavbar() -->
+  <!-- refreshNavbar() injects <span class="navbar-link" data-page="..."> spans here -->
   <div id="navbar-links" class="navbar-links"></div>
 
-  <!-- Right side: user info + sign out -->
+  <!-- User info + sign out — pinned to bottom -->
   <div class="navbar-user">
-    <span id="navbar-user-name">Loading…</span>
-    <div id="navbar-avatar" class="navbar-avatar">—</div>
-    <a href="https://accounts.google.com/Logout"
-       target="_top"
-       style="color: #c5d4e3; font-size: 12px; margin-left: 8px;">
+    <div class="navbar-user-row">
+      <div id="navbar-avatar" class="navbar-avatar">—</div>
+      <span id="navbar-user-name" class="navbar-user-name">Loading…</span>
+    </div>
+    <a class="navbar-signout"
+       href="https://accounts.google.com/Logout"
+       target="_top">
       Sign out
     </a>
   </div>
 
-</nav>
+</aside>

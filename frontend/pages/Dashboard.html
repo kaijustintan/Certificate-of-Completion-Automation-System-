@@ -40,26 +40,28 @@ async function renderDashboardPage() {
     ${renderMiga('welcome', 'Welcome back! Here\'s where your requests live. Click any row to see its full history.')}
 
     <div class="stat-grid">
-      <div class="stat-card">
+      <div class="stat-card clickable" data-filter="all" onclick="dashboardStatClick('all')">
         <div class="stat-number">${stats.total}</div>
         <div class="stat-label">Total</div>
       </div>
-      <div class="stat-card">
+      <div class="stat-card clickable" data-filter="pending" onclick="dashboardStatClick('pending')">
         <div class="stat-number blue">${stats.pending}</div>
         <div class="stat-label">In progress</div>
       </div>
-      <div class="stat-card">
+      <div class="stat-card clickable" data-filter="approved" onclick="dashboardStatClick('approved')">
         <div class="stat-number green">${stats.approved}</div>
         <div class="stat-label">Approved</div>
       </div>
-      <div class="stat-card">
+      <div class="stat-card clickable" data-filter="declined" onclick="dashboardStatClick('declined')">
         <div class="stat-number red">${stats.declined}</div>
         <div class="stat-label">Declined</div>
       </div>
     </div>
 
     <div class="card">
-      ${renderDashboardControls(_dashboardRequests)}
+      <div id="dashboard-controls">
+        ${renderDashboardControls(_dashboardRequests)}
+      </div>
       <div id="dashboard-list">
         ${initialList}
       </div>
@@ -120,7 +122,33 @@ function dashboardSortChange(el) {
   applyDashboardView();
 }
 
+// Highlight the active stat card on first render (filter starts as 'all').
+function afterRender_dashboard() {
+  syncDashboardStatCards();
+}
+
+// Clicking a stat card sets the status filter and keeps the dropdown in sync.
+function dashboardStatClick(filter) {
+  _dashboardCurrentFilter = filter;
+  const sel = document.querySelector('#dashboard-controls .filter-select');
+  if (sel) sel.value = filter;
+  applyDashboardView();
+}
+
+// Highlights the stat card matching the active filter (none for 'returned').
+function syncDashboardStatCards() {
+  const cards = document.querySelectorAll('.stat-card[data-filter]');
+  cards.forEach(function (card) {
+    if (card.getAttribute('data-filter') === _dashboardCurrentFilter) {
+      card.classList.add('active');
+    } else {
+      card.classList.remove('active');
+    }
+  });
+}
+
 function applyDashboardView() {
+  syncDashboardStatCards();
   const filtered = _dashboardCurrentFilter === 'all'
     ? _dashboardRequests
     : _dashboardRequests.filter(function (r) {

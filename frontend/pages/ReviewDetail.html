@@ -58,11 +58,21 @@ async function renderReviewDetailPage(params) {
     ${renderProgressSteps(detail)}
     ${renderResubmitBanner(detail)}
     ${prevApprovalNote}
-    ${renderRequestSummaryCards(detail)}
-    ${renderAttachmentsBlock(detail, false)}
-    ${renderApproversChain(detail, false)}
-    ${lockedNotice}
-    ${actionBar}
+
+    <div class="detail-layout">
+
+      <div class="detail-main">
+        ${renderRequestSummaryCards(detail)}
+        ${renderAttachmentsBlock(detail, false)}
+      </div>
+
+      <div class="detail-rail">
+        ${renderApproversChain(detail, false)}
+        ${lockedNotice}
+        ${actionBar}
+      </div>
+
+    </div>
   `;
 }
 
@@ -123,7 +133,7 @@ function renderLockedNotice(detail, userEmail) {
 // ─── ACTION BAR + INLINE PANELS ────────────────────────────
 function renderActionBar() {
   return '' +
-    '<div class="card">' +
+    '<div class="card action-card">' +
       '<div class="card-header"><div class="card-title">Your decision</div></div>' +
       renderMiga('pending', 'Approve to route this to the next signatory, decline to close it out, or return it to the requestor for changes.') +
       '<div class="form-actions">' +
@@ -223,7 +233,7 @@ async function onApproveClick() {
     confirmLabel: 'Approve',
   });
   if (!ok) return;
-  await runReviewAction('handleApprove', [id], 'Request approved.');
+  await runReviewAction('handleApprove', [id], 'Request approved.', 'Approving…');
 }
 
 async function onDeclineSubmit() {
@@ -238,7 +248,7 @@ async function onDeclineSubmit() {
     danger:       true,
   });
   if (!ok) return;
-  await runReviewAction('handleDecline', [id, remark.trim()], 'Request declined.');
+  await runReviewAction('handleDecline', [id, remark.trim()], 'Request declined.', 'Declining…');
 }
 
 async function onReturnSubmit() {
@@ -246,24 +256,28 @@ async function onReturnSubmit() {
   const remark = (document.getElementById('return-remark') || {}).value;
   if (!id || !remark || !remark.trim()) return;
 
-  await runReviewAction('handleReturn', [id, remark.trim()], 'Request returned to the requestor.');
+  await runReviewAction('handleReturn', [id, remark.trim()], 'Request returned to the requestor.', 'Returning…');
 }
 
 
 // Shared action runner — disables the action bar, calls the server,
 // shows a toast, and routes back to the pending list.
-async function runReviewAction(serverFn, args, successMessage) {
+async function runReviewAction(serverFn, args, successMessage, loadingMessage) {
   lockActionButtons();
+  showLoading(loadingMessage);
   try {
     const result = await callServer.apply(null, [serverFn].concat(args));
     if (result && result.success) {
+      hideLoading();
       showToast(successMessage, 'success');
       navigateTo('approverDashboard');
     } else {
+      hideLoading();
       showToast((result && result.message) || 'Action failed.', 'error');
       unlockActionButtons();
     }
   } catch (err) {
+    hideLoading();
     showToast((err && err.message) || 'Server error.', 'error');
     unlockActionButtons();
   }
