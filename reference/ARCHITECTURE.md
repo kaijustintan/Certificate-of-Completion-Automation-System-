@@ -13,6 +13,8 @@
 
 ---
 
+> **📍 STATUS NOTE (added after Categories 1–4):** This document predates the Category 1–4 build rounds and the COC/admin decisions. Several "Known Gaps" listed below — intermediate-approver confirmation email (#3), requestor progress email (#4), and approver actioned-view (#5) — are now **IMPLEMENTED**. For the current authoritative build status and the forward roadmap (Phases 8–10, go-live), see **`reference/ROADMAP.md`**. This doc remains the best reference for the original AppSheet behavior and the migration design rationale.
+
 ## Table of Contents
 
 1. [Overview](#1-overview)

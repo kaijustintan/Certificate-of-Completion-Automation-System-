@@ -2,6 +2,8 @@
 **Source file:** `ECertificate_Automation.xlsx`  
 **Purpose:** Ground truth for all Apps Script code. Every column referenced in code must use the index numbers from this file — not the ARCHITECTURE.md, not assumptions. This file is the truth.
 
+> **⚠️ Update (Category 4):** `Certificate_Requests` is now **35 columns** — `Last_Action_By` (AI/35) was added AFTER this Phase 1 audit. See the table + constant block below (both updated). The current authoritative map also lives in `backend/Constants.js`. For overall build status see `reference/ROADMAP.md`.
+
 ---
 
 ## Important discoveries from the actual file
@@ -90,8 +92,8 @@ function getApprovers(groupName) {
 
 ## Sheet 2: `Certificate_Requests`
 
-**Total columns:** 34  
-**Total data rows:** 0 (no requests submitted yet)  
+**Total columns:** 35 *(34 at Phase-1 audit + `Last_Action_By` added in Category 4)*  
+**Total data rows:** varies (test data present as of Cat 4 testing)  
 **Sheet tab name (exact):** `Certificate_Requests`
 
 | Col Letter | Col # | Column Name | Type | KEY? | Notes |
@@ -130,6 +132,7 @@ function getApprovers(groupName) {
 | AF | 32 | `Resubmit_Count` | Number | – | Number of times the requestor has resubmitted. Default 0. Incremented by Resubmit action. |
 | AG | 33 | `Resubmit_History` | LongText | – | Append-only audit log of each resubmit (timestamp, returning approver, their remark). Entries separated by `\n\n---\n\n`. Pure narrative — no structured data. |
 | AH | 34 | `Previous_Approvals` | LongText | – | JSON array `[{step,email,date}]` of approvers who had already acted at the moment of the most recent return. Overwritten on each return. Cleared on resubmit. |
+| AI | 35 | `Last_Action_By` | Email | – | ⚠️ **Added post-Phase-1 (Category 4).** Email of whoever most recently approved/declined/returned. Powers the audit trail + the "Actioned by you" list — declines/returns leave no `AppN_Date`, so this is the only way they surface. Header added manually in the sheet. |
 
 ### Status values (all possible states for Col C)
 
@@ -182,6 +185,7 @@ const CR = {
   RESUBMIT_COUNT:      32,  // AF
   RESUBMIT_HISTORY:    33,  // AG
   PREVIOUS_APPROVALS:  34,  // AH
+  LAST_ACTION_BY:      35,  // AI ← added post-Phase-1 (Category 4): audit + actioned-list
 };
 ```
 
