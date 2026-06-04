@@ -330,9 +330,20 @@ async function onApproveClick() {
   const id = __reviewDetail && __reviewDetail.requestId;
   if (!id) return;
 
+  // Are you the final signatory? You are if no CONFIGURED approver slot comes
+  // after your current step (approve() skips blank slots, so we mirror that by
+  // looking at configured slots only — same rule the server uses).
+  const slots = getConfiguredApproverSlots(__reviewDetail);
+  const step  = Number(__reviewDetail.step) || 0;
+  const isFinalApprover = !slots.some(function (s) { return s.n > step; });
+
+  const message = isFinalApprover
+    ? 'You are the final signatory. Approving will mark this request FULLY APPROVED and notify the requestor. Continue?'
+    : 'Approving will forward this request to the next approver and send the requestor a progress update. Continue?';
+
   const ok = await showConfirm({
     title:        'Approve request',
-    message:      'This request will be forwarded to the next approver, or marked fully approved if you are the final signatory. Continue?',
+    message:      message,
     confirmLabel: 'Approve',
   });
   if (!ok) return;

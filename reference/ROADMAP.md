@@ -64,6 +64,11 @@
 - **Layman:** Swap the grey placeholder mascot images for the real finished artwork.
 - **Technical:** Replace `placehold.co` URLs in `MIGA_IMAGES` (`MigaWidget.html`) with hosted PNG URLs for all 6 emotions.
 
+### ⏳ Phase 11 — Audit Log *(OPTIONAL — only if a real audit requirement exists)*
+- **Layman:** A permanent, never-overwritten record of *every* action on a request (submit / approve / decline / return / resubmit) — who, when, at what step, with what remark. Today only the **return narrative** survives across resubmits (`Resubmit_History` / AG); structured approval data (`AppN_Date`, `AppN_Remark`, `Previous_Approvals`) is **cleared each resubmit**, so cross-cycle history is lost. This would power a full ServiceNow-style "Activity Timeline".
+- **Technical:** New `Request_Audit_Log` sheet tab + a `logAction(requestId, action, actor, step, remark, timestamp)` helper, called from `submitNewRequest` / `approve` / `decline` / `returnRequest` / `resubmit`. Append-only, never overwritten. This is the COC analog of the capstone's immutable on-chain `Log*` functions (`LogVerification`, `LogIssuerStatusChange`) — the Sheet doesn't give an audit log "for free" (no dual-write / no ledger), so it must be added explicitly.
+- **Decision rule (friction-earned):** if the supervisor only needs "why was it returned" → the existing AG narrative already covers it, **don't build this.** Build only if there's a genuine audit/compliance requirement or a need for the full timeline.
+
 ### ⏸️ Deferred — In-Portal Admin Role
 - **Layman:** A web-based admin who manages approver groups + sees all requests. **Not building for now** — whoever owns the Google Sheet already has these powers directly.
 - **Technical:** Out of scope pending one supervisor answer: *who manages `Approver_Settings` post-handoff, and do they get direct Sheet access?* Non-technical manager needing web control → revisit (3rd role + guarded CRUD). Cheap middle ground if oversight-only is wanted: a read-only "all requests" admin view.
@@ -83,3 +88,5 @@
 **Phase 9 (COC)** → **Phase 8 (attachments)** → **Phase 10 (Miga)** → **Go-live gate**.
 
 COC is self-contained, high-value, zero-schema-risk — good momentum win. Attachments is the heavier architectural change. Miga is cosmetic, anytime.
+
+**Phase 11 (Audit Log)** sits outside this sequence — build it *only if* an audit requirement surfaces. **Admin role** stays deferred pending the supervisor answer.

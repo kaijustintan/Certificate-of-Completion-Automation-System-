@@ -3,7 +3,7 @@
 Google Apps Script web app (AppSheet migration). Backend: Google Sheets.
 Frontend: custom SPA served via HtmlService. Managed via clasp + VS Code + GitHub.
 
-> **Current status & roadmap:** see `reference/ROADMAP.md` — the living status doc. Categories 1–4 + frontend redesign + documentation are DONE. Pending: Phase 9 (COC PDF generation, Template 1), Phase 8 (attachment upload-before-submit), Phase 10 (Miga assets), go-live gate. Admin role is DEFERRED. Reference design docs: `reference/ARCHITECTURE.md`, `reference/COLUMN_MAP (1).md`, `reference/E-Certificate Automation Documentation.md`.
+> **Current status & roadmap:** see `reference/ROADMAP.md` — the living status doc. Categories 1–4 + frontend redesign + documentation are DONE. Pending: Phase 9 (COC PDF generation, Template 1), Phase 8 (attachment upload-before-submit), Phase 10 (Miga assets), go-live gate. Admin role is DEFERRED. Reference docs: `reference/ROADMAP.md` (status), `reference/FLOWS.md` (operation traces across files), `reference/ARCHITECTURE.md` (original design), `reference/COLUMN_MAP (1).md` (columns), `reference/E-Certificate Automation Documentation.md` (AppSheet guide).
 
 ## Stack constraints — always respect these
 
