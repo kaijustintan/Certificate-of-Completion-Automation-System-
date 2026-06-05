@@ -7,8 +7,32 @@ record of *what* that Doc must contain (placeholders, formatting, structure) and
 ever lost or corrupted, rebuild it from this spec.
 
 > Source of truth for the look: the original AppSheet template ("Image 6" in
-> `E-Certificate Automation Documentation.pdf`). Every AppSheet `<<expression>>` has been ported to
-> Apps Script — the Doc only contains plain `{{placeholder}}` tokens. **No formulas in the Doc.**
+> `E-Certificate Automation Documentation.pdf`).
+
+---
+
+## ⚠️ AS-BUILT NOTE (read this first)
+
+The actual template was built by **recreating the AppSheet layout verbatim**, so it keeps the original
+AppSheet expressions (`<<[Group]>>`, `<<TEXT([Date of Filing], …)>>`, `<<IF(ISNOTBLANK([PRISM]), …)>>`,
+`<<If: …>>`/`<<EndIf>>`). `generateCOC()` therefore matches **two token styles**:
+
+1. **AppSheet `<<…>>` expressions** — the as-built default; matched by RE2 patterns in the rules array.
+2. **Clean `{{tokens}}`** — used to fix any cell whose long AppSheet expression got **broken across a
+   line break** (replaceText can't match across a hard break). Short `{{tokens}}` never wrap, so they
+   always match. In the current Doc these are used for: `{{prism}}`, `{{po_no}}`, `{{ihelp}}`,
+   `{{prepared_date}}`, and the Approver 2/3 signatory cells (`{{approver2/3}}`, `{{desig2/3}}`,
+   `{{app2_date}}`, `{{app3_date}}`).
+
+The placeholder tables below list the `{{token}}` form; either style works per cell.
+
+**Signatory table:** taken as the **LAST table in the doc**. Unused Approver 2/3 columns are cleared
+automatically (no `<<If>>` needed). Build it as a 1-row-of-labels + 1-row-of-values, 4 columns:
+Prepared By · Approver 1 · Approver 2 · Approver 3.
+
+**Archive folder:** `COC.ARCHIVE_FOLDER_ID` is currently a **dev folder** (the user's Drive). For
+production, swap it for the Megaworld-account folder `1RJ1P7vZXgLa85KfsdQKCLBLqsaDqde-Y` (the executing
+account must have write access).
 
 ---
 

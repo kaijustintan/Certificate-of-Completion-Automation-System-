@@ -397,11 +397,30 @@ Open this request: ${getPortalUrl(requestId, "review")}`;
 // ============================================================
 /*
   Function Name: sendFullyApprovedToRequestor
-  LAYMAN    : Email sa requestor: "Approved na lahat!" Kasama ang buong
-              approval log (sino nag-sign at kailan).
-  TECHNICAL : TO: REQUESTOR column. Includes buildApprovalLog for transparency.
-              Links to the requestor 'request' page.
-  FIRES     : handleApprove (final step, newStatus === APPROVED).
+  LAYMAN    : Email sa requestor: "Approved na lahat!" Kasama ang buong approval
+              log (sino nag-sign at kailan) AT ang naka-attach na COC PDF. Dito na
+              awtomatikong ginagawa ang Certificate of Completion — gagawa ng PDF
+              at ikakabit sa email na ito.
+  TECHNICAL : TO: REQUESTOR column. Calls generateCOC(requestId) (Certificate.js)
+              and attaches the returned pdfBlob. COC generation is wrapped so a
+              failure never blocks the approval email — it gracefully falls back to
+              "provided separately". Includes buildApprovalLog; links to the
+              requestor 'request' page.
+  FIRES     : handleApprove (final step, newStatus === APPROVED); also the
+              onSheetChange trigger on a manual "Fully Approved" sheet edit. Only
+              one path runs per approval, so the COC is generated exactly once.
+
+  STEPS
+    Step 1 — Load request data
+      Layman    : Kunin ang datos ng request; kung wala, huminto.
+      Technical : getRequestData(requestId) (31-col read) → { rowData, approvers }.
+    Step 2 — Generate the COC PDF (defensive)
+      Layman    : Gawin ang COC PDF. Kung pumalpak, huwag i-block ang email.
+      Technical : try/catch generateCOC; keep pdfBlob on success, else log + null.
+    Step 3 — Compose + send (attach if available)
+      Layman    : Buuin ang email; ikabit ang PDF kung meron; ipadala.
+      Technical : conditional body line + 4-arg GmailApp.sendEmail with
+                  { attachments:[cocBlob] } when present.
 */
 function sendFullyApprovedToRequestor(requestId) {
   const data = getRequestData(requestId);
@@ -411,6 +430,20 @@ function sendFullyApprovedToRequestor(requestId) {
   const requestor     = rowData[CR.REQUESTOR - 1];
   const controlNumber = rowData[CR.CONTROL_NUMBER - 1];
   const approvalLog   = buildApprovalLog(rowData, approvers);
+
+  // Generate the COC PDF — a COC failure must NOT block the approval email.
+  let cocBlob = null;
+  try {
+    const coc = generateCOC(requestId);
+    if (coc && coc.success) cocBlob = coc.pdfBlob;
+    else Logger.log(`sendFullyApprovedToRequestor(): COC generation failed — ${coc && coc.error}`);
+  } catch (e) {
+    Logger.log(`sendFullyApprovedToRequestor(): COC generation threw — ${e}`);
+  }
+
+  const cocLine = cocBlob
+    ? "Your Certificate of Completion (PDF) is attached to this email."
+    : "Your Certificate of Completion will be provided separately.";
 
   const subject = emailSubject(controlNumber, "Approved", "REQUESTOR");
 
@@ -423,11 +456,12 @@ ${buildInfoBlock(rowData)}
 Final Signatory Log:
 ${approvalLog}
 
-Your Certificate of Completion will be provided separately. Thank you for using the E-Certificate portal!
+${cocLine} Thank you for using the E-Certificate portal!
 Open this request: ${getPortalUrl(requestId, "request")}`;
 
-  GmailApp.sendEmail(requestor, subject, body);
-  Logger.log(`sendFullyApprovedToRequestor(): Approval email sent to ${requestor}`);
+  const options = cocBlob ? { attachments: [cocBlob] } : {};
+  GmailApp.sendEmail(requestor, subject, body, options);
+  Logger.log(`sendFullyApprovedToRequestor(): Approval email sent to ${requestor}${cocBlob ? " (COC attached)" : " (no COC)"}`);
 }
 
 

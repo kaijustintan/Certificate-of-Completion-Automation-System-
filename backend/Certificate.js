@@ -6,25 +6,29 @@
 
   LAYMAN (Tropang Ex):
   Ito yung "PDF machine" ng portal. Pag fully approved na ang isang request,
-  kinukuha nito yung Google Docs template na puno ng {{placeholders}}, kinokopya,
+  kinukuha nito yung Google Docs template na puno ng mga placeholder, kinokopya,
   pinapalitan ang bawat placeholder ng totoong datos ng request, ginagawang PDF,
   itinatago sa Drive folder, at ibinabalik para maaaring i-email sa requestor.
   Ito ang Apps Script na kapalit ng dating AppSheet auto-generate-PDF na bot.
 
   TECHNICAL:
   Phase 9 COC generator. Single public entry point generateCOC(requestId):
-  makeCopy() the template Doc → replaceText() every token from a placeholder map
+  makeCopy() the template Doc → replaceText() each token via an ordered rules array
   → conditionally clear unused approver signatory cells → export application/pdf →
   archive to COC.ARCHIVE_FOLDER_ID → trash the temp copy → return { success, url,
-  fileId, pdfBlob }. All AppSheet template expressions (TEXT formatting, IF
-  ISNOTBLANK → "N/A", UTCNOW()+offset, <<If>> approver blocks) are ported here as
-  plain JS so the Doc holds only inert {{tokens}}. Reads via getRequestRowData()
-  (34-col array) + getApprovers() (Approver_Settings join). Identity/auth is NOT
-  re-checked here — generateCOC runs only after approve() has fully authorized and
-  finalized the request; it is not a frontend-callable.
+  fileId, pdfBlob }. The Doc is built from the original AppSheet template, so the
+  rules match BOTH the as-built AppSheet expressions (e.g. <<[Group]>>,
+  <<TEXT(...)>>, <<IF(ISNOTBLANK(...))>>) AND clean {{tokens}} (used to fix any
+  cell whose long expression broke across a line break). All AppSheet logic (TEXT
+  formatting, IF ISNOTBLANK → "N/A", UTCNOW()+offset, <<If>> approver blocks) is
+  ported here as plain JS. The signatory table is taken as the LAST table in the
+  doc, and its approver-2/3 columns are cleared when those slots are unconfigured.
+  Reads via getRequestRowData() (34-col array) + getApprovers() (Approver_Settings
+  join). Identity/auth is NOT re-checked here — generateCOC runs after the approval
+  flow has authorized + finalized the request; it is not a frontend-callable.
 
   ⚠️ SETUP: requires COC.TEMPLATE_DOC_ID set in Constants.js. See
-  reference/COC_TEMPLATE_SPEC.md for the placeholder contract + Doc build rules.
+  reference/COC_TEMPLATE_SPEC.md for the token contract + Doc build rules.
 
   ────────────────────────────────────────────────────────────
   OUTLINE
@@ -32,14 +36,11 @@
   PUBLIC
     - generateCOC(requestId)              copy template → fill → PDF → archive
   TEST
-    - _testGenerateCOC(requestId)         editor-run smoke test, logs the PDF URL
+    - _testGenerateCOC()                  editor-run smoke test, logs the PDF URL
   HELPERS (private, coc_ prefix)
     - coc_orNA_(value)                    blank → "N/A" (ports IF ISNOTBLANK)
     - coc_fmtDate_(value, pattern, fb)    safe PH-time date format, blank → fallback
-    - coc_contractPeriod_(start, end)     "start - end" (each MMM dd, yyyy)
-    - coc_findTableContaining_(body, tok) locate the signatory table by a token
     - coc_clearCell_(table, r, c)         empty one table cell (hide approver col)
-    - coc_escapeToken_(token)             regex-escape a {{token}} for replaceText
 */
 
 
@@ -91,20 +92,21 @@
     Step 4 — Hide unused signatory columns (BEFORE replace)
       Layman    : Kung walang Approver 2/3, linisin ang kanilang column sa
                   signatory table para hindi lumabas na blangko.
-      Technical : Find the 1×4 signatory table via its "{{approver1}}" token, then
-                  clear cell (0,3) and/or (0,2) when approver3/approver2 is null.
-                  Done before replaceText so cleared cells carry no leftover tokens.
-    Step 5 — Build the token→value map
-      Layman    : Itali ang bawat {{placeholder}} sa totoong datos, kasama ang
+      Technical : Take the LAST table in the body as the signatory table; clear
+                  cells (row 0 + row 1) of column 3 and/or 2 when approver3/2 is
+                  null. Done before replace so cleared cells carry no leftover text.
+    Step 5 — Build the token→value rules
+      Layman    : Itali ang bawat placeholder sa totoong datos, kasama ang
                   port-logic (N/A fallback, date formatting, PH timestamp).
-      Technical : Object literal keyed by token. Dates via coc_fmtDate_; PRISM/PO/
-                  IHelp via coc_orNA_; contract period via coc_contractPeriod_;
+      Technical : Ordered [pattern, value] array. Each field has an AppSheet-syntax
+                  RE2 pattern (e.g. <<TEXT(\[Date of Filing\]…>>) AND a {{token}}
+                  pattern. Dates via coc_fmtDate_; PRISM/PO/IHelp via coc_orNA_;
                   generated_at via formatPHTime(new Date()) (ports UTCNOW()+offset).
-    Step 6 — Replace every token
-      Layman    : Palitan ang bawat placeholder sa Doc ng tamang value.
-      Technical : For each key, body.replaceText(coc_escapeToken_(token), value).
-                  Braces are regex metachars so the token is escaped first; null
-                  values become "".
+    Step 6 — Apply rules + strip leftover wrappers
+      Layman    : Palitan ang bawat placeholder ng tamang value; tanggalin ang
+                  natirang AppSheet <<If>>/<<EndIf>> sa signatory.
+      Technical : For each rule, body.replaceText(pattern, value) (null → ""); then
+                  replaceText "<<If:[^>]*>>" and "<<EndIf>>" with "".
     Step 7 — Export to PDF
       Layman    : Gawing PDF ang napunong Doc.
       Technical : saveAndClose(), then getFileById(copyId).getAs("application/pdf").
@@ -330,41 +332,6 @@ function coc_fmtDate_(value, pattern, fallback) {
 }
 
 /*
-  Function Name: coc_contractPeriod_
-  LAYMAN    : Pagsamahin ang start at end date ng contract bilang "start - end".
-              Kung pareho walang laman, "N/A".
-  TECHNICAL : Formats each date "MMM dd, yyyy"; missing side → "N/A"; both blank
-              → "N/A".
-  PARAMS    : start, end — Date or string cell values.
-  RETURNS   : "MMM dd, yyyy - MMM dd, yyyy" style string, or "N/A".
-*/
-function coc_contractPeriod_(start, end) {
-  const s = coc_fmtDate_(start, "MMM dd, yyyy", "");
-  const e = coc_fmtDate_(end,   "MMM dd, yyyy", "");
-  if (!s && !e) return "N/A";
-  return (s || "N/A") + " - " + (e || "N/A");
-}
-
-/*
-  Function Name: coc_findTableContaining_
-  LAYMAN    : Hanapin ang table sa Doc na naglalaman ng isang partikular na text
-              (ginagamit para hanapin ang signatory table gamit ang token nito).
-  TECHNICAL : Scans Body.getTables() and returns the first whose getText()
-              contains the token. Lets us target the signatory table without
-              relying on a fixed table index.
-  PARAMS    : body — the Document Body.
-              token — literal text to search for (e.g. "{{approver1}}").
-  RETURNS   : The matching Table, or null if none contain the token.
-*/
-function coc_findTableContaining_(body, token) {
-  const tables = body.getTables();
-  for (let i = 0; i < tables.length; i++) {
-    if (tables[i].getText().indexOf(token) !== -1) return tables[i];
-  }
-  return null;
-}
-
-/*
   Function Name: coc_clearCell_
   LAYMAN    : Linisin (gawing blangko) ang isang cell ng table — ginagamit para
               itago ang signatory column ng approver na walang laman.
@@ -376,19 +343,5 @@ function coc_findTableContaining_(body, token) {
 */
 function coc_clearCell_(table, r, c) {
   try { table.getCell(r, c).clear(); } catch (e) {}
-}
-
-/*
-  Function Name: coc_escapeToken_
-  LAYMAN    : I-handa ang isang {{token}} para ligtas itong gamitin sa
-              replaceText (na regex ang gamit) — ie-escape ang mga special char
-              gaya ng { at }.
-  TECHNICAL : Escapes RE2 metacharacters so Body.replaceText treats the token
-              literally. Body.replaceText interprets its first arg as a regex.
-  PARAMS    : token — the literal token string (e.g. "{{group}}").
-  RETURNS   : Regex-safe version of the token.
-*/
-function coc_escapeToken_(token) {
-  return token.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 

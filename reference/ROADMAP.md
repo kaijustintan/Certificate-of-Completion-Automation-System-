@@ -50,10 +50,10 @@
 
 ## PART C — REMAINING ROADMAP
 
-### ⏳ Phase 9 — Certificate of Completion (COC) Generation — *DO FIRST*
-- **Layman:** When a request is fully approved, auto-generate the official COC PDF and email it to the requestor — exactly what the old AppSheet system did. **Template 1 chosen** (needs zero new data fields).
-- **Technical:** Build a Google Docs version of **Template 1** with `{{placeholders}}` → on "Fully Approved," `DocumentApp` copies + fills → export PDF via `DriveApp...getAs("application/pdf")` → attach to `sendFullyApprovedToRequestor` (`attachments` option) → archive in Drive folder `1RJ1P7vZXgLa85KfsdQKCLBLqsaDqde-Y`. All placeholders map to existing columns — no schema change.
-- **Prereq:** create the Google Docs template (Drive side).
+### ✅ Phase 9 — Certificate of Completion (COC) Generation — *DONE*
+- **Layman:** When a request is fully approved, the COC PDF is auto-generated and emailed to the requestor as an attachment — exactly what the old AppSheet system did. **Template 1** used (zero new data fields).
+- **Technical:** `backend/Certificate.js` `generateCOC(requestId)` → `DriveApp.makeCopy()` the template Doc → `replaceText()` via an ordered rules array that matches BOTH the as-built AppSheet `<<…>>` expressions AND clean `{{tokens}}` → clear unused Approver 2/3 signatory cells (last table) → export `application/pdf` → archive to `COC.ARCHIVE_FOLDER_ID` → trash temp copy. Wired into `sendFullyApprovedToRequestor` (`Emails.js`) with `{ attachments:[pdfBlob] }`, defensive so a COC failure never blocks the approval/email. Covers both the portal (`handleApprove`) and manual-edit (`onSheetChange`) paths. Config + token contract: `Constants.js` `COC.*`, `reference/COC_TEMPLATE_SPEC.md`. No schema change.
+- **⚠️ Before production:** swap `COC.ARCHIVE_FOLDER_ID` (currently a dev folder) for the Megaworld folder `1RJ1P7vZXgLa85KfsdQKCLBLqsaDqde-Y`, and ensure the executing account has read on the template Doc + write on that folder.
 
 ### ⏳ Phase 8 — Attachment Upload-Before-Submit Redesign — *biggest item*
 - **Layman:** Require supporting documents *before* submit (like a loan/admissions form), with the right docs enforced per product type, stored in Google Drive.
@@ -78,6 +78,7 @@
 - **Technical:**
   - [ ] `EMAIL_DEV_TAG = false` in `backend/Emails.js`
   - [ ] `clasp push` **and publish** a new `/exec` version (deep-links point to `/exec`)
+  - [ ] Swap `COC.ARCHIVE_FOLDER_ID` (Constants.js) from the dev folder to the Megaworld folder `1RJ1P7vZXgLa85KfsdQKCLBLqsaDqde-Y`; confirm executing account can read the template Doc + write that folder
   - [x] `LAST_ACTION_BY` header present in sheet (manual ✅)
   - [ ] Update `COLUMN_MAP.md` to 35 cols (done ✅)
   - [ ] Optional: Location dropdown (AGT/GCP/EGP/TWS/Other) — fold into Phase 8
@@ -85,8 +86,8 @@
 ---
 
 ## Recommended sequence for what's left
-**Phase 9 (COC)** → **Phase 8 (attachments)** → **Phase 10 (Miga)** → **Go-live gate**.
+~~Phase 9 (COC)~~ ✅ → **Phase 8 (attachments)** → **Phase 10 (Miga)** → **Go-live gate**.
 
-COC is self-contained, high-value, zero-schema-risk — good momentum win. Attachments is the heavier architectural change. Miga is cosmetic, anytime.
+Phase 9 done. Next: Phase 8 (attachments) — the heavier architectural change. Miga is cosmetic, anytime.
 
 **Phase 11 (Audit Log)** sits outside this sequence — build it *only if* an audit requirement surfaces. **Admin role** stays deferred pending the supervisor answer.
