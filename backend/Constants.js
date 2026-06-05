@@ -28,6 +28,7 @@
   AS          — Approver_Settings columns (7 cols)
   RA          — Request_Attachments columns (5 cols)
   STATUS      — the 7 allowed Certificate_Requests.Status values
+  COC         — Certificate-of-Completion generation IDs (Phase 9)
 
   ────────────────────────────────────────────────────────────
   EXAMPLE (the 1-based vs 0-based gotcha)
@@ -155,4 +156,24 @@ const STATUS = {
   APPROVED:  "Fully Approved",         // all approvers signed off
   DECLINED:  "Declined",               // rejected at any step
   RETURNED:  "Returned to Requestor",  // sent back for revision
+};
+
+
+/*
+  COC — Certificate of Completion generation config (Phase 9).
+  LAYMAN    : Dalawang "address" na kailangan ng PDF generator: (1) saan
+              nakatago ang Google Docs template na may {{placeholders}}, at
+              (2) saang Drive folder itatago ang mga na-generate na PDF.
+  TECHNICAL : Used by generateCOC() in Certificate.js. TEMPLATE_DOC_ID is the
+              file ID of the manually-built Doc template (Option B) — see
+              reference/COC_TEMPLATE_SPEC.md for the placeholder contract.
+              ARCHIVE_FOLDER_ID is the existing Drive folder for attachments/PDFs.
+  ⚠️ SETUP  : TEMPLATE_DOC_ID is intentionally blank — paste the Doc ID after
+              building the template Doc. generateCOC() throws a clear error
+              while it is empty.
+*/
+// Certificate of Completion (Phase 9) — Drive IDs for the PDF generator
+const COC = {
+  TEMPLATE_DOC_ID:   "1FBf-l49w-z_3bey0NdxZ3VABevFb2_7gbGw-l111MSs",
+  ARCHIVE_FOLDER_ID: "1dejYXLXXvV1FWHovNd6WmZxmipJl71h9",
 };
