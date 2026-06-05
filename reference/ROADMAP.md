@@ -60,9 +60,15 @@
 - **Technical:** Replace legacy `Expected_Attachments`/`Syncing Files` honor-system flow with mandatory inline upload; disable submit until required docs attached; define required-documents matrix per Product Type; Drive integration (`File`/`File_Link`); drop `SYNCING` status + sync-finisher logic.
 - **Prereq:** confirm required-docs matrix with supervisor.
 
-### ⏳ Phase 10 — Finalize Miga Mascot Assets
-- **Layman:** Swap the grey placeholder mascot images for the real finished artwork.
-- **Technical:** Replace `placehold.co` URLs in `MIGA_IMAGES` (`MigaWidget.html`) with hosted PNG URLs for all 6 emotions.
+### ✅ Phase 10 — Miga Mascot Assets (interim) — *DONE*
+- **Layman:** Replaced placeholder squares with real Miga artwork — 6 expressions (default, welcome, approved, pending, declined, returned), shown as a portrait box on a dark rounded tile.
+- **Technical:** 6 PNGs in `assets/MIGA-<EMOTION>.png` resized to ~180px tall, base64-encoded, embedded as `data:` URIs in `MIGA_IMAGES` (`MigaWidget.html`) — no external hosting. `.miga-img` updated to portrait box (64×88, `object-fit:contain`, `--radius-md`, `--navy-900` bg).
+- **⚠️ Interim:** Art has dark opaque background; `MIGA-WELCOME` has a lighter bg. Not yet transparent or licensed. See Phase 12 for final polish.
+
+### ⏳ Phase 12 — Miga Final Polish *(do before go-live)*
+- **Layman:** Make Miga look perfect for production — transparent background on all expressions, consistent styling, and potentially more expressions if needed.
+- **Technical:** Replace `assets/MIGA-<EMOTION>.png` crops with clean transparent-bg, licensed versions → re-encode each to `data:` URI → swap into `MIGA_IMAGES` slots (no other code change). Optionally add new emotion variants (e.g. `loading`, `error`) if UX calls for them. Drop-in process documented in `MigaWidget.html` header comment.
+- **Note:** No code change needed beyond re-encoding the source PNGs. The mechanism is fully in place.
 
 ### ⏳ Phase 11 — Audit Log *(OPTIONAL — only if a real audit requirement exists)*
 - **Layman:** A permanent, never-overwritten record of *every* action on a request (submit / approve / decline / return / resubmit) — who, when, at what step, with what remark. Today only the **return narrative** survives across resubmits (`Resubmit_History` / AG); structured approval data (`AppN_Date`, `AppN_Remark`, `Previous_Approvals`) is **cleared each resubmit**, so cross-cycle history is lost. This would power a full ServiceNow-style "Activity Timeline".
@@ -86,8 +92,8 @@
 ---
 
 ## Recommended sequence for what's left
-~~Phase 9 (COC)~~ ✅ → **Phase 8 (attachments)** → **Phase 10 (Miga)** → **Go-live gate**.
+~~Phase 9 (COC)~~ ✅ → **Phase 8 (attachments)** → ~~Phase 10 (Miga interim)~~ ✅ → **Phase 12 (Miga final)** → **Go-live gate**.
 
-Phase 9 done. Next: Phase 8 (attachments) — the heavier architectural change. Miga is cosmetic, anytime.
+Phase 9 + Phase 10 done. **Next: Phase 8** (attachments) — the heavier architectural change. Phase 12 (Miga final polish) is cosmetic, do before go-live.
 
 **Phase 11 (Audit Log)** sits outside this sequence — build it *only if* an audit requirement surfaces. **Admin role** stays deferred pending the supervisor answer.
