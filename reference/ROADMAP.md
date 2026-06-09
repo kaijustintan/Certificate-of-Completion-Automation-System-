@@ -1,7 +1,7 @@
 # E-Certificate Portal — Implementation Roadmap (Living Status Doc)
 
 **Project:** Megaworld COC Automation — AppSheet → Google Apps Script migration
-**Last updated:** 2026-06-04
+**Last updated:** 2026-06-09
 **Purpose:** Single source of truth for *what's built, what's left, and in what order*. Supersedes the "Known Gaps" section of `ARCHITECTURE.md`. Format per project doc standard: **Layman first, Technical second.**
 
 **Legend:** ✅ DONE · ⏳ PENDING · ⏸️ DEFERRED
@@ -55,10 +55,11 @@
 - **Technical:** `backend/Certificate.js` `generateCOC(requestId)` → `DriveApp.makeCopy()` the template Doc → `replaceText()` via an ordered rules array that matches BOTH the as-built AppSheet `<<…>>` expressions AND clean `{{tokens}}` → clear unused Approver 2/3 signatory cells (last table) → export `application/pdf` → archive to `COC.ARCHIVE_FOLDER_ID` → trash temp copy. Wired into `sendFullyApprovedToRequestor` (`Emails.js`) with `{ attachments:[pdfBlob] }`, defensive so a COC failure never blocks the approval/email. Covers both the portal (`handleApprove`) and manual-edit (`onSheetChange`) paths. Config + token contract: `Constants.js` `COC.*`, `reference/COC_TEMPLATE_SPEC.md`. No schema change.
 - **⚠️ Before production:** swap `COC.ARCHIVE_FOLDER_ID` (currently a dev folder) for the Megaworld folder `1RJ1P7vZXgLa85KfsdQKCLBLqsaDqde-Y`, and ensure the executing account has read on the template Doc + write on that folder.
 
-### ⏳ Phase 8 — Attachment Upload-Before-Submit Redesign — *biggest item*
-- **Layman:** Require supporting documents *before* submit (like a loan/admissions form), with the right docs enforced per product type, stored in Google Drive.
-- **Technical:** Replace legacy `Expected_Attachments`/`Syncing Files` honor-system flow with mandatory inline upload; disable submit until required docs attached; define required-documents matrix per Product Type; Drive integration (`File`/`File_Link`); drop `SYNCING` status + sync-finisher logic.
-- **Prereq:** confirm required-docs matrix with supervisor.
+### ✅ Phase 8 — Attachment Upload-Before-Submit + Private Gated Serving — *DONE (2026-06-09)*
+- **Layman:** Require at least one supporting document *before* submit. Files upload only at submit time (nothing hits Drive until you click Submit; any mid-upload failure rolls back cleanly). Documents are stored **fully private** in Drive — no shareable link for anyone. Requestor and approver both open files through a secure in-portal **"View"** button that checks identity before serving the file (PDF/image inline, others download; second view cached/instant, with a Miga loading screen). On a returned request, the requestor can attach corrected/missing docs when resubmitting — old files are kept, new ones added and labeled by resubmit cycle.
+- **Technical:** Submit-time **upload-first** flow (`submitNewRequest`): `validateAttachmentPayload` → upload each file PRIVATE to `COC.ATTACHMENTS_FOLDER_ID` (no `setSharing`) with rollback-on-failure → `writeAttachmentRows` (one batched `setValues`) → `sendApprovalRequest` last. Identity-gated `downloadAttachment(attachmentId)` serves base64 only after `sameEmail(REQUESTOR)` OR `isChainApprover` (same gate as `getRequestDetail`) — **no raw Drive URL ever leaves the server**. `RA.FILE` = original filename (display), `RA.FILE_LINK` = Drive URL (server-side only; `extractDriveId` pulls the id). `buildAttachmentDriveName` → `EC-…__r{N}__file` naming convention. `handleResubmit(requestId, newFiles)` does optional upload-first re-upload (appends, keeps old rows). `resubmit()` always → `PENDING_1` (removed the `EXPECTED_ATTACHMENTS>0 ? SYNCING` branch that stuck resubmits post-Phase-8). `buildAttachmentList` (emails) lists `filename — description`, no link (private files would 404). Frontend: `<input type=file>` + `FileReader`→base64 on submit; `viewAttachmentFile` (blob cache + Miga loading tab); description always visible. Legacy `SYNCING`/`checkAttachmentSync`/`addAttachment` left **deprecated-dormant** (not deleted). New constant `COC.ATTACHMENTS_FOLDER_ID`.
+- **Design decisions (changed from the original plan):** (1) **No required-docs matrix per Product Type** — supervisor confirmed "basta ≥1 supporting document"; `productType` stays free-text. (2) **Private + gated serving chosen over `DOMAIN_WITH_LINK`/`ANYONE_WITH_LINK` sharing** — NDA-grade confidentiality, no forwardable bearer links, and works regardless of the host account's Workspace sharing policy (the original plan's Drive-link approach broke on restricted domains). (3) `Expected_Attachments` (col 28) kept populated for record-keeping but is now **vestigial** — slated for removal in a future schema pass, not now.
+- **⚠️ Before production (go-live gate):** swap `COC.ATTACHMENTS_FOLDER_ID` to the Megaworld supporting-docs folder; set both `ATTACHMENTS_FOLDER_ID` and `ARCHIVE_FOLDER_ID` to **Restricted** in Drive (no link sharing — files serve only through `downloadAttachment`); purge old `ANYONE_WITH_LINK` dev test files.
 
 ### ✅ Phase 10 — Miga Mascot Assets (interim) — *DONE*
 - **Layman:** Replaced placeholder squares with real Miga artwork — 6 expressions (default, welcome, approved, pending, declined, returned), shown as a portrait box on a dark rounded tile.
@@ -75,9 +76,25 @@
 - **Technical:** New `Request_Audit_Log` sheet tab + a `logAction(requestId, action, actor, step, remark, timestamp)` helper, called from `submitNewRequest` / `approve` / `decline` / `returnRequest` / `resubmit`. Append-only, never overwritten. This is the COC analog of the capstone's immutable on-chain `Log*` functions (`LogVerification`, `LogIssuerStatusChange`) — the Sheet doesn't give an audit log "for free" (no dual-write / no ledger), so it must be added explicitly.
 - **Decision rule (friction-earned):** if the supervisor only needs "why was it returned" → the existing AG narrative already covers it, **don't build this.** Build only if there's a genuine audit/compliance requirement or a need for the full timeline.
 
-### ⏸️ Deferred — In-Portal Admin Role
-- **Layman:** A web-based admin who manages approver groups + sees all requests. **Not building for now** — whoever owns the Google Sheet already has these powers directly.
-- **Technical:** Out of scope pending one supervisor answer: *who manages `Approver_Settings` post-handoff, and do they get direct Sheet access?* Non-technical manager needing web control → revisit (3rd role + guarded CRUD). Cheap middle ground if oversight-only is wanted: a read-only "all requests" admin view.
+### ⏸️ Post-Go-Live — Schema Normalization (known design debt)
+- **Layman:** Right now the main `Certificate_Requests` sheet has 35 columns — including all the approval history (who approved on which date, their remarks) flattened into fixed `App1/App2/App3` columns. This creates a hard cap of 3 approvers, loses cross-cycle history on every resubmit, and makes the sheet feel bloated. The right long-term fix is to pull approval actions out into their own sheet (one row per action, never cleared), which also delivers the full audit timeline *for free* — no extra code needed beyond the table itself.
+- **Technical:** Extract the repeating `App1/2/3_Date`, `App1/2/3_Remark`, `Previous_Approvals`, `Last_Action_By` columns into a new **append-only `Approvals` sheet**: `request_id | step | approver | decision | remark | timestamp`. Removes ~8 columns from `Certificate_Requests`, lifts the 3-approver cap, and makes **Phase 11 (Audit Log) trivially free** — the append-only table IS the audit timeline (same pattern as ChainCert's `LogVerification`). `Approver_Settings` `Approver_1/2/3` flat columns have the same smell but are low-stakes.
+- **Why deferred:** Massive regression surface — every getter, `Approvals.js`, emails, triggers, and frontend approval-chain rendering assumes the flat layout. Wrong timing for a nearly-deployed system.
+- **Trigger condition — do this when any of these become real:** (a) a group needs more than 3 approvers; (b) a genuine audit/compliance requirement lands (build the `Approvals` table *instead of* a bolt-on Phase 11); (c) resubmit history loss actually hurts someone. See `ARCHITECTURE.md § 7.3` for the full technical breakdown.
+
+### ⏳ Location Dropdown — *1st in sequence (next, quick win)*
+- **Layman:** Change the request form's "Location" field from a free-text box to a fixed dropdown (AGT / GCP / EGP / TWS / Other) so location data is consistent and filterable instead of every requestor typing it differently.
+- **Technical:** Convert the `location` `<input type=text>` in `NewRequest.html` to a `<select>` with the canonical Megaworld property codes + "Other". If "Other" → reveal a free-text fallback input. `validateNewRequest` already treats `location` as required — no backend change (still writes `CR.LOCATION`). **Open:** confirm the exact option set + display labels (do the codes show as bare codes or full property names?) and whether "Other" needs a free-text fallback.
+
+### ⏳ In-Portal Admin Role — *2nd in sequence*
+- **Layman:** A web-based admin who can see ALL requests across every group and manage the approver groups (who approves what) without ever touching the raw Google Sheet. The goal: give a non-technical manager safe control through the portal instead of handing them the spreadsheet (where one wrong edit breaks the column structure).
+- **⚠️ Scope gate (confirm with supervisor before building):** *who manages `Approver_Settings` post-handoff, and do they get direct Sheet access?* The answer picks the tier:
+  - **Tier 0 — Don't build.** If the Sheet owner keeps direct access and is fine managing groups there. (Original deferral logic.)
+  - **Tier 1 — Oversight-only** (~half day): read-only "all requests" dashboard (filter by status/group/requestor/date) + read-only group list. Good if the manager wants *visibility*, not control.
+  - **Tier 2 — Group management** (~1–2 days, the real "admin"): Tier 1 + guarded CRUD on `Approver_Settings` (add/edit/remove approvers + groups, validated so a malformed group can't be saved). **Recommended target** if a non-technical manager needs control.
+  - **Tier 3 — Request intervention** (deferred): reassign a stuck request's approver, force-advance/cancel/reopen. **Blocked on the audit foundation** — admin overrides MUST be logged, so this waits for the post-go-live `Approvals` table (see Schema Normalization). Do NOT build Tier 3 pre-go-live.
+- **Technical:** New third role `state.user.role = "admin"` (today only `approver`|`requestor`). Admin identity resolved **server-side** (`Session.getActiveUser().getEmail()` against an admin allowlist — new sheet/column or `Constants.js` list); every admin callable guards `isAdmin(caller)` server-side, same discipline as the existing auth layer. New admin page + nav link gated on role. Group CRUD writes validated + ideally `LockService`-guarded.
+- **Sequencing note:** Built pre-go-live, so it can only reach **Tier 1–2** (oversight + group management). Tier 3 (intervention) is intentionally post-go-live because it depends on the audit log.
 
 ### ⏳ Pre-Production Go-Live Gate
 - **Layman:** Final checklist before real users touch it.
@@ -92,8 +109,15 @@
 ---
 
 ## Recommended sequence for what's left
-~~Phase 9 (COC)~~ ✅ → **Phase 8 (attachments)** → ~~Phase 10 (Miga interim)~~ ✅ → **Phase 12 (Miga final)** → **Go-live gate**.
+~~Phase 9~~ ✅ → ~~Phase 8~~ ✅ → ~~Phase 10~~ ✅ → **Location dropdown → Admin role → Phase 12 → Go-live gate → Schema normalization → Phase 11**.
 
-Phase 9 + Phase 10 done. **Next: Phase 8** (attachments) — the heavier architectural change. Phase 12 (Miga final polish) is cosmetic, do before go-live.
+Phases 8, 9, 10 done — **all major architectural work is complete.** Agreed order for what's left (2026-06-09):
 
-**Phase 11 (Audit Log)** sits outside this sequence — build it *only if* an audit requirement surfaces. **Admin role** stays deferred pending the supervisor answer.
+1. **Location dropdown** — quick win, do next.
+2. **Admin role** — after the supervisor confirms scope (Tier 1 oversight vs Tier 2 group management). Buildable pre-go-live up to Tier 2; Tier 3 intervention waits for the audit log.
+3. **Phase 12 (Miga final polish)** — *floats*: externally blocked on licensed/transparent art, slot it in whenever the art lands. Pure drop-in re-encode (no code).
+4. **Go-live gate** — **intentionally last.** Dev runs on a personal Google account; the Megaworld-account migration + folder/link swaps + `EMAIL_DEV_TAG=false` all happen at the very end, once everything is verified working on the personal setup.
+5. **Schema normalization** — **post-go-live**, on-demand (per the trigger conditions). Ship first on the proven flat schema; refactor when the wall is actually hit, without launch pressure.
+6. **Phase 11 (Audit Log)** — last, and **free once normalization exists** (the append-only `Approvals` table IS the audit timeline). Don't build it as a separate bolt-on.
+
+**Admin role** is now in the active sequence (was deferred). **Phase 11** stays after normalization by design.

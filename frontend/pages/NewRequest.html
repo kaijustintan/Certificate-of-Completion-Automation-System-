@@ -22,6 +22,7 @@
   FUNCTIONS:
     - renderNewRequestPage()          main renderer; loads group list from cache/server
     - afterRender_new()               hook: wires submit + file-input listeners
+    - onLocationChange(value)         show/hide the "Other" location free-text box
     - onNewRequestSubmit(e)           submit handler; validates → reads files → callServer
     - validateNewRequest(form)        checks 15 required fields + contract date logic
     - onAttachmentFilesSelected(list) handles <input type=file> change; enforces size caps
@@ -128,12 +129,26 @@ async function renderNewRequestPage() {
         <div class="form-grid">
           <div class="form-row">
             <label class="form-label">Location <span class="required">*</span></label>
-            <input type="text" class="form-input" name="location" required>
+            <select class="form-select" name="location" id="location-select" required
+              onchange="onLocationChange(this.value)">
+              <option value="">Select a location…</option>
+              <option value="AGT - Pending">AGT - Pending</option>
+              <option value="GCP - Pending">GCP - Pending</option>
+              <option value="EGP - Pending">EGP - Pending</option>
+              <option value="TWS - Pending">TWS - Pending</option>
+              <option value="Other">Other</option>
+            </select>
           </div>
           <div class="form-row">
             <label class="form-label">PC name <span class="required">*</span></label>
             <input type="text" class="form-input" name="pcName" required>
           </div>
+        </div>
+
+        <div class="form-row hidden" id="location-other-row">
+          <label class="form-label">Specify location <span class="required">*</span></label>
+          <input type="text" class="form-input" name="locationOther" id="location-other"
+            placeholder="Enter the location">
         </div>
       </div>
 
@@ -274,6 +289,28 @@ function afterRender_new() {
 }
 
 
+/*
+  Function Name: onLocationChange
+  LAYMAN    : Kapag "Other" ang pinili sa Location dropdown, ipakita ang
+              free-text box para mag-type ng lokasyon na wala sa listahan.
+              Kapag ibang option, itago ito at linisin ang laman.
+  TECHNICAL : Toggles .hidden on #location-other-row based on the select value;
+              clears #location-other when not "Other" so no stale value is sent.
+  PARAMS    : value — the chosen <select> value.
+*/
+function onLocationChange(value) {
+  const row = document.getElementById('location-other-row');
+  const inp = document.getElementById('location-other');
+  if (!row) return;
+  if (value === 'Other') {
+    row.classList.remove('hidden');
+  } else {
+    row.classList.add('hidden');
+    if (inp) inp.value = '';
+  }
+}
+
+
 // ─── SUBMIT FLOW ───────────────────────────────────────────
 /*
   Function Name: onNewRequestSubmit
@@ -346,6 +383,10 @@ async function onNewRequestSubmit(e) {
   showLoading('Uploading files and submitting…');
 
   const data = formToObject(form);
+  // Resolve "Other" location → the free-text value; drop the helper field so
+  // the server still receives a single `location` string in CR.LOCATION.
+  if (data.location === 'Other') data.location = String(data.locationOther || '').trim();
+  delete data.locationOther;
   data.files = filePayloads;
   // Note: expectedAttachments no longer sent separately — server derives it from files.length.
 
@@ -396,6 +437,15 @@ function validateNewRequest(form) {
   const endEl   = form.elements['contractEnd'];
   if (startEl && endEl && startEl.value && endEl.value && endEl.value < startEl.value) {
     return { field: 'contractEnd', message: 'Contract end date must be on or after the start date.' };
+  }
+
+  // "Other" location requires the free-text specification.
+  const locEl = form.elements['location'];
+  if (locEl && locEl.value === 'Other') {
+    const otherEl = form.elements['locationOther'];
+    if (!otherEl || !String(otherEl.value).trim()) {
+      return { field: 'locationOther', message: 'Please specify the location.' };
+    }
   }
 
   return null;

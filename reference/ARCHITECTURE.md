@@ -349,15 +349,48 @@ Backed by `getPendingApprovals()` filter: `getCurrentApprover(step, group) === e
 
 ### 7.2 Architecture changes pending
 
-| # | Item | Phase |
-|---|---|---|
-| 6 | Replace post-submit attachment upload with mandatory inline upload | Phase 8 |
-| 7 | Define required-documents matrix per Product Type with supervisor | Phase 8 |
-| 8 | Drop `"Syncing Files"` status and `Expected_Attachments` field after redesign | Phase 8 |
-| 9 | Google Drive integration for attachment storage | Phase 8 |
-| 10 | Replace placeholder Miga images with finalized mascot PNGs | Phase 10 |
+| # | Item | Phase | Status |
+|---|---|---|---|
+| 6 | Replace post-submit attachment upload with mandatory inline upload | Phase 8 | ✅ Done — submit-time upload-first, private files, gated serving |
+| 7 | Define required-documents matrix per Product Type with supervisor | Phase 8 | ✅ Resolved — "basta ≥1 file," no per-type matrix needed |
+| 8 | Drop `"Syncing Files"` status + sync-finisher logic | Phase 8 | ✅ Done — deprecated-dormant (legacy code kept but off the live path) |
+| 9 | Google Drive integration for attachment storage (private + gated) | Phase 8 | ✅ Done — `downloadAttachment()` identity-gated; no bearer links |
+| 10 | Replace placeholder Miga images with finalized mascot PNGs | Phase 12 | ⏳ Pending licensed/transparent art — pure drop-in re-encode |
 
-### 7.3 Open questions for supervisor
+### 7.3 Known schema design debt (post-go-live refactor)
+
+`Certificate_Requests` has 35 columns that conflate three separate concerns. This works today but carries debt that will compound over time.
+
+**The core problem — approval state as a repeating group:**
+
+| Concern | Columns | Problem |
+|---|---|---|
+| Request core (project, requestor, product, contract…) | 1–24 | ✅ Fine — one entity |
+| Approval state (App1/2/3_Date, App1/2/3_Remark, Step, Status) | 25–31 + CR.STATUS/STEP | ❌ One-to-many relationship flattened into fixed columns |
+| Resubmit/audit (Resubmit_Count, History, Previous_Approvals, Last_Action_By) | 32–35 | ⚠️ Mixed-in audit data, some cleared on resubmit |
+
+**The fix — extract approval state into an append-only `Approvals` table:**
+
+```
+Approvals: request_id | step | approver | decision | remark | timestamp
+```
+
+One row per action, never cleared, never overwritten. This single change would:
+1. **Remove ~8 columns** from `Certificate_Requests` (App1/2/3 date+remark, Previous_Approvals, Last_Action_By).
+2. **Lift the hard 3-approver cap** — N approvers, free.
+3. **Deliver Phase 11 (Audit Log) for free** — the append-only `Approvals` table IS the audit timeline. Same instinct as ChainCert's `LogVerification` / `LogIssuerStatusChange` — Sheet rows don't give you an audit log; you have to write one explicitly.
+4. **Fix resubmit data loss** — approval history no longer cleared each cycle.
+
+`Request_Attachments` is already normalized (correct). `Approver_Settings` has the same flat-columns smell (`Approver_1/2/3`) but is low-stakes.
+
+**Why not now:** massive regression surface (every getter, `Approvals.js`, emails, the trigger, frontend approval-chain rendering, and column-contract docs all assume the flat layout). Wrong timing for a working, nearly-deployed system. Do this:
+- When a group needs **more than 3 approvers**.
+- When a genuine **audit/compliance requirement** lands (build `Approvals` table *instead of* a bolt-on audit log).
+- When the resubmit history loss actually hurts someone.
+
+Until then: note it, don't pay it down. See `ROADMAP.md` for the post-go-live entry.
+
+### 7.4 Open questions for supervisor
 
 1. Was the AppSheet version actually live or just pilot-tested? (Determines rollout urgency.)
 2. What are the standard required documents per request type?
