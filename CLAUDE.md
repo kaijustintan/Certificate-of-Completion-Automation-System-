@@ -128,4 +128,11 @@ Reference files for "full treatment" examples: `backend/WebApp.js`, `backend/App
       (`clasp push` updates `/dev` immediately but `/exec` still runs the old version until republished)
 - [ ] Sheet column AI header `Last_Action_By` present (added manually ✅)
 
+### Phase 8 — Attachments (added this session)
+- [ ] `COC.ATTACHMENTS_FOLDER_ID` in `backend/Constants.js` swapped to the **Megaworld prod** supporting-docs folder
+- [ ] `COC.ARCHIVE_FOLDER_ID` in `backend/Constants.js` swapped to the **Megaworld prod** COC archive folder (currently set to dev folder)
+- [ ] Both Drive folders (`ATTACHMENTS_FOLDER_ID` and `ARCHIVE_FOLDER_ID`) set to **Restricted** in Drive UI — no anyone-with-link, no domain-with-link sharing (files are served exclusively through the identity-gated `downloadAttachment()` server function)
+- [ ] Old test/dev supporting-doc files in the dev Drive folders **purged** — they were uploaded as `ANYONE_WITH_LINK` and are not linked to any sheet row
+- [ ] (Optional, after first Megaworld-account deploy) Check Apps Script → Executions for any `"sharing could not be set"` log line — if absent, `DOMAIN_WITH_LINK` worked on the Megaworld account and files are org-confidential as intended
+
 > Why push ≠ publish: `clasp push` syncs the code files. Email deep-links use `ScriptApp.getService().getUrl()` which returns the `/exec` URL — this points to the last *published* version. Always republish after a push for deep-links and `doGet` changes to take effect.

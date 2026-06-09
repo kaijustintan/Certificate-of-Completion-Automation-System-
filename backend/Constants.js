@@ -28,7 +28,7 @@
   AS          — Approver_Settings columns (7 cols)
   RA          — Request_Attachments columns (5 cols)
   STATUS      — the 7 allowed Certificate_Requests.Status values
-  COC         — Certificate-of-Completion generation IDs (Phase 9)
+  COC         — Certificate-of-Completion generation IDs (Phase 9) + supporting-docs folder (Phase 8)
 
   ────────────────────────────────────────────────────────────
   EXAMPLE (the 1-based vs 0-based gotcha)
@@ -160,20 +160,30 @@ const STATUS = {
 
 
 /*
-  COC — Certificate of Completion generation config (Phase 9).
-  LAYMAN    : Dalawang "address" na kailangan ng PDF generator: (1) saan
-              nakatago ang Google Docs template na may {{placeholders}}, at
-              (2) saang Drive folder itatago ang mga na-generate na PDF.
-  TECHNICAL : Used by generateCOC() in Certificate.js. TEMPLATE_DOC_ID is the
-              file ID of the manually-built Doc template (Option B) — see
-              reference/COC_TEMPLATE_SPEC.md for the placeholder contract.
-              ARCHIVE_FOLDER_ID is the existing Drive folder for attachments/PDFs.
-  ⚠️ SETUP  : TEMPLATE_DOC_ID is intentionally blank — paste the Doc ID after
-              building the template Doc. generateCOC() throws a clear error
-              while it is empty.
+  COC — Certificate of Completion + Attachments config (Phase 9 / Phase 8).
+  LAYMAN    : Tatlong "address" na kailangan ng system: (1) saan nakatago ang
+              Google Docs template na may {{placeholders}}, (2) saang Drive
+              folder itatago ang mga na-generate na COC PDF, at (3) saang Drive
+              folder itatago ang mga supporting documents na ini-upload ng
+              requestor bago mag-submit.
+  TECHNICAL : Used by generateCOC() (Certificate.js) and uploadAttachmentFile()
+              (Attachments.js). ARCHIVE_FOLDER_ID is for generated PDFs only —
+              do NOT store user-uploaded supporting docs there. Keep lifecycles
+              separate so ATTACHMENTS_FOLDER_ID can be swapped independently
+              at go-live.
+  ⚠️ SETUP  : TEMPLATE_DOC_ID — paste the Google Doc template file ID.
+              ATTACHMENTS_FOLDER_ID — paste the supporting-docs Drive folder ID.
+              Both throw a clear error while empty. Swap ARCHIVE_FOLDER_ID to
+              the Megaworld prod folder before go-live.
 */
-// Certificate of Completion (Phase 9) — Drive IDs for the PDF generator
+// Certificate of Completion (Phase 9) + supporting-docs upload (Phase 8) — Drive IDs
 const COC = {
-  TEMPLATE_DOC_ID:   "1FBf-l49w-z_3bey0NdxZ3VABevFb2_7gbGw-l111MSs",
-  ARCHIVE_FOLDER_ID: "1dejYXLXXvV1FWHovNd6WmZxmipJl71h9",
+  TEMPLATE_DOC_ID:       "1FBf-l49w-z_3bey0NdxZ3VABevFb2_7gbGw-l111MSs",
+  ARCHIVE_FOLDER_ID:     "1LKmStUeJrJMWHBfMXlxw3HafGg1EdZ4C",
+  ATTACHMENTS_FOLDER_ID: "1rJPkh0yaSEFOzzKfHZvu5h2Kx-WrhvZg",   
+  
+  // ⚠️ SETUP: paste the supporting-docs Drive folder ID here.
+                                //   Use a SEPARATE folder from ARCHIVE_FOLDER_ID (which
+                                //   stores generated COC PDFs). uploadAttachmentFile()
+                                //   in Attachments.js throws a clear error while empty.
 };

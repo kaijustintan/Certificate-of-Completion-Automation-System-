@@ -484,7 +484,8 @@ function getMyActionedRequests() {
                   approvals na-parse, attachments naka-sama.
       Technical : Dates via Utilities.formatDate; PREVIOUS_APPROVALS JSON.parse
                   in a try/catch (bad JSON → []); attachments mapped to
-                  {description, fileLink}.
+                  {attachmentId, filename, description} — NO Drive URL (Phase 8
+                  gated serving; the UI fetches bytes via downloadAttachment).
 
   EXAMPLE
     // As the requestor or a chain approver:
@@ -565,9 +566,12 @@ function getRequestDetail(requestId) {
     designation1:         approvers.designation1 || "",
     designation2:         approvers.designation2 || "",
     designation3:         approvers.designation3 || "",
+    // Phase 8: no raw Drive URL is sent to the frontend. The UI uses attachmentId
+    // to call the identity-gated downloadAttachment(); FILE holds the filename.
     attachments:          getAttachmentsForRequest(row[CR.REQUEST_ID - 1]).map(a => ({
-      description: a[RA.DESCRIPTION - 1],
-      fileLink:    a[RA.FILE_LINK - 1],
+      attachmentId: a[RA.ATTACHMENT_ID - 1],
+      filename:     a[RA.FILE - 1],
+      description:  a[RA.DESCRIPTION - 1],
     })),
   };
 }
@@ -589,81 +593,128 @@ function getApproverGroups() {
 
 /*
   Function Name: submitNewRequest
-  LAYMAN    : Dito ipinapasok ang bagong request galing sa form. Gumagawa ng
-              bagong ID at control number, sinusulat ang lahat ng field sa
-              bagong row, at kung walang kailangang attachment, agad nang
-              nagpapadala ng email sa unang approver.
-  TECHNICAL : Generates IDs, decides initial status (SYNCING if attachments are
-              expected, else PENDING_1), writes a 33-col row, and triggers the
-              first approval email when no sync wait is needed.
-  PARAMS    : formData — the submitted form fields (object keyed by field name).
-  RETURNS   : { success:true, requestId, controlNumber }.
+  LAYMAN    : Dito ipinapasok ang bagong request galing sa form — kasama na
+              ang mga supporting documents. UPLOAD MUNA lahat ng files sa Drive;
+              kung may pumalpak, i-trash ang mga naunang naka-upload at wala
+              na kaming gagawin sa sheet. Kapag kumpleto na ang lahat, saka
+              lang isusulat ang request row at attachment rows, tapos email na
+              ang Approver 1. All-or-nothing — hindi pwedeng may request na
+              walang files, at hindi pwedeng may files na walang request.
+  TECHNICAL : Phase 8 submit-time upload flow. Upload-first for atomicity:
+              Drive uploads can fail; sheet appends cannot be rolled back. By
+              the time we write any sheet row, all risky I/O is done.
+              validateAttachmentPayload, uploadAttachmentFile, writeAttachmentRows
+              are in Attachments.js. Status always PENDING_1 — no SYNCING state.
+  PARAMS    : formData — form fields + formData.files (Array<FilePayload>).
+              FilePayload: { filename, mimeType, base64, description }.
+  RETURNS   : { success:true, requestId, controlNumber }
+              { success:false, error } on validation or upload failure.
 
   STEPS
-    Step 1 — Generate identifiers + initial status
-      Layman    : Gumawa ng request ID, control number; alamin kung "Syncing"
-                  muna (may attachments) o diretso na sa Approver 1.
-      Technical : generateRequestId/ControlNumber; status = expected>0 ?
-                  SYNCING : PENDING_1; requestor = session email.
-    Step 2 — Build the new row by column index
-      Layman    : Ilagay bawat field sa tamang column; step = 1.
-      Technical : Fill a length-33 array via CR.* - 1; DATE_OF_FILING = new
-                  Date(); RESUBMIT_COUNT = 0.
-    Step 3 — Append to the sheet
-      Layman    : Idagdag ang row sa Certificate_Requests.
-      Technical : sheet.appendRow(newRow).
-    Step 4 — Fire first approval email (if not syncing)
-      Layman    : Kung diretso na sa Approver 1, padala agad ng email.
-      Technical : if status === PENDING_1 → sendApprovalRequest(requestId).
+    Step 1 — Validate file payload
+      Layman    : Bago mag-upload, siguraduhing may files at kumpleto ang data.
+      Technical : validateAttachmentPayload(files) — returns {ok,error}; early
+                  return on failure. No I/O performed yet.
+    Step 2 — Generate identifiers
+      Layman    : Gumawa ng request ID at control number.
+      Technical : generateRequestId(); generateControlNumber(requestId).
+    Step 3 — Upload all files to Drive (rollback on any failure)
+      Layman    : I-upload ang bawat file. Kung may pumalpak, itapon ang mga
+                  naunang naka-upload at ibalik ang error — walang request na
+                  nalilikha sa sheet.
+      Technical : uploadAttachmentFile(f) per file; on catch: trash uploaded
+                  fileIds via DriveApp.getFileById().setTrashed(true).
+    Step 4 — Append the request row (PENDING_1)
+      Layman    : Ngayon lang isusulat ang request — pagkatapos ng upload.
+      Technical : Build 33-col array via CR.*; status = PENDING_1 always;
+                  EXPECTED_ATTACHMENTS = files.length (record-keeping).
+    Step 5 — Write attachment child rows (batched)
+      Layman    : Isulat ang lahat ng attachment rows sa isang write.
+      Technical : writeAttachmentRows(requestId, uploaded) — one setValues call.
+    Step 6 — Send approval email (last — implies files are ready)
+      Layman    : Padala ng email sa Approver 1. Siniguro na na kumpleto ang lahat.
+      Technical : sendApprovalRequest(requestId).
 
   EXAMPLE
-    submitNewRequest({ projectTitle:"memaaa", group:"ISM - InfoSec",
-                       expectedAttachments:0, … })
+    submitNewRequest({ projectTitle:"Antivirus", group:"ISM - InfoSec", …,
+                       files: [{ filename:"PO.pdf", mimeType:"application/pdf",
+                                 base64:"JVBERi0…", description:"Purchase Order" }] })
     → { success:true, requestId:"9B1", controlNumber:"EC-2026-00042-9B1" }
-      (row written as Pending Approver 1; approver 1 emailed immediately)
+      (file in Drive; row in PENDING_1; approver emailed)
 */
 function submitNewRequest(formData) {
-  const sheet     = getSheet(SHEET_NAMES.CERTIFICATE_REQUESTS);
+  const caller = Session.getActiveUser().getEmail();
+  const files  = Array.isArray(formData.files) ? formData.files : [];
+
+  // Step 1 — Server-side validation (size/count/shape/descriptions)
+  const v = validateAttachmentPayload(files);
+  if (!v.ok) return { success: false, error: v.error };
+
+  // Step 2 — Generate identifiers
   const requestId = generateRequestId();
   const controlNo = generateControlNumber(requestId);
-  const email     = Session.getActiveUser().getEmail();
-  const expected  = parseInt(formData.expectedAttachments) || 0;
-  const status    = expected > 0 ? STATUS.SYNCING : STATUS.PENDING_1;
 
-  const newRow                          = new Array(33).fill("");
-  newRow[CR.REQUEST_ID - 1]            = requestId;
-  newRow[CR.CONTROL_NUMBER - 1]        = controlNo;
-  newRow[CR.STATUS - 1]                = status;
-  newRow[CR.STEP - 1]                  = 1;
-  newRow[CR.DATE_OF_FILING - 1]        = new Date();
-  newRow[CR.PROJECT_TITLE - 1]         = formData.projectTitle;
-  newRow[CR.REQUESTOR - 1]             = email;
-  newRow[CR.REQUESTOR_DESIG - 1]       = formData.requestorDesig;
-  newRow[CR.GROUP - 1]                 = formData.group;
-  newRow[CR.ACCOUNTABLE_PERSON - 1]    = formData.accountablePerson;
-  newRow[CR.DEPARTMENT - 1]            = formData.department;
-  newRow[CR.LOCATION - 1]              = formData.location;
-  newRow[CR.PC_NAME - 1]               = formData.pcName;
-  newRow[CR.PRISM - 1]                 = formData.prism;
-  newRow[CR.PURCHASE_ORDER - 1]        = formData.purchaseOrder;
-  newRow[CR.IHELP_NUMBER - 1]          = formData.ihelpNumber;
-  newRow[CR.PRODUCT_TYPE - 1]          = formData.productType;
-  newRow[CR.PRODUCT_NAME - 1]          = formData.productName;
-  newRow[CR.TYPE_OF_PURCHASE - 1]      = formData.typeOfPurchase;
-  newRow[CR.TYPE_OF_LICENSE - 1]       = formData.typeOfLicense;
-  newRow[CR.CONTRACT_START - 1]        = formData.contractStart;
-  newRow[CR.CONTRACT_END - 1]          = formData.contractEnd;
-  newRow[CR.SUPPLIER_NAME - 1]         = formData.supplierName;
-  newRow[CR.REQUESTOR_REMARK - 1]      = formData.requestorRemark;
-  newRow[CR.EXPECTED_ATTACHMENTS - 1]  = expected;
-  newRow[CR.RESUBMIT_COUNT - 1]        = 0;
+  // Step 3 — Upload ALL files to Drive first (rollback on any failure)
+  // Nothing is written to either sheet until every upload succeeds.
+  const uploaded = [];
+  try {
+    for (let i = 0; i < files.length; i++) {
+      // First submit = resubmit cycle 0. Drive name uses the naming convention;
+      // the friendly original filename is what we store for display.
+      const driveName = buildAttachmentDriveName(controlNo, 0, files[i].filename);
+      const result    = uploadAttachmentFile(files[i], driveName);
+      uploaded.push({
+        fileId:      result.fileId,
+        url:         result.url,
+        filename:    files[i].filename,
+        description: String(files[i].description).trim(),
+      });
+    }
+  } catch (err) {
+    // Best-effort rollback: trash every file already uploaded in this call
+    uploaded.forEach(function(u) {
+      try { DriveApp.getFileById(u.fileId).setTrashed(true); } catch (e) {}
+    });
+    Logger.log("submitNewRequest(): Upload failed — " + err.message + ". No request created.");
+    return { success: false, error: "File upload failed. No request was created. Please try again." };
+  }
 
+  // Step 4 — Write the request row (always PENDING_1 — no SYNCING in Phase 8)
+  const sheet  = getSheet(SHEET_NAMES.CERTIFICATE_REQUESTS);
+  const newRow = new Array(33).fill("");
+  newRow[CR.REQUEST_ID - 1]           = requestId;
+  newRow[CR.CONTROL_NUMBER - 1]       = controlNo;
+  newRow[CR.STATUS - 1]               = STATUS.PENDING_1;
+  newRow[CR.STEP - 1]                 = 1;
+  newRow[CR.DATE_OF_FILING - 1]       = new Date();
+  newRow[CR.PROJECT_TITLE - 1]        = formData.projectTitle;
+  newRow[CR.REQUESTOR - 1]            = caller;
+  newRow[CR.REQUESTOR_DESIG - 1]      = formData.requestorDesig;
+  newRow[CR.GROUP - 1]                = formData.group;
+  newRow[CR.ACCOUNTABLE_PERSON - 1]   = formData.accountablePerson;
+  newRow[CR.DEPARTMENT - 1]           = formData.department;
+  newRow[CR.LOCATION - 1]             = formData.location;
+  newRow[CR.PC_NAME - 1]              = formData.pcName;
+  newRow[CR.PRISM - 1]                = formData.prism;
+  newRow[CR.PURCHASE_ORDER - 1]       = formData.purchaseOrder;
+  newRow[CR.IHELP_NUMBER - 1]         = formData.ihelpNumber;
+  newRow[CR.PRODUCT_TYPE - 1]         = formData.productType;
+  newRow[CR.PRODUCT_NAME - 1]         = formData.productName;
+  newRow[CR.TYPE_OF_PURCHASE - 1]     = formData.typeOfPurchase;
+  newRow[CR.TYPE_OF_LICENSE - 1]      = formData.typeOfLicense;
+  newRow[CR.CONTRACT_START - 1]       = formData.contractStart;
+  newRow[CR.CONTRACT_END - 1]         = formData.contractEnd;
+  newRow[CR.SUPPLIER_NAME - 1]        = formData.supplierName;
+  newRow[CR.REQUESTOR_REMARK - 1]     = formData.requestorRemark;
+  newRow[CR.EXPECTED_ATTACHMENTS - 1] = files.length;  // record-keeping; deprecated field, slated for removal
+  newRow[CR.RESUBMIT_COUNT - 1]       = 0;
   sheet.appendRow(newRow);
 
-  // If no attachments needed, send approval email immediately
-  if (status === STATUS.PENDING_1) {
-    sendApprovalRequest(requestId);
-  }
+  // Step 5 — Write attachment child rows (one batched write)
+  writeAttachmentRows(requestId, uploaded);
+
+  // Step 6 — Send approval email LAST (all files are live in Drive at this point)
+  sendApprovalRequest(requestId);
 
   return { success: true, requestId, controlNumber: controlNo };
 }
@@ -891,14 +942,20 @@ function handleReturn(requestId, remark) {
   Function Name: handleResubmit
   LAYMAN    : Pag ire-resubmit ng requestor ang request na ibinalik sa kanya.
               Requestor lang ang pwede, at "Returned" lang ang pwedeng
-              i-resubmit. Kinukuha muna ang dahilan ng pagkabalik bago ito
-              mabura, tapos ibinabalik sa Approver 1 ang chain, may kasamang
-              email na nagsasabing "resubmission ito + ito ang dating dahilan."
-  TECHNICAL : Guard (caller === requestor AND status === RETURNED) → capture
-              return reason + next resubmit count BEFORE resubmit() clears the
-              remark columns → resubmit() → confirmation + (if PENDING_1) a
-              dedicated resubmit approval email.
+              i-resubmit. Pwede silang magdagdag ng bago/tamang documents (kasi
+              kadalasan dahil sa maling/kulang na dokumento kaya naibalik) —
+              OPTIONAL lang ito; ang lumang files ay pinananatili (audit trail).
+              Ina-upload muna ang bagong files BAGO baguhin ang status, tapos
+              ibinabalik sa Approver 1 ang chain na may resubmit email.
+  TECHNICAL : Guard (caller === requestor AND status === RETURNED) → validate +
+              upload-first any newFiles (rollback on failure) → append their rows
+              (old rows kept) → capture return reason + next resubmit count BEFORE
+              resubmit() clears the remark columns → resubmit() (→ PENDING_1) →
+              confirmation + resubmit approval email. Upload-first mirrors
+              submitNewRequest's atomicity: no state change until files are safe.
   PARAMS    : requestId — the returned request to resubmit.
+              newFiles  — optional Array<FilePayload> of added/corrected docs
+                          ({filename, mimeType, base64, description}). May be empty.
   RETURNS   : resubmit()'s result, or { success:false, error }.
 
   STEPS
@@ -922,7 +979,7 @@ function handleReturn(requestId, remark) {
     → { success:true, newStatus:"Pending Approver 1", … }
       (requestor gets a confirm; Approver 1 gets a "this is a resubmission" email)
 */
-function handleResubmit(requestId) {
+function handleResubmit(requestId, newFiles) {
   const caller = Session.getActiveUser().getEmail();
   const row    = getRequestRowData(requestId);
   if (!row) return { success: false, error: "Request not found." };
@@ -935,13 +992,44 @@ function handleResubmit(requestId) {
   const returnReason  = row[CR.APP3_REMARK - 1] || row[CR.APP2_REMARK - 1] || row[CR.APP1_REMARK - 1] || "No reason provided.";
   const resubmitCount = (parseInt(row[CR.RESUBMIT_COUNT - 1]) || 0) + 1; // +1 mirrors what resubmit() will write
 
+  // Optional re-upload: validate + upload-first any new/corrected documents.
+  // Old attachment rows are KEPT; new ones are appended with the r{N} naming
+  // convention so both cycles are distinguishable in the Drive folder.
+  const files = Array.isArray(newFiles) ? newFiles : [];
+  const v = validateAttachmentPayload(files, false); // false → new files optional
+  if (!v.ok) return { success: false, error: v.error };
+
+  if (files.length > 0) {
+    const controlNo = row[CR.CONTROL_NUMBER - 1];
+    const uploaded  = [];
+    try {
+      for (let i = 0; i < files.length; i++) {
+        const driveName = buildAttachmentDriveName(controlNo, resubmitCount, files[i].filename);
+        const result    = uploadAttachmentFile(files[i], driveName);
+        uploaded.push({
+          fileId:      result.fileId,
+          url:         result.url,
+          filename:    files[i].filename,
+          description: String(files[i].description).trim(),
+        });
+      }
+    } catch (err) {
+      // Roll back any files uploaded in this call — no state change has happened yet.
+      uploaded.forEach(function(u) {
+        try { DriveApp.getFileById(u.fileId).setTrashed(true); } catch (e) {}
+      });
+      Logger.log("handleResubmit(): Upload failed — " + err.message + ". Resubmit aborted.");
+      return { success: false, error: "File upload failed. The request was not resubmitted. Please try again." };
+    }
+    writeAttachmentRows(requestId, uploaded); // append — keeps the original files
+  }
+
   const result = resubmit(requestId);
   if (result.success) {
     sendResubmitConfirmToRequestor(requestId, returnReason, resubmitCount);
     if (result.newStatus === STATUS.PENDING_1) {
       sendResubmitApprovalRequest(requestId, returnReason, resubmitCount); // dedicated resubmit email for Approver 1
     }
-    // If newStatus === STATUS.SYNCING, approval email fires when attachments are finalized
   }
   return result;
 }

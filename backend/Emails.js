@@ -126,9 +126,14 @@ function getPortalUrl(requestId, page) {
 /*
   Function Name: buildAttachmentList
   LAYMAN    : Lista ng mga naka-attach na files ng request — para makita ng
-              approver sa email kung anong documents ang kasama.
-  TECHNICAL : getAttachmentsForRequest, maps each row to "- description — link".
-              Empty → "No supporting documents uploaded."
+              approver sa email kung anong documents ang kasama. WALANG Drive
+              link dito: private na ang files (Phase 8 gated serving), kaya
+              bubuksan ang mga ito sa loob ng portal (gamit ang deep-link na
+              nasa ibaba ng email) — doon naka-identity-check.
+  TECHNICAL : getAttachmentsForRequest, maps each row to "- filename — description".
+              NO FILE_LINK is emitted (files are private; a raw link would 404).
+              The approver opens the files via the portal deep-link already in the
+              email body → gated downloadAttachment(). Empty → fallback text.
   PARAMS    : requestId — the request whose attachments to list.
   RETURNS   : Multi-line string (one attachment per line, or fallback text).
 */
@@ -138,7 +143,7 @@ function buildAttachmentList(requestId) {
   const attachments = getAttachmentsForRequest(requestId);
   if (attachments.length === 0) return "No supporting documents uploaded.";
   return attachments
-    .map(row => `- ${row[RA.DESCRIPTION - 1]} — ${row[RA.FILE_LINK - 1]}`)
+    .map(row => `- ${row[RA.FILE - 1]} — ${row[RA.DESCRIPTION - 1]}`)
     .join("\n");
 }
 

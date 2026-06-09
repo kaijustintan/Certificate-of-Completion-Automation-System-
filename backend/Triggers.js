@@ -112,6 +112,15 @@ function handleCertificateRequestChange(e, sheet) {
 
   // Replaces: Next Approver Bot
   // Condition: CONTAINS([Status], "Pending Approver")
+  //
+  // ⚠️ DOUBLE-SEND GUARD — read before registering the trigger.
+  // submitNewRequest() in WebApp.js calls sendApprovalRequest() DIRECTLY for
+  // every new PENDING_1 submission (Phase 8: all submits go straight to PENDING_1).
+  // If onSheetChange were registered, a new submission would fire TWO approver
+  // emails — one from submitNewRequest, one here. This is PRE-EXISTING behaviour
+  // (not a Phase 8 regression), and currently SAFE because the trigger is DORMANT
+  // (requires manual registerTrigger()). Before registering: decide which is the
+  // single authority for initial PENDING_1 approval emails and neutralize the other.
   if (newStatus.includes("Pending Approver")) {
     const expectedAttachments = rowData[CR.EXPECTED_ATTACHMENTS - 1];
     const actualCount         = countAttachments(requestId);

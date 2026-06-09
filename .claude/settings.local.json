@@ -5,7 +5,10 @@
       "Bash(git -C \"c:/Users/kaita/OneDrive/Desktop/megaworld-COC-automation\" status --short)",
       "Bash(Get-ChildItem -Path \"C:\\\\Users\\\\kaita\\\\OneDrive\\\\Desktop\\\\MEGAWORLD\\\\MEGAWORLD - Projects\\\\megaworld-COC-automation\\\\backend\" -Recurse)",
       "Bash(Select-Object FullName)",
-      "Bash(Get-ChildItem -Path \"C:\\\\Users\\\\kaita\\\\OneDrive\\\\Desktop\\\\MEGAWORLD\\\\MEGAWORLD - Projects\\\\megaworld-COC-automation\" -Recurse -Filter \"*.html\" -ErrorAction SilentlyContinue)"
+      "Bash(Get-ChildItem -Path \"C:\\\\Users\\\\kaita\\\\OneDrive\\\\Desktop\\\\MEGAWORLD\\\\MEGAWORLD - Projects\\\\megaworld-COC-automation\" -Recurse -Filter \"*.html\" -ErrorAction SilentlyContinue)",
+      "Bash(Get-ChildItem -Path \"C:\\\\Users\\\\kaita\\\\OneDrive\\\\Desktop\\\\MEGAWORLD\\\\MEGAWORLD - Projects\\\\megaworld-COC-automation\" -Recurse -Filter \"*.js\")",
+      "Bash(Format-Table -HideTableHeaders)",
+      "Bash(xargs grep -l \"getApprovers\\\\|getCurrentApprover\\\\|countAttachments\\\\|generateRequestId\\\\|sendApprovalRequest\")"
     ]
   }
 }

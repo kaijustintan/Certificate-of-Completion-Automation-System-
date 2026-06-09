@@ -7,17 +7,22 @@
   LAYMAN (Tropang Ex):
   Ito ang "view your request" page ng requestor. Lahat ng field, approvers,
   attachments, at resubmit history ay makikita dito. Kung "Returned to
-  Requestor" ang status, lalabas ang "Resubmit request" button. Read-only
-  ang lahat ng iba pa.
+  Requestor" ang status, lalabas ang resubmit panel — pwedeng magdagdag ng
+  bago/tamang documents bago i-resubmit. Files ay binubuksan via "View" na
+  dumadaan sa server (gated) — walang Drive link. Read-only ang iba pa.
 
   IMPORTANT — SHARED HELPERS:
   Maraming helpers na naka-define dito ay ginagamit DIN ng ReviewDetail.html.
   Apps Script shares one global scope, kaya accessible sila kahit ibang file.
-  Huwag i-rename o ilipat nang hindi inuupdate ang ReviewDetail.
+  Huwag i-rename o ilipat nang hindi inuupdate ang ReviewDetail. Ang resubmit
+  panel ay GINAGAMIT DIN ang new-request file picker (window._newRequestFiles,
+  onAttachmentFilesSelected, renderAttachmentList, readFileAsBase64 — naka-define
+  sa NewRequest.html) sa parehong DOM ids; ligtas dahil iisang page lang ang
+  nakikita kada oras.
 
   TECHNICAL:
-  Two-column layout (detail-layout): summary cards + attachments on the left,
-  approvers chain + resubmit button on the right rail.
+  Two-column layout (detail-layout): summary cards + attachments + resubmit
+  panel on the left, approvers chain on the right rail.
 
   SHARED HELPERS (consumed by ReviewDetail.html too):
     - getConfiguredApproverSlots(detail)   non-empty approver slots array
@@ -27,11 +32,14 @@
     - renderRequestSummaryCards(detail)    4 info cards (Request/Product/Contract/Purpose)
     - renderApproversChain(detail, blur)   approver chain with icons + conditional email blur
     - renderResubmitBanner(detail)         current return entry + collapsible history
-    - renderAttachmentsBlock(detail, canManage)  attachments card
+    - renderAttachmentsBlock(detail, canManage)  attachments card (filename + View + desc)
+    - viewAttachmentFile(attachmentId)     gated fetch → inline preview / download
+    - toggleAttachDesc(attachmentId)       show/hide an attachment's description
 
   PAGE FUNCTIONS:
     - renderRequestDetailPage(params)     main renderer; getRequestDetail + auth
-    - onResubmitClick(requestId)          resubmit handler with confirm + loading overlay
+    - afterRender_request(params)         wires the resubmit file picker (if present)
+    - onResubmitClick(requestId)          resubmit handler: optional re-upload + confirm
     - toggleResubmitHistory()             expands/collapses old resubmit history
 -->
 
@@ -350,61 +358,161 @@ function toggleResubmitHistory() {
 }
 
 
-// Renders the attachments card.
-// canManage = true → show the (disabled) upload placeholder.
+// Renders the attachments card. Files are private (Phase 8 gated serving):
+// each row shows the filename + description inline (always visible) + a "View"
+// button served through the identity-gated downloadAttachment. No Drive link.
 /*
   Function Name: renderAttachmentsBlock
-  LAYMAN    : Ipakita ang listahan ng mga attachments ng request. Kung
-              requestor at may pahintulot na mag-manage, lalabas ang upload
-              placeholder (Phase 8 feature). Para sa approver view, read-only.
-  TECHNICAL : Renders .card; if canManage=true renders a disabled upload placeholder.
-              blurFutureEmails logic is in renderApproversChain, not here.
-  PARAMS    : detail — DTO; canManage — bool (requestor=true for upload controls).
+  LAYMAN    : Ipakita ang listahan ng mga supporting documents. Bawat file ay
+              may filename (bold) at description (muted, laging nakikita — hindi
+              kailangan pang mag-click para makita), at isang "View" button na
+              bubuksan ang file nang dumadaan sa server na may identity-check.
+              Description is shown by default: it's the primary decision-relevant
+              info for approvers (often more readable than the raw filename).
+  TECHNICAL : Renders .card; each row: attachment-view-name (filename) +
+              attachment-view-desc (description, always visible, not toggled) +
+              View button (viewAttachmentFile(attachmentId) → gated server fetch).
+              Only attachmentId goes to onclick (safe chars; no injection risk).
+              No fileLink in the DTO — the URL never leaves the server.
+  PARAMS    : detail — DTO from getRequestDetail(); canManage — bool (retained
+              for signature compatibility; UI is identical for both roles).
 */
 function renderAttachmentsBlock(detail, canManage) {
   const attachments = detail.attachments || [];
-  const expected    = Number(detail.expectedAttachments) || 0;
 
   let body;
   if (attachments.length === 0) {
-    body = '<div class="text-muted">No attachments uploaded.</div>';
+    body = '<div class="text-muted">No attachments on this request.</div>';
   } else {
     body = attachments.map(function (a) {
-      const label = a.description || a.fileLink || 'Attachment';
-      return '<div class="mb-sm">' +
-        '<a href="' + escapeHtml(a.fileLink) + '" target="_blank" rel="noopener">' +
-          escapeHtml(label) +
-        '</a>' +
-      '</div>';
+      const name = a.filename    || 'Attachment';
+      const desc = a.description || '';
+      const aid  = escapeHtml(a.attachmentId);
+      return '' +
+        '<div class="attachment-view-row">' +
+          '<div class="attachment-view-info">' +
+            '<span class="attachment-view-name" title="' + escapeHtml(name) + '">' + escapeHtml(name) + '</span>' +
+            (desc ? '<span class="attachment-view-desc">' + escapeHtml(desc) + '</span>' : '') +
+          '</div>' +
+          '<button type="button" class="attachment-link-btn" onclick="viewAttachmentFile(\'' + aid + '\')">View</button>' +
+        '</div>';
     }).join('');
-  }
-
-  let placeholder = '';
-  if (canManage) {
-    const missing = Math.max(0, expected - attachments.length);
-    const note = (detail.status === 'Syncing Files' && missing > 0)
-      ? 'Waiting on ' + missing + ' more file' + (missing === 1 ? '' : 's') + '. '
-      : '';
-    placeholder =
-      '<div class="mt-md">' +
-        '<button class="btn btn-secondary" disabled>Upload files</button> ' +
-        '<span class="text-tiny text-muted">' +
-          escapeHtml(note) + 'Upload UI ships in a later phase.' +
-        '</span>' +
-      '</div>';
   }
 
   return '' +
     '<div class="card">' +
       '<div class="card-header">' +
         '<div class="card-title">Attachments</div>' +
-        '<div class="text-tiny text-muted">' +
-          attachments.length + ' uploaded' +
-          (expected ? ' / ' + expected + ' expected' : '') +
+        '<div class="text-tiny text-muted">' + attachments.length + ' file' +
+          (attachments.length !== 1 ? 's' : '') +
         '</div>' +
       '</div>' +
-      body + placeholder +
+      body +
     '</div>';
+}
+
+
+// In-memory blob URL cache — keyed by attachmentId.
+// Second+ views of the same file are instant (no server round-trip).
+// Cleared on page navigation (window._attachmentBlobCache resets per render).
+window._attachmentBlobCache = window._attachmentBlobCache || {};
+
+/*
+  Function Name: viewAttachmentFile
+  LAYMAN    : Bubuksan ang isang attachment. Kinukuha ang file mula sa server
+              (na nagche-check muna kung ikaw ay requestor o approver), tapos
+              ipinapakita: PDF/larawan → bagong tab inline; ibang type →
+              idini-download. Ang ika-2+ view ng parehong file ay instant —
+              naka-cache na ang blob URL sa memory (walang server call ulit).
+              Walang Drive link kahit kailan.
+  TECHNICAL : Checks window._attachmentBlobCache first (instant second view).
+              On cache miss: opens a blank tab immediately (popup-blocker safe)
+              + writes a "Loading…" placeholder; calls gated downloadAttachment;
+              base64 → Uint8Array → Blob → object URL → sets tab location
+              (PDF/image inline) or closes tab + triggers <a download> (other).
+              Caches the URL for 55 min (revoke after that). hideLoading + toast
+              in every branch.
+  PARAMS    : attachmentId — the ATTACHMENT_ID to fetch.
+*/
+async function viewAttachmentFile(attachmentId) {
+  // Cache hit — second+ view is instant, no server call needed.
+  const cached = window._attachmentBlobCache[attachmentId];
+  if (cached) {
+    window.open(cached.url, '_blank');
+    return;
+  }
+
+  // Open tab now (must be synchronous inside the click handler to bypass blockers)
+  // and write a Miga loading screen while the server call is in flight.
+  // NOTE: this popup is a STANDALONE document (about:blank) that cannot load the
+  // app's Stylesheet — so inline styles are unavoidable here. The hex values reuse
+  // the existing palette (--gray-50 #f7f9fc, --gray-600 #5a6470, --navy-700 #134578).
+  let previewWin = window.open('', '_blank');
+  if (previewWin) {
+    const migaSrc = (typeof migaImageFor === 'function') ? migaImageFor('default') : '';
+    previewWin.document.write(
+      '<!doctype html><html><head><title>Loading document…</title><style>' +
+        'body{font-family:-apple-system,Segoe UI,Roboto,sans-serif;background:#f7f9fc;' +
+          'color:#5a6470;margin:0;height:100vh;display:flex;flex-direction:column;' +
+          'align-items:center;justify-content:center;}' +
+        'img{width:130px;height:130px;object-fit:contain;' +
+          'animation:bob 1.3s ease-in-out infinite;}' +
+        '@keyframes bob{0%,100%{transform:translateY(0)}50%{transform:translateY(-12px)}}' +
+        'p{margin-top:18px;font-size:14px;font-weight:500;}' +
+        '.dots::after{display:inline-block;width:1em;text-align:left;' +
+          'content:"";animation:dots 1.4s steps(4,end) infinite;}' +
+        '@keyframes dots{0%{content:""}25%{content:"."}50%{content:".."}75%{content:"..."}100%{content:""}}' +
+      '</style></head><body>' +
+        (migaSrc ? '<img src="' + migaSrc + '" alt="Miga">' : '') +
+        '<p>Miga is fetching your document<span class="dots"></span></p>' +
+      '</body></html>'
+    );
+    previewWin.document.close();
+  }
+
+  showLoading('Opening file…');
+  try {
+    const res = await callServer('downloadAttachment', attachmentId);
+    if (!res || !res.success) {
+      hideLoading();
+      if (previewWin) previewWin.close();
+      showToast((res && res.error) || 'Could not open file.', 'error');
+      return;
+    }
+
+    const byteChars = atob(res.base64);
+    const bytes = new Uint8Array(byteChars.length);
+    for (let i = 0; i < byteChars.length; i++) bytes[i] = byteChars.charCodeAt(i);
+    const blob = new Blob([bytes], { type: res.mimeType || 'application/octet-stream' });
+    const url  = URL.createObjectURL(blob);
+
+    const previewable = /^(application\/pdf|image\/)/i.test(res.mimeType || '');
+    if (previewable && previewWin) {
+      previewWin.location = url;
+      // Cache the URL — second view is instant. Revoke after 55 min.
+      window._attachmentBlobCache[attachmentId] = { url, mimeType: res.mimeType };
+      setTimeout(function () {
+        URL.revokeObjectURL(url);
+        delete window._attachmentBlobCache[attachmentId];
+      }, 55 * 60 * 1000);
+    } else {
+      if (previewWin) previewWin.close();
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = res.filename || 'attachment';
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      // Downloads are one-off — no point caching; revoke immediately.
+      setTimeout(function () { URL.revokeObjectURL(url); }, 5000);
+    }
+
+    hideLoading();
+  } catch (err) {
+    hideLoading();
+    if (previewWin) previewWin.close();
+    showToast((err && err.message) || 'Server error.', 'error');
+  }
 }
 
 
@@ -443,9 +551,29 @@ async function renderRequestDetailPage(params) {
   const isOwner       = state.user && detail.requestor && state.user.email === detail.requestor;
   const canResubmit   = isOwner && detail.status === 'Returned to Requestor';
 
-  const resubmitBar = canResubmit
-    ? '<div class="form-actions">' +
-        '<button class="btn btn-primary" onclick="onResubmitClick(\'' + escapeHtml(id) + '\')">Resubmit request</button>' +
+  // Resubmit panel (main column): lets the requestor add/replace corrected or
+  // missing documents (optional) before routing back to Approver 1. The file
+  // picker reuses the same global helpers + DOM ids as the new-request form —
+  // safe because only one page renders at a time. Wired in afterRender_request().
+  const resubmitPanel = canResubmit
+    ? '<div class="card">' +
+        '<div class="card-header"><div class="card-title">Resubmit request</div></div>' +
+        '<p class="text-small text-muted" style="margin:0 0 12px;">' +
+          'Add or replace any corrected or missing documents below (optional). ' +
+          'Your original attachments are kept. Resubmitting routes the request ' +
+          'back to Approver 1 from the start of the approval chain.' +
+        '</p>' +
+        '<div id="attachment-list"></div>' +
+        '<div class="attachment-add-row">' +
+          '<label class="btn btn-secondary file-input-label">' +
+            '<input type="file" id="attachment-file-input" multiple style="display:none">' +
+            '+ Add file' +
+          '</label>' +
+          '<span class="text-tiny text-muted">Max 5 MB per file · 15 MB total · 10 files max</span>' +
+        '</div>' +
+        '<div class="form-actions">' +
+          '<button class="btn btn-primary" onclick="onResubmitClick(\'' + escapeHtml(id) + '\')">Resubmit request</button>' +
+        '</div>' +
       '</div>'
     : '';
 
@@ -467,11 +595,11 @@ async function renderRequestDetailPage(params) {
       <div class="detail-main">
         ${renderRequestSummaryCards(detail)}
         ${renderAttachmentsBlock(detail, isOwner)}
+        ${resubmitPanel}
       </div>
 
       <div class="detail-rail">
         ${renderApproversChain(detail, true)}
-        ${resubmitBar}
       </div>
 
     </div>
@@ -481,33 +609,95 @@ async function renderRequestDetailPage(params) {
 
 // ─── ACTIONS ───────────────────────────────────────────────
 /*
+  Function Name: afterRender_request
+  LAYMAN    : Router hook na tumatakbo pagkatapos ma-render ang detail page.
+              Kung may resubmit panel (ibig sabihin Returned + ikaw ang may-ari),
+              nire-reset ang file list at ikinakabit ang file-picker listener.
+  TECHNICAL : Runs only when #attachment-file-input exists (resubmit panel
+              present). Resets window._newRequestFiles (shared with the new-request
+              picker), renders the empty list, and wires the change listener.
+  PARAMS    : params — { id } (unused here).
+*/
+function afterRender_request(params) {
+  // Clear cached blob URLs from any previous request detail view — they may
+  // refer to different request's attachments now that we've navigated.
+  window._attachmentBlobCache = {};
+
+  const fileInput = document.getElementById('attachment-file-input');
+  if (!fileInput) return; // no resubmit panel on this view → nothing to wire
+
+  window._newRequestFiles = [];
+  renderAttachmentList();
+
+  fileInput.addEventListener('change', function (e) {
+    onAttachmentFilesSelected(e.target.files);
+    e.target.value = '';
+  });
+}
+
+
+/*
   Function Name: onResubmitClick
-  LAYMAN    : Pag pinindot ng requestor ang "Resubmit request": tanungin muna
-              ("Sure ka ba?"), tapos ipakita ang loading overlay, tapos itawag
-              ang server, tapos i-refresh ang page para makita ang bagong status.
-  TECHNICAL : showConfirm → showLoading → callServer('handleResubmit') →
-              on success hideLoading + navigateTo 'request' (same page);
-              on failure hideLoading + showToast.
+  LAYMAN    : Pag pinindot ang "Resubmit request": kung may idinagdag na files,
+              i-validate ang descriptions, kumpirmahin, i-read bilang base64,
+              tapos ipadala sa server kasama ang requestId. Walang files? Ok lang
+              — gagamitin ang dating attachments. Refresh para makita ang status.
+  TECHNICAL : Validates descriptions for any window._newRequestFiles → showConfirm
+              (message adapts to file count) → Promise.all(readFileAsBase64) →
+              callServer('handleResubmit', requestId, files). hideLoading + toast
+              in every branch.
   PARAMS    : requestId — the request to resubmit.
 */
 async function onResubmitClick(requestId) {
+  const files = window._newRequestFiles || [];
+
+  // Any added file needs a description (client-side fast feedback).
+  for (let i = 0; i < files.length; i++) {
+    if (!files[i].description || !String(files[i].description).trim()) {
+      showToast('Please add a description for: ' + files[i].file.name, 'error');
+      return;
+    }
+  }
+
   const ok = await showConfirm({
     title:        'Resubmit request',
-    message:      'This request will be routed back to Approver 1 from the start of the approval chain. Continue?',
+    message:      files.length
+      ? files.length + ' document(s) will be added (your original attachments are kept), and the request routed back to Approver 1 from the start. Continue?'
+      : 'No new documents added — your original attachments will be reused. The request will be routed back to Approver 1 from the start. Continue?',
     confirmLabel: 'Resubmit',
   });
   if (!ok) return;
 
-  showLoading('Resubmitting…');
+  showLoading(files.length ? 'Uploading files and resubmitting…' : 'Resubmitting…');
+
+  // Read any added files as base64 before sending.
+  let filePayloads = [];
   try {
-    const result = await callServer('handleResubmit', requestId);
+    filePayloads = await Promise.all(files.map(function (item) {
+      return readFileAsBase64(item.file).then(function (base64) {
+        return {
+          filename:    item.file.name,
+          mimeType:    item.file.type || 'application/octet-stream',
+          base64:      base64,
+          description: String(item.description).trim(),
+        };
+      });
+    }));
+  } catch (readErr) {
+    hideLoading();
+    showToast((readErr && readErr.message) || 'Failed to read files.', 'error');
+    return;
+  }
+
+  try {
+    const result = await callServer('handleResubmit', requestId, filePayloads);
     if (result && result.success) {
       hideLoading();
       showToast('Request resubmitted.', 'success');
       navigateTo('request', { id: requestId });
     } else {
       hideLoading();
-      showToast((result && result.message) || 'Failed to resubmit.', 'error');
+      showToast((result && result.error) || (result && result.message) || 'Failed to resubmit.', 'error');
     }
   } catch (err) {
     hideLoading();

@@ -321,10 +321,13 @@ function resubmit(requestId) {
   sheet.getRange(rowNum, CR.RESUBMIT_COUNT).setValue(newCount);
   sheet.getRange(rowNum, CR.RESUBMIT_HISTORY).setValue(confirmedHistory);
 
-  // If attachments are required, go back to Syncing Files first.
-  // Otherwise go straight to Pending Approver 1.
-  const expectedAttachments = rowData[CR.EXPECTED_ATTACHMENTS - 1] || 0;
-  const newStatus = expectedAttachments > 0 ? STATUS.SYNCING : STATUS.PENDING_1;
+  // Phase 8: every request goes straight to Pending Approver 1. There is no
+  // SYNCING state anymore — attachments are uploaded before submit, and on
+  // resubmit any new/corrected files are uploaded by handleResubmit() BEFORE
+  // this runs. (The old `EXPECTED_ATTACHMENTS > 0 ? SYNCING : PENDING_1` branch
+  // would now route every resubmit into SYNCING and get it stuck forever, since
+  // EXPECTED_ATTACHMENTS is always > 0 and the sync-finisher is dormant.)
+  const newStatus = STATUS.PENDING_1;
 
   // Clear all approval history — same as AppSheet's Resubmit action
   sheet.getRange(rowNum, CR.STEP).setValue(1);

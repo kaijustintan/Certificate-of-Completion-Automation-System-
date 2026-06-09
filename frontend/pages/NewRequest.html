@@ -6,25 +6,38 @@
 
   LAYMAN (Tropang Ex):
   Ito ang form para sa bagong request. Nandito ang lahat ng 15 required
-  fields (Request info, Reference numbers, Product, Contract, Purpose).
-  Kapag na-submit, nini-validate muna bago ipadala sa server — kasama na
-  ang "contract end date hindi pwedeng bago sa start date" na rule.
+  fields (Request info, Reference numbers, Product, Contract, Purpose) PLUS
+  ang Supporting Documents section (Phase 8). Hindi pwedeng mag-submit nang
+  walang kahit isang file na may description. Files ay hawak ng browser
+  hanggang Submit — saka lang aalisin sa Drive kasabay ng request creation.
 
   TECHNICAL:
-  Single-page form (not stepped). 15 required fields + 3 optional. Approver
-  groups cached in state.approverGroups to avoid a re-fetch on each visit.
-  afterRender_new() wires the submit listener once the DOM exists.
+  Single-page form (not stepped). 15 required fields + 3 optional + at least 1
+  attachment (Phase 8). File objects stored in window._newRequestFiles (reset on
+  each page render). Submit flow: validate fields → validate files → FileReader
+  → base64 → callServer('submitNewRequest', {…fields, files:[…]}). Server
+  uploads to Drive first, then writes sheet rows (upload-first ordering for
+  atomicity). Approver groups cached in state.approverGroups.
 
   FUNCTIONS:
-    - renderNewRequestPage()    main renderer; loads group list from cache/server
-    - afterRender_new()         hook: wires submit event listener on #new-request-form
-    - onNewRequestSubmit(e)     submit handler; validates → showLoading → callServer
-    - validateNewRequest(form)  checks 15 required fields + contract date logic
-    - formToObject(form)        FormData → plain {field: value} object
+    - renderNewRequestPage()          main renderer; loads group list from cache/server
+    - afterRender_new()               hook: wires submit + file-input listeners
+    - onNewRequestSubmit(e)           submit handler; validates → reads files → callServer
+    - validateNewRequest(form)        checks 15 required fields + contract date logic
+    - onAttachmentFilesSelected(list) handles <input type=file> change; enforces size caps
+    - renderAttachmentList()          re-renders the selected-files list in the DOM
+    - removeAttachmentFile(idx)       removes a file from window._newRequestFiles
+    - readFileAsBase64(file)          Promise: File → base64 string (no data: prefix)
+    - formToObject(form)              FormData → plain {field: value} object
 -->
 
 
 <script>
+// Module-level store for files selected on the new-request form.
+// Initialized and reset by afterRender_new() on every page render.
+// window-scoped so inline onclick handlers in the rendered list can access it.
+window._newRequestFiles = window._newRequestFiles || [];
+
 // Field name → friendly label, used in the validation toast.
 const NEW_REQUEST_LABELS = {
   projectTitle:      'Project title',
@@ -200,6 +213,26 @@ async function renderNewRequestPage() {
       </div>
 
 
+      <div class="card">
+        <div class="form-section-title">Supporting documents <span class="required">*</span></div>
+        <p class="text-small text-muted" style="margin:0 0 12px;">
+          Attach at least one supporting document before submitting
+          (e.g. Purchase Order, Supplier Quotation, Budget Approval).
+          Add a brief description for each file.
+        </p>
+
+        <div id="attachment-list"></div>
+
+        <div class="attachment-add-row">
+          <label class="btn btn-secondary file-input-label">
+            <input type="file" id="attachment-file-input" multiple style="display:none">
+            + Add file
+          </label>
+          <span class="text-tiny text-muted">Max 5 MB per file · 15 MB total · 10 files max</span>
+        </div>
+      </div>
+
+
       <div class="form-actions">
         <button type="button" class="btn btn-secondary" onclick="navigateTo('home')">Cancel</button>
         <button type="submit" class="btn btn-primary">Submit request</button>
@@ -211,34 +244,56 @@ async function renderNewRequestPage() {
 
 /*
   Function Name: afterRender_new
-  LAYMAN    : Router hook — ginagamit para i-wire ang submit listener pagkatapos
-              malagay ang form sa DOM. Kailangan ito kasi ang form ay nasa innerHTML
-              na, hindi pa nandoon noong nag-render.
-  TECHNICAL : afterRender hook; attaches 'submit' event listener to #new-request-form.
+  LAYMAN    : Router hook — ginagamit para i-wire ang submit listener at ang
+              file-input listener pagkatapos malagay ang form sa DOM. Rin-reset
+              din dito ang _newRequestFiles para malinis ang file list sa bawat
+              bagong pagbukas ng form.
+  TECHNICAL : afterRender hook; resets window._newRequestFiles; attaches 'submit'
+              listener to #new-request-form; attaches 'change' listener to
+              #attachment-file-input; calls renderAttachmentList() to seed the
+              empty state.
 */
 // Called by the router after the form is in the DOM.
 function afterRender_new() {
+  // Reset file store on every fresh render of this page.
+  window._newRequestFiles = [];
+  renderAttachmentList();
+
   const form = document.getElementById('new-request-form');
   if (form) form.addEventListener('submit', onNewRequestSubmit);
+
+  // Wire the file picker — reset value after selection so the same file
+  // can be re-added if the user removed it and wants it back.
+  const fileInput = document.getElementById('attachment-file-input');
+  if (fileInput) {
+    fileInput.addEventListener('change', function(e) {
+      onAttachmentFilesSelected(e.target.files);
+      e.target.value = '';
+    });
+  }
 }
 
 
 // ─── SUBMIT FLOW ───────────────────────────────────────────
 /*
   Function Name: onNewRequestSubmit
-  LAYMAN    : Kapag na-submit ang form: i-validate, ipakita ang loading overlay,
-              itawag ang server, at pumunta sa request detail page kapag matagumpay.
-              Kapag may error, ibalik ang button at ipakita ang toast.
-  TECHNICAL : validateNewRequest first; sets btn.disabled + "Submitting…" text;
-              showLoading; callServer('submitNewRequest'); on success navigateTo
-              'request'; on failure hideLoading + restore btn. expectedAttachments
-              hardcoded to 0 (Phase 8 will repurpose).
+  LAYMAN    : Kapag na-submit ang form: i-validate ang fields, i-validate ang
+              files (≥1, bawat isa may description), i-read lahat ng files
+              bilang base64, tapos ipadala sa server. Yung server ang mag-uupload
+              sa Drive at susulat ng rows. Kung may error kahit saan, ibalik ang
+              button at ipakita ang toast.
+  TECHNICAL : validateNewRequest first; then check window._newRequestFiles (≥1,
+              all have descriptions); then Promise.all FileReader reads → base64
+              payloads; then callServer('submitNewRequest', {…fields, files}).
+              Server-side upload-first ordering means all Drive I/O happens before
+              any sheet write. showLoading/hideLoading in every branch.
   PARAMS    : e — form submit event.
 */
 async function onNewRequestSubmit(e) {
   e.preventDefault();
   const form = e.target;
 
+  // Step 1 — Validate form fields (existing logic)
   const err = validateNewRequest(form);
   if (err) {
     showToast(err.message, 'error');
@@ -247,17 +302,52 @@ async function onNewRequestSubmit(e) {
     return;
   }
 
-  const data = formToObject(form);
-  // Expected_Attachments is no longer user-editable — Phase 8 will repurpose
-  // this column. Hardcode to 0 so submitNewRequest skips Syncing Files.
-  data.expectedAttachments = 0;
+  // Step 2 — Validate attachments (client-side, fast feedback)
+  const files = window._newRequestFiles || [];
+  if (files.length === 0) {
+    showToast('At least one supporting document is required.', 'error');
+    const addBtn = document.querySelector('.file-input-label');
+    if (addBtn) addBtn.focus();
+    return;
+  }
+  for (let i = 0; i < files.length; i++) {
+    if (!files[i].description || !String(files[i].description).trim()) {
+      showToast('Please add a description for: ' + files[i].file.name, 'error');
+      return;
+    }
+  }
 
   const btn = form.querySelector('button[type="submit"]');
-  if (btn) {
-    btn.disabled = true;
-    btn.textContent = 'Submitting…';
+  if (btn) { btn.disabled = true; btn.textContent = 'Reading files…'; }
+  showLoading('Reading files…');
+
+  // Step 3 — Read all files as base64 (browser-side, before sending)
+  let filePayloads;
+  try {
+    filePayloads = await Promise.all(files.map(function(item) {
+      return readFileAsBase64(item.file).then(function(base64) {
+        return {
+          filename:    item.file.name,
+          mimeType:    item.file.type || 'application/octet-stream',
+          base64:      base64,
+          description: String(item.description).trim(),
+        };
+      });
+    }));
+  } catch (readErr) {
+    hideLoading();
+    showToast((readErr && readErr.message) || 'Failed to read files.', 'error');
+    if (btn) { btn.disabled = false; btn.textContent = 'Submit request'; }
+    return;
   }
-  showLoading('Submitting…');
+
+  // Step 4 — Send to server (server uploads to Drive, then writes sheet rows)
+  if (btn) btn.textContent = 'Submitting…';
+  showLoading('Uploading files and submitting…');
+
+  const data = formToObject(form);
+  data.files = filePayloads;
+  // Note: expectedAttachments no longer sent separately — server derives it from files.length.
 
   try {
     const result = await callServer('submitNewRequest', data);
@@ -267,12 +357,12 @@ async function onNewRequestSubmit(e) {
       navigateTo('request', { id: result.requestId });
     } else {
       hideLoading();
-      showToast((result && result.message) || 'Failed to submit.', 'error');
+      showToast((result && result.error) || (result && result.message) || 'Failed to submit.', 'error');
       if (btn) { btn.disabled = false; btn.textContent = 'Submit request'; }
     }
-  } catch (err) {
+  } catch (submitErr) {
     hideLoading();
-    showToast((err && err.message) || 'Server error.', 'error');
+    showToast((submitErr && submitErr.message) || 'Server error.', 'error');
     if (btn) { btn.disabled = false; btn.textContent = 'Submit request'; }
   }
 }
@@ -309,6 +399,117 @@ function validateNewRequest(form) {
   }
 
   return null;
+}
+
+
+/*
+  Function Name: onAttachmentFilesSelected
+  LAYMAN    : Kapag pumili ng file sa picker, dito napupunta. Sinisiguro na hindi
+              lumagpas sa per-file at total size limits bago idagdag sa listahan.
+              Tapos nire-render agad ang updated list sa DOM.
+  TECHNICAL : Iterates FileList; enforces MAX_FILE_COUNT, per-file MAX_FILE_BYTES,
+              cumulative MAX_TOTAL_BYTES (using file.size, not base64 estimate,
+              for fast client feedback). Pushes {file, size, description:''} to
+              window._newRequestFiles; calls renderAttachmentList().
+  PARAMS    : fileList — FileList from <input type=file> change event.
+  RETURNS   : (void)
+*/
+function onAttachmentFilesSelected(fileList) {
+  var MAX_FILE_BYTES  = 5  * 1024 * 1024;   // 5 MB
+  var MAX_TOTAL_BYTES = 15 * 1024 * 1024;   // 15 MB total
+  var MAX_FILE_COUNT  = 10;
+
+  for (var i = 0; i < fileList.length; i++) {
+    var f = fileList[i];
+    if (window._newRequestFiles.length >= MAX_FILE_COUNT) {
+      showToast('Maximum ' + MAX_FILE_COUNT + ' files allowed.', 'error');
+      break;
+    }
+    if (f.size > MAX_FILE_BYTES) {
+      showToast('"' + f.name + '" exceeds 5 MB and was skipped.', 'error');
+      continue;
+    }
+    var currentTotal = window._newRequestFiles.reduce(function(sum, x) { return sum + x.size; }, 0);
+    if (currentTotal + f.size > MAX_TOTAL_BYTES) {
+      showToast('Adding "' + f.name + '" would exceed the 15 MB total limit.', 'error');
+      continue;
+    }
+    window._newRequestFiles.push({ file: f, size: f.size, description: '' });
+  }
+  renderAttachmentList();
+}
+
+
+/*
+  Function Name: renderAttachmentList
+  LAYMAN    : I-refresh ang listahan ng mga napiling files sa DOM. Bawat row ay
+              may filename, description input, at remove button.
+  TECHNICAL : Reads window._newRequestFiles; writes innerHTML of #attachment-list.
+              Description inputs use oninput to directly mutate the store entry.
+              Inline onclick for remove buttons uses window._newRequestFiles by index.
+  RETURNS   : (void)
+*/
+function renderAttachmentList() {
+  var list = document.getElementById('attachment-list');
+  if (!list) return;
+  if (!window._newRequestFiles || window._newRequestFiles.length === 0) {
+    list.innerHTML = '<div class="text-small text-muted" style="margin-bottom:10px;">No files selected yet.</div>';
+    return;
+  }
+  list.innerHTML = window._newRequestFiles.map(function(item, idx) {
+    return '<div class="attachment-item">' +
+      '<span class="attachment-item-name" title="' + escapeHtml(item.file.name) + '">' +
+        escapeHtml(item.file.name) +
+      '</span>' +
+      '<input type="text" class="form-input attachment-item-desc" ' +
+             'placeholder="Description (required)" ' +
+             'value="' + escapeHtml(item.description) + '" ' +
+             'oninput="window._newRequestFiles[' + idx + '].description = this.value">' +
+      '<button type="button" class="attachment-item-remove" ' +
+              'onclick="removeAttachmentFile(' + idx + ')" ' +
+              'title="Remove file" aria-label="Remove file">×</button>' +
+    '</div>';
+  }).join('');
+}
+
+
+/*
+  Function Name: removeAttachmentFile
+  LAYMAN    : I-remove ang file sa listahan ayon sa index niya.
+  TECHNICAL : Splices window._newRequestFiles at idx; re-renders the list.
+  PARAMS    : idx — array index of the file to remove.
+  RETURNS   : (void)
+*/
+function removeAttachmentFile(idx) {
+  window._newRequestFiles.splice(idx, 1);
+  renderAttachmentList();
+}
+
+
+/*
+  Function Name: readFileAsBase64
+  LAYMAN    : I-read ang file bilang base64 string. Ginagamit bago ipadala
+              ang files sa server — kailangan ng server ang base64 encoding para
+              ma-upload sa Google Drive.
+  TECHNICAL : Wraps FileReader.readAsDataURL in a Promise. Strips the
+              "data:<mime>;base64," prefix before resolving — the server expects
+              the raw base64 body only (no data: URI prefix).
+  PARAMS    : file — a File object from the browser.
+  RETURNS   : Promise<string> — resolves with the raw base64 body.
+*/
+function readFileAsBase64(file) {
+  return new Promise(function(resolve, reject) {
+    var reader = new FileReader();
+    reader.onload = function(e) {
+      // Strip the "data:...;base64," prefix — send only the base64 body
+      var base64 = e.target.result.split(',')[1];
+      resolve(base64);
+    };
+    reader.onerror = function() {
+      reject(new Error('Failed to read file: ' + file.name));
+    };
+    reader.readAsDataURL(file);
+  });
 }
 
 
