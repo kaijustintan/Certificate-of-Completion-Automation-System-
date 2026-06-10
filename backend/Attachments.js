@@ -188,12 +188,18 @@ function uploadAttachmentFile(file, driveName) {
 
   EXAMPLE
     buildAttachmentDriveName("EC-2026-00042-9B1", 0, "Quotation.pdf")
-    → "EC-2026-00042-9B1__r0__Quotation.pdf"
+    → "EC-2026-00042-9B1__Original__Quotation.pdf"
+    buildAttachmentDriveName("EC-2026-00042-9B1", 2, "Quotation.pdf")
+    → "EC-2026-00042-9B1__Resubmit-2__Quotation.pdf"
 */
 function buildAttachmentDriveName(controlNumber, resubmitN, filename) {
   var safeCtrl = sanitizeAttachmentFilename(controlNumber || "EC");
   var safeName = sanitizeAttachmentFilename(filename || "attachment");
-  return safeCtrl + "__r" + (parseInt(resubmitN) || 0) + "__" + safeName;
+  var n = parseInt(resubmitN) || 0;
+  // Human-readable cycle label instead of a cryptic "r2": "Original" for the
+  // first submission, "Resubmit-N" for the Nth resubmission.
+  var label = (n === 0) ? "Original" : ("Resubmit-" + n);
+  return safeCtrl + "__" + label + "__" + safeName;
 }
 
 
@@ -210,22 +216,29 @@ function buildAttachmentDriveName(controlNumber, resubmitN, filename) {
               re-uploads keep the existing rows.
   PARAMS    : requestId — the parent request ID.
               uploaded  — Array<{ fileId, url, filename, description }>.
+              cycle     — resubmit cycle the files belong to (0 = first submit).
   RETURNS   : (void).
 */
-function writeAttachmentRows(requestId, uploaded) {
+function writeAttachmentRows(requestId, uploaded, cycle) {
   if (!uploaded || uploaded.length === 0) return;
-  var sheet   = getSheet(SHEET_NAMES.REQUEST_ATTACHMENTS);
-  var rows2D  = uploaded.map(function(u) {
-    var r = new Array(5).fill("");
-    r[RA.ATTACHMENT_ID - 1] = generateRequestId() + "-ATT";
-    r[RA.REQUEST_ID    - 1] = requestId;
-    r[RA.FILE          - 1] = String(u.filename || "attachment");  // friendly name for display
-    r[RA.FILE_LINK     - 1] = u.url;                               // Drive URL — server-side only
-    r[RA.DESCRIPTION   - 1] = String(u.description).trim();
+  var sheet         = getSheet(SHEET_NAMES.REQUEST_ATTACHMENTS);
+  var uploader      = Session.getActiveUser().getEmail();
+  var now           = new Date();
+  var resubmitCycle = parseInt(cycle, 10) || 0;
+  var rows2D = uploaded.map(function(u) {
+    var r = new Array(8).fill("");
+    r[RA.ATTACHMENT_ID  - 1] = generateRequestId() + "-ATT";
+    r[RA.REQUEST_ID     - 1] = requestId;
+    r[RA.FILE           - 1] = String(u.filename || "attachment");  // friendly name for display
+    r[RA.FILE_LINK      - 1] = u.url;                               // Drive URL — server-side only
+    r[RA.DESCRIPTION    - 1] = String(u.description).trim();
+    r[RA.RESUBMIT_CYCLE - 1] = resubmitCycle;
+    r[RA.UPLOADED_BY    - 1] = uploader;
+    r[RA.UPLOADED_AT    - 1] = now;
     return r;
   });
   var startRow = sheet.getLastRow() + 1;
-  sheet.getRange(startRow, 1, rows2D.length, 5).setValues(rows2D);
+  sheet.getRange(startRow, 1, rows2D.length, 8).setValues(rows2D);
   Logger.log("writeAttachmentRows(): Wrote " + rows2D.length + " attachment rows for " + requestId);
 }
 
@@ -370,40 +383,12 @@ function downloadAttachment(attachmentId) {
     // → STATUS flips to "Pending Approver 1"; Approver 1 gets an email
 */
 function checkAttachmentSync(requestId) {
-  const sheet  = getSheet(SHEET_NAMES.CERTIFICATE_REQUESTS);
-  const rowNum = getRowNumberByRequestId(requestId);
-
-  if (rowNum === -1) {
-    Logger.log(`checkAttachmentSync(): Parent request not found — ${requestId}`);
-    return;
-  }
-
-  const rowData            = sheet.getRange(rowNum, 1, 1, 31).getValues()[0];
-  const currentStatus      = rowData[CR.STATUS - 1];
-  const expectedAttachments = rowData[CR.EXPECTED_ATTACHMENTS - 1];
-
-  // Only act if the request is still waiting for files
-  // If it's already past Syncing Files, do nothing
-  if (currentStatus !== STATUS.SYNCING) {
-    Logger.log(`checkAttachmentSync(): ${requestId} is not in Syncing Files — skipping`);
-    return;
-  }
-
-  // Count how many files have actually been uploaded
-  const actualCount = countAttachments(requestId);
-
-  Logger.log(`checkAttachmentSync(): ${requestId} — ${actualCount}/${expectedAttachments} files uploaded`);
-
-  // If required count is met — unlock the request
-  if (actualCount >= expectedAttachments) {
-    sheet.getRange(rowNum, CR.STATUS).setValue(STATUS.PENDING_1);
-    sheet.getRange(rowNum, CR.STEP).setValue(1);
-
-    Logger.log(`checkAttachmentSync(): ${requestId} — attachment count met, routing to Approver 1`);
-
-    // Trigger the first approval email now that the request is unlocked
-    sendApprovalRequest(requestId);
-  }
+  // PERMANENT NO-OP (schema normalization). The SYNCING status and the
+  // Expected_Attachments column no longer exist — attachments are uploaded
+  // before submit (Phase 8), and the request goes straight to PENDING_1. This
+  // stub remains only so the dormant handleAttachmentChange caller doesn't error;
+  // it can be deleted together with that trigger handler.
+  return;
 }
 
 

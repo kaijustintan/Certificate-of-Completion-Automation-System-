@@ -96,7 +96,7 @@ function buildInfoBlock(rowData) {
     `E-Certificate Title: ${rowData[CR.PROJECT_TITLE - 1]}`,
     `E-Certificate ID: ${rowData[CR.CONTROL_NUMBER - 1]}`,
     `Requestor: ${rowData[CR.REQUESTOR - 1]}`,
-    `Group: ${rowData[CR.GROUP - 1]}`,
+    `Group: ${getGroupNameById(rowData[CR.GROUP - 1])}`,  // CR.GROUP holds group_id
   ].join("\n");
 }
 
@@ -159,22 +159,20 @@ function buildAttachmentList(requestId) {
   PARAMS    : rowData — the 0-indexed row array; approvers — from getApprovers().
   RETURNS   : Multi-line string.
 */
-// Helper — builds the approval progress log shown in emails
-// Replaces AppSheet's <<If: ISNOTBLANK([App1_Date])>> blocks
+// Helper — builds the approval progress log shown in emails.
+// Reads per-step approval dates from the Approval_Actions timeline (current
+// cycle) via getApprovalView — signature unchanged so callers don't change.
 function buildApprovalLog(rowData, approvers) {
+  const view = getApprovalView(rowData[CR.REQUEST_ID - 1]);
+  const slot = function (n) { return n === 1 ? approvers.approver1 : n === 2 ? approvers.approver2 : approvers.approver3; };
   let log = "";
-  if (rowData[CR.APP1_DATE - 1]) {
-    log += `Approver 1: ${approvers.approver1 || "—"}\n`;
-    log += `Approved: ${formatPHTime(new Date(rowData[CR.APP1_DATE - 1]))}\n\n`;
-  }
-  if (rowData[CR.APP2_DATE - 1]) {
-    log += `Approver 2: ${approvers.approver2 || "—"}\n`;
-    log += `Approved: ${formatPHTime(new Date(rowData[CR.APP2_DATE - 1]))}\n\n`;
-  }
-  if (rowData[CR.APP3_DATE - 1]) {
-    log += `Approver 3: ${approvers.approver3 || "—"}\n`;
-    log += `Approved: ${formatPHTime(new Date(rowData[CR.APP3_DATE - 1]))}\n\n`;
-  }
+  [1, 2, 3].forEach(function (n) {
+    const s = view.byStep[n];
+    if (s && s.date) {
+      log += `Approver ${n}: ${slot(n) || "—"}\n`;
+      log += `Approved: ${formatPHTime(new Date(s.date))}\n\n`;
+    }
+  });
   return log.trim() || "No approvals recorded yet.";
 }
 
@@ -189,13 +187,11 @@ function buildApprovalLog(rowData, approvers) {
   PARAMS    : rowData — the 0-indexed row array.
   RETURNS   : Remark string.
 */
-// Helper — gets the most recent non-blank remark from any approver
-// Replaces AppSheet's IFS(ISNOTBLANK([App3's Remark]), ...) pattern
+// Helper — gets the most recent decline/return remark.
+// Derived from the Approval_Actions timeline via getApprovalView — signature
+// unchanged so callers don't change.
 function getLatestRemark(rowData) {
-  return rowData[CR.APP3_REMARK - 1]
-    || rowData[CR.APP2_REMARK - 1]
-    || rowData[CR.APP1_REMARK - 1]
-    || "No reason provided.";
+  return getApprovalView(rowData[CR.REQUEST_ID - 1]).latestRemark || "No reason provided.";
 }
 
 
@@ -211,11 +207,11 @@ function getLatestRemark(rowData) {
 */
 // Helper — loads a full request row as a flat object for easy reference
 function getRequestData(requestId) {
-  const sheet  = getSheet(SHEET_NAMES.CERTIFICATE_REQUESTS);
+  const sheet  = getSheet(SHEET_NAMES.REQUESTS);
   const rowNum = getRowNumberByRequestId(requestId);
   if (rowNum === -1) return null;
-  const rowData  = sheet.getRange(rowNum, 1, 1, 31).getValues()[0];
-  const group    = rowData[CR.GROUP - 1];
+  const rowData   = sheet.getRange(rowNum, 1, 1, CR.RESUBMIT_COUNT).getValues()[0];
+  const group     = rowData[CR.GROUP - 1];   // group_id
   const approvers = getApprovers(group);
   return { rowData, rowNum, group, approvers };
 }
@@ -287,13 +283,14 @@ function sendDeclineToApprover(requestId) {
   const { rowData } = data;
 
   const actioner      = Session.getActiveUser().getEmail();
+  const approverLabel = "Approver " + rowData[CR.STEP - 1];   // step is unchanged on decline
   const controlNumber = rowData[CR.CONTROL_NUMBER - 1];
 
   const subject = emailSubject(controlNumber, "Declined", "APPROVER");
 
   const body = `Good day!
 
-This confirms that you have declined the following request.
+This confirms that you, as ${approverLabel}, have declined the following request.
 
 ${buildInfoBlock(rowData)}
 
@@ -327,6 +324,7 @@ function sendDeclineToRequestor(requestId) {
   const requestor     = rowData[CR.REQUESTOR - 1];
   const controlNumber = rowData[CR.CONTROL_NUMBER - 1];
   const actioner      = Session.getActiveUser().getEmail();
+  const approverLabel = "Approver " + rowData[CR.STEP - 1];   // step is unchanged on decline
   const reason        = getLatestRemark(rowData);
 
   const subject = emailSubject(controlNumber, "Declined", "REQUESTOR");
@@ -338,7 +336,7 @@ We regret to inform you that your request has been declined.
 ${buildInfoBlock(rowData)}
 
 Reason for Decline: ${reason}
-Actioned by: ${actioner}
+Declined by: ${approverLabel} (${actioner})
 Date: ${nowFormatted()}
 
 Note: If you would like to try again, you must create a brand new request.
@@ -373,10 +371,11 @@ function sendFullyApprovedToApprover(requestId) {
     || approvers.approver1;
   if (!recipient) return;
 
-  // Get the last approval date
-  const lastDate = rowData[CR.APP3_DATE - 1]
-    || rowData[CR.APP2_DATE - 1]
-    || rowData[CR.APP1_DATE - 1];
+  // Get the last approval date from the timeline (latest approved step).
+  const _view = getApprovalView(requestId);
+  const lastDate = (_view.byStep[3] && _view.byStep[3].date)
+    || (_view.byStep[2] && _view.byStep[2].date)
+    || (_view.byStep[1] && _view.byStep[1].date);
 
   const subject = emailSubject(controlNumber, "Fully Approved", "APPROVER");
 
@@ -622,8 +621,7 @@ function sendProgressUpdateToRequestor(requestId) {
   const controlNumber = rowData[CR.CONTROL_NUMBER - 1];
   const approvalLog   = buildApprovalLog(rowData, approvers);
 
-  const completed = [rowData[CR.APP1_DATE - 1], rowData[CR.APP2_DATE - 1], rowData[CR.APP3_DATE - 1]]
-    .filter(function (d) { return !!d; }).length;
+  const completed = getApprovalView(requestId).approvedCount;  // approvals this cycle (from timeline)
   const total = [approvers.approver1, approvers.approver2, approvers.approver3]
     .filter(function (a) { return !!a; }).length;
 
@@ -724,7 +722,8 @@ function sendResubmitConfirmToRequestor(requestId, returnReason, resubmitCount) 
 
   const requestor     = rowData[CR.REQUESTOR - 1];
   const controlNumber = rowData[CR.CONTROL_NUMBER - 1];
-  const countNote     = resubmitCount > 1 ? ` (Resubmission #${resubmitCount})` : "";
+  // Always show which resubmission this is (1st, 2nd, …) — clearer for non-devs.
+  const countNote     = ` (Resubmission #${resubmitCount})`;
 
   const subject = emailSubject(controlNumber, "Resubmitted", "REQUESTOR");
 
@@ -777,7 +776,7 @@ function sendResubmitApprovalRequest(requestId, returnReason, resubmitCount) {
 
   const controlNumber  = rowData[CR.CONTROL_NUMBER - 1];
   const attachmentList = buildAttachmentList(requestId);
-  const countNote      = resubmitCount > 1 ? ` #${resubmitCount}` : "";
+  const countNote      = ` #${resubmitCount}`;   // always show which resubmission (1st, 2nd, …)
 
   const subject = emailSubject(controlNumber, `Resubmission${countNote} — Action Needed`, "APPROVER");
 

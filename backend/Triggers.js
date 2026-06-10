@@ -48,7 +48,7 @@ function onSheetChange(e) {
 
     // ── Route based on which sheet tab changed ──────────────
 
-    if (sheetName === SHEET_NAMES.CERTIFICATE_REQUESTS) {
+    if (sheetName === SHEET_NAMES.REQUESTS) {
       handleCertificateRequestChange(e, sheet);
     }
 
@@ -103,7 +103,7 @@ function handleCertificateRequestChange(e, sheet) {
   if (col !== CR.STATUS) return;
 
   const newStatus = range.getValue();
-  const rowData   = sheet.getRange(row, 1, 1, 31).getValues()[0];
+  const rowData   = sheet.getRange(row, 1, 1, CR.RESUBMIT_COUNT).getValues()[0];
   const requestId = rowData[CR.REQUEST_ID - 1];
 
   Logger.log(`handleCertificateRequestChange(): ${requestId} → Status = "${newStatus}"`);
@@ -122,15 +122,9 @@ function handleCertificateRequestChange(e, sheet) {
   // (requires manual registerTrigger()). Before registering: decide which is the
   // single authority for initial PENDING_1 approval emails and neutralize the other.
   if (newStatus.includes("Pending Approver")) {
-    const expectedAttachments = rowData[CR.EXPECTED_ATTACHMENTS - 1];
-    const actualCount         = countAttachments(requestId);
-
-    // Only send approval email if attachments are satisfied
-    // Replaces: OR([Expected_Attachments]=0,
-    //              COUNT([Related Request_Attachments])>=[Expected_Attachments])
-    if (expectedAttachments === 0 || actualCount >= expectedAttachments) {
-      sendApprovalRequest(requestId);
-    }
+    // Phase 8: attachments are uploaded before submit — no attachment gate
+    // anymore. A Pending status always means an approver should be notified.
+    sendApprovalRequest(requestId);
     return;
   }
 

@@ -234,10 +234,16 @@ function renderApproversChain(detail, blurFutureEmails) {
       icon = '✕'; color = 'var(--red-text)';   label = 'Declined';
     } else if (status === 'Returned to Requestor' && s.remark) {
       icon = '↩'; color = 'var(--amber-text)'; label = 'Returned for revision';
-    } else if (step === s.n && status.indexOf('Pending') !== -1) {
+    } else if (status.indexOf('Pending') !== -1 && step === s.n) {
       icon = '⏳'; color = 'var(--amber-text)'; label = 'Pending review';
-    } else {
+    } else if (status.indexOf('Pending') !== -1) {
+      // Request is still active and this is a later step → genuinely awaiting.
       icon = '○'; color = 'var(--gray-400)';   label = 'Awaiting';
+      if (blurFutureEmails) revealEmail = false;
+    } else {
+      // Terminal (Declined / Returned / etc.) and this slot never acted → it was
+      // never reached. Don't show "Awaiting" — nothing is waiting on them.
+      icon = '○'; color = 'var(--gray-400)';   label = '—';
       if (blurFutureEmails) revealEmail = false;
     }
 

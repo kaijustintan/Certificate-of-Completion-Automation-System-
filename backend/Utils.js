@@ -25,9 +25,8 @@
     - getAllData(name)          all rows incl. header (2D array)
     - getDataRows(name)         data rows only (header sliced off)
 
-  APPROVER LOOKUP   (was AppSheet Ref: CR.Group → AS.Group)
-    - getApprovers(group)               all 3 approver slots for a group
-    - getCurrentApprover(step, group)   who must act right now
+  APPROVER LOOKUP — MOVED to Accessors.js (now keyed by group_id, reads
+    Groups / Group_Approvers). getApprovers() / getCurrentApprover() live there.
 
   ATTACHMENT HELPERS
     - getAttachmentsForRequest(id)      attachment rows for one request
@@ -105,96 +104,12 @@ function getDataRows(sheetName) {
 
 
 // =========================================================================================================
-// APPROVER LOOKUP
-// Replaces AppSheet's Ref: Certificate_Requests.Group → Approver_Settings.Group
+// APPROVER LOOKUP — moved to Accessors.js
+// getApprovers(groupId) and getCurrentApprover(step, groupId) now live in
+// Accessors.js, keyed by the surrogate group_id and reading the normalized
+// Groups / Group_Approvers sheets. (One global scope — defining them here too
+// would collide.)
 // =========================================================================================================
-
-/*
-  Function Name: getApprovers
-  LAYMAN    : Bigyan mo ng pangalan ng group (hal. "ISM - InfoSec"), ibabalik
-              nito kung sinong approver(s) nito. Kapalit ito ng AppSheet "Ref"
-              lookup mula CR.Group papuntang Approver_Settings.
-  TECHNICAL : Finds the Approver_Settings row whose GROUP equals groupName and
-              returns all 3 approver/designation slots. Blank cells → null.
-  PARAMS    : groupName — must match an Approver_Settings.GROUP value exactly.
-  RETURNS   : { approver1, designation1, approver2, designation2, approver3,
-              designation3 } with null for blank slots — OR null if the group
-              row itself isn't found.
-
-  STEPS
-    Step 1 — Load all approver-settings rows
-      Layman    : Kunin lahat ng laman ng Approver_Settings.
-      Technical : getDataRows(SHEET_NAMES.APPROVER_SETTINGS).
-    Step 2 — Find the matching group
-      Layman    : Hanapin ang row na tugma ang group name.
-      Technical : rows.find(GROUP === groupName); return null if none.
-    Step 3 — Project the 3 slots (blank → null)
-      Layman    : Ibalik ang 3 approver slots; kapag walang laman, null.
-      Technical : `|| null` normalizes empty cells so callers can null-check.
-
-  EXAMPLE
-    getApprovers("ISM - InfoSec")
-    → { approver1: "kyle_justin_tan@dlsu.edu.ph", designation1: "InfoSec Head",
-        approver2: null, designation2: null, approver3: null, designation3: null }
-    getApprovers("Nonexistent Group")  →  null
-*/
-function getApprovers(groupName) {
-  const rows = getDataRows(SHEET_NAMES.APPROVER_SETTINGS);
-  const match = rows.find(row => row[AS.GROUP - 1] === groupName);
-  if (!match) return null;
-
-  return {
-    approver1:    match[AS.APPROVER_1 - 1] || null,
-    designation1: match[AS.DESIG_1 - 1]    || null,
-    approver2:    match[AS.APPROVER_2 - 1] || null,
-    designation2: match[AS.DESIG_2 - 1]    || null,
-    approver3:    match[AS.APPROVER_3 - 1] || null,
-    designation3: match[AS.DESIG_3 - 1]    || null,
-  };
-}
-
-
-// =========================================================================================================
-// CURRENT APPROVER
-// Replaces AppSheet's virtual column: Current Approver
-// Formula was: IFS([Step]=1, Approver1, [Step]=2, Approver2, ...)
-// =========================================================================================================
-
-/*
-  Function Name: getCurrentApprover
-  LAYMAN    : Sino ang dapat kumilos sa request NGAYON? Base sa Step (1/2/3) at
-              group, ibabalik kung kaninong email ang nasa pila. Kapalit ng
-              AppSheet virtual column na "Current Approver".
-  TECHNICAL : Maps a workflow step to the configured approver email for the
-              group. Step 0 (returned to requestor) and unconfigured steps → null.
-  PARAMS    : step — 0..3 workflow counter (CR.STEP).
-              groupName — the request's group (CR.GROUP).
-  RETURNS   : Approver email string, or null (no one is currently due to act).
-
-  STEPS
-    Step 1 — Short-circuit step 0
-      Layman    : Kapag 0 ang step, nasa requestor pa — walang approver.
-      Technical : step === 0 → return null immediately.
-    Step 2 — Resolve the group's approvers
-      Layman    : Kunin ang approver slots ng group.
-      Technical : getApprovers(groupName); null group → null.
-    Step 3 — Pick the slot matching the step
-      Layman    : Step 1 → approver1, step 2 → approver2, atbp.
-      Technical : Return approverN keyed by step; out-of-range → null.
-
-  EXAMPLE
-    getCurrentApprover(1, "ISM - InfoSec")  →  "kyle_justin_tan@dlsu.edu.ph"
-    getCurrentApprover(0, "ISM - InfoSec")  →  null   // returned to requestor
-*/
-function getCurrentApprover(step, groupName) {
-  if (step === 0) return null; // returned to requestor, no approver
-  const approvers = getApprovers(groupName);
-  if (!approvers) return null;
-  if (step === 1) return approvers.approver1;
-  if (step === 2) return approvers.approver2;
-  if (step === 3) return approvers.approver3;
-  return null;
-}
 
 
 // =========================================================================================================
@@ -262,7 +177,7 @@ function countAttachments(requestId) {
     getRowNumberByRequestId("nope")     →  -1
 */
 function getRowNumberByRequestId(requestId) {
-  const allData = getAllData(SHEET_NAMES.CERTIFICATE_REQUESTS);
+  const allData = getAllData(SHEET_NAMES.REQUESTS);
   const target  = String(requestId);
   for (let i = 1; i < allData.length; i++) {
     if (String(allData[i][CR.REQUEST_ID - 1]) === target) {
@@ -351,7 +266,7 @@ function generateRequestId() {
      volume, but worth knowing if throughput grows.
 */
 function generateControlNumber(requestId) {
-  const sheet = getSheet(SHEET_NAMES.CERTIFICATE_REQUESTS);
+  const sheet = getSheet(SHEET_NAMES.REQUESTS);
   const lastRow = sheet.getLastRow();
   const count = lastRow > 1 ? lastRow - 1 : 0; // subtract header row
   const padded = String(count + 1).padStart(5, "0");

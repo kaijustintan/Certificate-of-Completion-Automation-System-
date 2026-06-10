@@ -135,10 +135,16 @@ function generateCOC(requestId) {
   const row = getRequestRowData(requestId);
   if (!row) return { success: false, error: "Request not found: " + requestId };
 
-  const group         = row[CR.GROUP - 1];
+  const group         = row[CR.GROUP - 1];           // group_id
+  const groupName     = getGroupNameById(group);     // display name for the COC
   const approvers     = getApprovers(group) || {};
   const controlNumber = row[CR.CONTROL_NUMBER - 1] || requestId;
   const copyName      = "COC - " + controlNumber;
+
+  // Per-step approval dates come from the Approval_Actions timeline (the request
+  // is fully approved when this runs, so every configured step has an approved action).
+  const _view   = getApprovalView(requestId);
+  const appDate = function (n) { return (_view.byStep[n] && _view.byStep[n].date) || ""; };
 
   // Step 3 — Copy the template Doc
   const copyId = DriveApp.getFileById(COC.TEMPLATE_DOC_ID).makeCopy(copyName).getId();
@@ -173,7 +179,7 @@ function generateCOC(requestId) {
       ["<<\\[Group\\]\\.\\[App 2 Designation\\]>>", approvers.designation2],
       ["<<\\[Group\\]\\.\\[Approver 3\\]>>",        approvers.approver3],
       ["<<\\[Group\\]\\.\\[App 3 Designation\\]>>", approvers.designation3],
-      ["<<\\[Group\\]>>",                           group],
+      ["<<\\[Group\\]>>",                           groupName],
       ["<<\\[Control Number\\]>>",                  controlNumber],
       ["<<TEXT\\(\\[Date of Filing\\][^>]*MMMM[^>]*>>",       coc_fmtDate_(row[CR.DATE_OF_FILING - 1], "MMMM dd, yyyy", "")],
       ["<<TEXT\\(\\[Date of Filing\\][^>]*MM-dd-yyyy[^>]*>>", coc_fmtDate_(row[CR.DATE_OF_FILING - 1], "MM-dd-yyyy", "")],
@@ -196,9 +202,9 @@ function generateCOC(requestId) {
       ["<<\\[Contract End Date\\]>>",               coc_fmtDate_(row[CR.CONTRACT_END - 1], "MMM dd, yyyy", "N/A")],
       ["<<\\[Supplier Name\\]>>",                   row[CR.SUPPLIER_NAME - 1]],
       ["<<\\[Requestor.s Remark\\]>>",              row[CR.REQUESTOR_REMARK - 1]],
-      ["<<TEXT\\(\\[App1_Date\\][^>]*>>",           coc_fmtDate_(row[CR.APP1_DATE - 1], "MM-dd-yyyy HH:mm:ss", "")],
-      ["<<TEXT\\(\\[App2_Date\\][^>]*>>",           coc_fmtDate_(row[CR.APP2_DATE - 1], "MM-dd-yyyy HH:mm:ss", "")],
-      ["<<TEXT\\(\\[App3_Date\\][^>]*>>",           coc_fmtDate_(row[CR.APP3_DATE - 1], "MM-dd-yyyy HH:mm:ss", "")],
+      ["<<TEXT\\(\\[App1_Date\\][^>]*>>",           coc_fmtDate_(appDate(1), "MM-dd-yyyy HH:mm:ss", "")],
+      ["<<TEXT\\(\\[App2_Date\\][^>]*>>",           coc_fmtDate_(appDate(2), "MM-dd-yyyy HH:mm:ss", "")],
+      ["<<TEXT\\(\\[App3_Date\\][^>]*>>",           coc_fmtDate_(appDate(3), "MM-dd-yyyy HH:mm:ss", "")],
 
       // ── Clean {{token}} equivalents ──────────────────────────────────────
       // Use these to fix any cell whose long AppSheet expression got broken
@@ -228,13 +234,13 @@ function generateCOC(requestId) {
       ["\\{\\{prepared_date\\}\\}",       coc_fmtDate_(row[CR.DATE_OF_FILING - 1], "MM-dd-yyyy", "")],
       ["\\{\\{approver1\\}\\}",           approvers.approver1],
       ["\\{\\{desig1\\}\\}",              approvers.designation1],
-      ["\\{\\{app1_date\\}\\}",           coc_fmtDate_(row[CR.APP1_DATE - 1], "MM-dd-yyyy HH:mm:ss", "")],
+      ["\\{\\{app1_date\\}\\}",           coc_fmtDate_(appDate(1), "MM-dd-yyyy HH:mm:ss", "")],
       ["\\{\\{approver2\\}\\}",           approvers.approver2],
       ["\\{\\{desig2\\}\\}",              approvers.designation2],
-      ["\\{\\{app2_date\\}\\}",           coc_fmtDate_(row[CR.APP2_DATE - 1], "MM-dd-yyyy HH:mm:ss", "")],
+      ["\\{\\{app2_date\\}\\}",           coc_fmtDate_(appDate(2), "MM-dd-yyyy HH:mm:ss", "")],
       ["\\{\\{approver3\\}\\}",           approvers.approver3],
       ["\\{\\{desig3\\}\\}",              approvers.designation3],
-      ["\\{\\{app3_date\\}\\}",           coc_fmtDate_(row[CR.APP3_DATE - 1], "MM-dd-yyyy HH:mm:ss", "")],
+      ["\\{\\{app3_date\\}\\}",           coc_fmtDate_(appDate(3), "MM-dd-yyyy HH:mm:ss", "")],
     ];
 
     // Step 6 — Apply every rule, then strip any leftover AppSheet <<If:…>> /
@@ -256,6 +262,22 @@ function generateCOC(requestId) {
     // Step 8 — Archive + clean up
     const pdfFile = DriveApp.getFolderById(COC.ARCHIVE_FOLDER_ID).createFile(pdfBlob);
     DriveApp.getFileById(copyId).setTrashed(true);
+
+    // Step 9 — Record the generated certificate in COC_PDFs (one row per issue).
+    // Defensive: a logging failure must never block the COC/email side-effects.
+    try {
+      const cocSheet = getSheet(SHEET_NAMES.COC_PDFS);
+      const cocRow = new Array(6).fill("");
+      cocRow[COCPDF.COC_ID - 1]         = generateCocId();
+      cocRow[COCPDF.REQUEST_ID - 1]     = requestId;
+      cocRow[COCPDF.CONTROL_NUMBER - 1] = controlNumber;
+      cocRow[COCPDF.PDF_LINK - 1]       = pdfFile.getUrl();
+      cocRow[COCPDF.DRIVE_FILE_ID - 1]  = pdfFile.getId();
+      cocRow[COCPDF.GENERATED_AT - 1]   = new Date();
+      cocSheet.appendRow(cocRow);
+    } catch (e) {
+      Logger.log("generateCOC(): COC_PDFs log failed — " + e.message);
+    }
 
     return {
       success:  true,

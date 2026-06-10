@@ -76,9 +76,11 @@ async function renderNewRequestPage() {
     state.approverGroups = await callServer('getApproverGroups');
   }
 
+  // getApproverGroups() returns [{id, name}] — the option VALUE is the group_id
+  // (what submitNewRequest stores in CR.GROUP); the LABEL is the display name.
   const groupOptions = (state.approverGroups || [])
     .map(function (g) {
-      return '<option value="' + escapeHtml(g) + '">' + escapeHtml(g) + '</option>';
+      return '<option value="' + escapeHtml(g.id) + '">' + escapeHtml(g.name) + '</option>';
     })
     .join('');
 

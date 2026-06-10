@@ -131,11 +131,15 @@ async function renderReviewDetailPage(params) {
   LAYMAN    : Kapag nag-approve na ang approver noon (bago i-return ng next
               approver), ipakita ang reminder: "Nag-approve ka noon — re-review
               mo please base sa bagong pagbabalik."
-  TECHNICAL : Checks detail.previousApprovals for a matching email; renders
-              amber banner if found. Returns '' if not a prior approver.
+  TECHNICAL : Checks detail.priorApprovals — approvals from an EARLIER cycle
+              (before the latest return + resubmit). This list is empty unless
+              the request has actually been resubmitted, so the note never
+              misfires during normal step progression, and correctly fires for
+              the prior approver after a resubmit. Returns '' if the caller has
+              no approval in a prior cycle.
 */
 function renderPreviousApprovalNote(detail, userEmail) {
-  const mine = (detail.previousApprovals || []).find(function (a) {
+  const mine = (detail.priorApprovals || []).find(function (a) {
     return a.email === userEmail;
   });
   if (!mine) return '';

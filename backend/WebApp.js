@@ -139,44 +139,9 @@ function doGet(e) {
 // Returns "approver" or "requestor".
 // ============================================================
 
-/*
-  Function Name: detectRole
-  LAYMAN    : Approver ba o requestor ang user na ito? Tinitingnan kung ang
-              email niya ay nakalista bilang approver sa kahit anong group.
-  TECHNICAL : Returns "approver" if the email appears in any APPROVER_1/2/3
-              slot across Approver_Settings; otherwise "requestor".
-  PARAMS    : email — the account to classify.
-  RETURNS   : "approver" | "requestor" (blank email → "requestor").
-
-  STEPS
-    Step 1 — Guard blank email
-      Layman    : Walang email → requestor agad.
-      Technical : Falsy email short-circuits to "requestor".
-    Step 2 — Scan approver settings
-      Layman    : Dumaan sa bawat group, tingnan kung kasama ang email.
-      Technical : Loop rows; match against any of the 3 approver columns.
-    Step 3 — Classify
-      Layman    : Nahanap → approver; wala → requestor.
-      Technical : Return on first match, else "requestor".
-
-  EXAMPLE
-    detectRole("kyle_justin_tan@dlsu.edu.ph")  →  "approver"
-    detectRole("random_student@dlsu.edu.ph")   →  "requestor"
-*/
-function detectRole(email) {
-  if (!email) return "requestor";
-  const rows = getDataRows(SHEET_NAMES.APPROVER_SETTINGS);
-  for (const row of rows) {
-    if (
-      row[AS.APPROVER_1 - 1] === email ||
-      row[AS.APPROVER_2 - 1] === email ||
-      row[AS.APPROVER_3 - 1] === email
-    ) {
-      return "approver";
-    }
-  }
-  return "requestor";
-}
+// detectRole(email) — MOVED to Accessors.js (now scans Group_Approvers by email).
+// isAdmin(email) also lives there. One global scope — re-declaring detectRole
+// here would collide.
 
 
 // ============================================================
@@ -221,14 +186,14 @@ function sameEmail(a, b) {
   TECHNICAL : Resolves the Sheet row number, then reads the full 34-column row.
   PARAMS    : requestId — the request to read.
   RETURNS   : 0-indexed row array (access via CR.* - 1), or null if not found.
-  NOTE      : Reads 34 cols (through PREVIOUS_APPROVALS). LAST_ACTION_BY (35) is
-              not needed by the callers of this helper.
+  NOTE      : Reads all 25 Requests columns (through RESUBMIT_COUNT). Approval
+              history lives in Approval_Actions, read via the Accessors layer.
 */
 function getRequestRowData(requestId) {
-  const sheet  = getSheet(SHEET_NAMES.CERTIFICATE_REQUESTS);
+  const sheet  = getSheet(SHEET_NAMES.REQUESTS);
   const rowNum = getRowNumberByRequestId(requestId);
   if (rowNum === -1) return null;
-  return sheet.getRange(rowNum, 1, 1, 34).getValues()[0];
+  return sheet.getRange(rowNum, 1, 1, CR.RESUBMIT_COUNT).getValues()[0];
 }
 
 /*
@@ -295,7 +260,7 @@ function getCurrentUser() {
   STEPS
     Step 1 — Resolve caller + load rows
       Layman    : Kunin ang email ng naka-login at lahat ng request rows.
-      Technical : Session email + getDataRows(CERTIFICATE_REQUESTS).
+      Technical : Session email + getDataRows(REQUESTS).
     Step 2 — Keep only my requests
       Layman    : Panatilihin lang ang akin (ako ang requestor).
       Technical : filter REQUESTOR === email (exact match; requestor is always
@@ -312,14 +277,14 @@ function getCurrentUser() {
 */
 function getMyRequests() {
   const email = Session.getActiveUser().getEmail();
-  const rows  = getDataRows(SHEET_NAMES.CERTIFICATE_REQUESTS);
+  const rows  = getDataRows(SHEET_NAMES.REQUESTS);
   return rows
-    .filter(row => row[CR.REQUESTOR - 1] === email)
+    .filter(row => sameEmail(row[CR.REQUESTOR - 1], email))
     .map(row => ({
       requestId:     row[CR.REQUEST_ID - 1],
       controlNumber: row[CR.CONTROL_NUMBER - 1],
       projectTitle:  row[CR.PROJECT_TITLE - 1],
-      group:         row[CR.GROUP - 1],
+      group:         getGroupNameById(row[CR.GROUP - 1]),  // display name (CR.GROUP holds group_id)
       status:        row[CR.STATUS - 1],
       step:          row[CR.STEP - 1],
       dateFiled:     row[CR.DATE_OF_FILING - 1]
@@ -360,26 +325,23 @@ function getMyRequests() {
 */
 function getPendingApprovals() {
   const email = Session.getActiveUser().getEmail();
-  const rows  = getDataRows(SHEET_NAMES.CERTIFICATE_REQUESTS);
+  const rows  = getDataRows(SHEET_NAMES.REQUESTS);
   const pending = [STATUS.PENDING_1, STATUS.PENDING_2, STATUS.PENDING_3];
 
   return rows
     .filter(row => {
       const status  = row[CR.STATUS - 1];
       const step    = row[CR.STEP - 1];
-      const group   = row[CR.GROUP - 1];
+      const groupId = row[CR.GROUP - 1];
       if (!pending.includes(status)) return false;
-      const approvers = getApprovers(group);
-      if (!approvers) return false;
-      const currentApprover = getCurrentApprover(step, group);
-      return currentApprover === email;
+      return sameEmail(getCurrentApprover(step, groupId), email);
     })
     .map(row => ({
       requestId:     row[CR.REQUEST_ID - 1],
       controlNumber: row[CR.CONTROL_NUMBER - 1],
       projectTitle:  row[CR.PROJECT_TITLE - 1],
       requestor:     row[CR.REQUESTOR - 1],
-      group:         row[CR.GROUP - 1],
+      group:         getGroupNameById(row[CR.GROUP - 1]),
       status:        row[CR.STATUS - 1],
       step:          row[CR.STEP - 1],
       dateFiled:     row[CR.DATE_OF_FILING - 1]
@@ -406,7 +368,7 @@ function getPendingApprovals() {
   STEPS
     Step 1 — Resolve caller + load rows
       Layman    : Kunin ang naka-login at lahat ng request rows.
-      Technical : Session email + getDataRows(CERTIFICATE_REQUESTS).
+      Technical : Session email + getDataRows(REQUESTS).
     Step 2 — Filter: "did I act on this?"
       Layman    : Isama kung (a) ako ang huling gumalaw, o (b) approver ako AT
                   may petsa na ang approval ko. Walang config na group → laktawan.
@@ -424,27 +386,29 @@ function getPendingApprovals() {
 */
 function getMyActionedRequests() {
   const email = Session.getActiveUser().getEmail();
-  const rows  = getDataRows(SHEET_NAMES.CERTIFICATE_REQUESTS);
+  const rows  = getDataRows(SHEET_NAMES.REQUESTS);
+
+  // Which requests has the caller acted on? Derive from the append-only timeline:
+  // any approve/decline/return action whose actor is the caller. Load all action
+  // rows once, build a membership set — no per-row sheet reads, no LAST_ACTION_BY.
+  const acted = {};
+  getDataRows(SHEET_NAMES.ACTIVITY_LOG).forEach(function (a) {
+    const action = a[ACT.ACTION - 1];
+    if ((action === ACTION.APPROVED || action === ACTION.DECLINED || action === ACTION.RETURNED) &&
+        sameEmail(a[ACT.ACTOR_EMAIL - 1], email)) {
+      acted[String(a[ACT.REQUEST_ID - 1])] = true;
+    }
+  });
 
   return rows
-    .filter(function (row) {
-      // Most-recent actioner stamp covers declines/returns (which leave no AppN_Date).
-      if (sameEmail(row[CR.LAST_ACTION_BY - 1], email)) return true;
-      // AppN_Date still surfaces an earlier approver whose stamp persists after a later action.
-      const approvers = getApprovers(row[CR.GROUP - 1]);
-      if (!approvers) return false;
-      if (sameEmail(approvers.approver1, email) && row[CR.APP1_DATE - 1]) return true;
-      if (sameEmail(approvers.approver2, email) && row[CR.APP2_DATE - 1]) return true;
-      if (sameEmail(approvers.approver3, email) && row[CR.APP3_DATE - 1]) return true;
-      return false;
-    })
+    .filter(function (row) { return acted[String(row[CR.REQUEST_ID - 1])]; })
     .map(function (row) {
       return {
         requestId:     row[CR.REQUEST_ID - 1],
         controlNumber: row[CR.CONTROL_NUMBER - 1],
         projectTitle:  row[CR.PROJECT_TITLE - 1],
         requestor:     row[CR.REQUESTOR - 1],
-        group:         row[CR.GROUP - 1],
+        group:         getGroupNameById(row[CR.GROUP - 1]),
         status:        row[CR.STATUS - 1],
         step:          row[CR.STEP - 1],
         dateFiled:     row[CR.DATE_OF_FILING - 1]
@@ -496,13 +460,13 @@ function getMyActionedRequests() {
     getRequestDetail("REQ-9b1")  →  null
 */
 function getRequestDetail(requestId) {
-  const sheet  = getSheet(SHEET_NAMES.CERTIFICATE_REQUESTS);
+  const sheet  = getSheet(SHEET_NAMES.REQUESTS);
   const rowNum = getRowNumberByRequestId(requestId);
   if (rowNum === -1) return null;
 
-  const row       = sheet.getRange(rowNum, 1, 1, 34).getValues()[0];
-  const group     = row[CR.GROUP - 1];
-  const approvers = getApprovers(group) || {};
+  const row       = sheet.getRange(rowNum, 1, 1, CR.RESUBMIT_COUNT).getValues()[0];
+  const groupId   = row[CR.GROUP - 1];
+  const approvers = getApprovers(groupId) || {};
 
   // Only the requestor or an approver in this request's chain may view it.
   const caller = Session.getActiveUser().getEmail();
@@ -510,24 +474,27 @@ function getRequestDetail(requestId) {
     return null;
   }
 
-  const formatDate = (val) => val
-    ? Utilities.formatDate(new Date(val), "Asia/Manila", "MMM dd, yyyy hh:mm a")
-    : "";
+  const fmtDateTime = (val) => val
+    ? Utilities.formatDate(new Date(val), "Asia/Manila", "MMM dd, yyyy hh:mm a") : "";
+  const fmtDateOnly = (val) => val
+    ? Utilities.formatDate(new Date(val), "Asia/Manila", "MMM dd, yyyy") : "";
 
-  const formatDateOnly = (val) => val
-    ? Utilities.formatDate(new Date(val), "Asia/Manila", "MMM dd, yyyy")
-    : "";
+  // Per-step dates/remarks, previousApprovals, and resubmitHistory are DERIVED
+  // from the append-only Approval_Actions timeline (frozen DTO — same shape).
+  const view       = getApprovalView(requestId);
+  const stepDate   = (n) => (view.byStep[n] && view.byStep[n].date) ? fmtDateTime(view.byStep[n].date) : "";
+  const stepRemark = (n) => (view.byStep[n] ? view.byStep[n].remark : "") || "";
 
   return {
     requestId:            row[CR.REQUEST_ID - 1],
     controlNumber:        row[CR.CONTROL_NUMBER - 1],
     status:               row[CR.STATUS - 1],
     step:                 row[CR.STEP - 1],
-    dateFiled:            formatDateOnly(row[CR.DATE_OF_FILING - 1]),
+    dateFiled:            fmtDateOnly(row[CR.DATE_OF_FILING - 1]),
     projectTitle:         row[CR.PROJECT_TITLE - 1],
     requestor:            row[CR.REQUESTOR - 1],
     requestorDesig:       row[CR.REQUESTOR_DESIG - 1],
-    group:                group,
+    group:                getGroupNameById(groupId),  // display name (row holds group_id)
     accountablePerson:    row[CR.ACCOUNTABLE_PERSON - 1],
     department:           row[CR.DEPARTMENT - 1],
     location:             row[CR.LOCATION - 1],
@@ -539,35 +506,28 @@ function getRequestDetail(requestId) {
     productName:          row[CR.PRODUCT_NAME - 1],
     typeOfPurchase:       row[CR.TYPE_OF_PURCHASE - 1],
     typeOfLicense:        row[CR.TYPE_OF_LICENSE - 1],
-    contractStart:        formatDateOnly(row[CR.CONTRACT_START - 1]),
-    contractEnd:          formatDateOnly(row[CR.CONTRACT_END - 1]),
+    contractStart:        fmtDateOnly(row[CR.CONTRACT_START - 1]),
+    contractEnd:          fmtDateOnly(row[CR.CONTRACT_END - 1]),
     supplierName:         row[CR.SUPPLIER_NAME - 1],
     requestorRemark:      row[CR.REQUESTOR_REMARK - 1],
-    app1Remark:           row[CR.APP1_REMARK - 1],
-    app2Remark:           row[CR.APP2_REMARK - 1],
-    app3Remark:           row[CR.APP3_REMARK - 1],
-    expectedAttachments:  row[CR.EXPECTED_ATTACHMENTS - 1],
-    app1Date:             formatDate(row[CR.APP1_DATE - 1]),
-    app2Date:             formatDate(row[CR.APP2_DATE - 1]),
-    app3Date:             formatDate(row[CR.APP3_DATE - 1]),
+    app1Remark:           stepRemark(1),
+    app2Remark:           stepRemark(2),
+    app3Remark:           stepRemark(3),
+    app1Date:             stepDate(1),
+    app2Date:             stepDate(2),
+    app3Date:             stepDate(3),
     resubmitCount:        row[CR.RESUBMIT_COUNT - 1] || 0,
-    resubmitHistory:      row[CR.RESUBMIT_HISTORY - 1] || "",
-    previousApprovals:    (() => {
-      try {
-        const raw = row[CR.PREVIOUS_APPROVALS - 1];
-        return raw ? JSON.parse(raw) : [];
-      } catch (e) {
-        return [];
-      }
-    })(),
+    resubmitHistory:      view.resubmitHistory,
+    previousApprovals:    view.previousApprovals,   // current cycle (progress)
+    priorApprovals:       view.priorApprovals,      // earlier cycles (re-review note; empty unless resubmitted)
     approver1:            approvers.approver1 || "",
     approver2:            approvers.approver2 || "",
     approver3:            approvers.approver3 || "",
     designation1:         approvers.designation1 || "",
     designation2:         approvers.designation2 || "",
     designation3:         approvers.designation3 || "",
-    // Phase 8: no raw Drive URL is sent to the frontend. The UI uses attachmentId
-    // to call the identity-gated downloadAttachment(); FILE holds the filename.
+    // No raw Drive URL is sent to the frontend. The UI uses attachmentId to call
+    // the identity-gated downloadAttachment(); FILE holds the display filename.
     attachments:          getAttachmentsForRequest(row[CR.REQUEST_ID - 1]).map(a => ({
       attachmentId: a[RA.ATTACHMENT_ID - 1],
       filename:     a[RA.FILE - 1],
@@ -577,18 +537,8 @@ function getRequestDetail(requestId) {
 }
 
 
-/*
-  Function Name: getApproverGroups
-  LAYMAN    : Listahan ng mga group name para sa dropdown ng new-request form.
-  TECHNICAL : Maps Approver_Settings to its GROUP column, dropping blanks.
-  PARAMS    : (none)
-  RETURNS   : Array of group-name strings.
-*/
-function getApproverGroups() {
-  return getDataRows(SHEET_NAMES.APPROVER_SETTINGS)
-    .map(row => row[AS.GROUP - 1])
-    .filter(Boolean);
-}
+// getApproverGroups() — MOVED to Accessors.js. It now returns [{id, name}] for
+// active groups (the new-request dropdown sends group_id, shows the name).
 
 
 /*
@@ -679,39 +629,41 @@ function submitNewRequest(formData) {
     return { success: false, error: "File upload failed. No request was created. Please try again." };
   }
 
-  // Step 4 — Write the request row (always PENDING_1 — no SYNCING in Phase 8)
-  const sheet  = getSheet(SHEET_NAMES.CERTIFICATE_REQUESTS);
-  const newRow = new Array(33).fill("");
-  newRow[CR.REQUEST_ID - 1]           = requestId;
-  newRow[CR.CONTROL_NUMBER - 1]       = controlNo;
-  newRow[CR.STATUS - 1]               = STATUS.PENDING_1;
-  newRow[CR.STEP - 1]                 = 1;
-  newRow[CR.DATE_OF_FILING - 1]       = new Date();
-  newRow[CR.PROJECT_TITLE - 1]        = formData.projectTitle;
-  newRow[CR.REQUESTOR - 1]            = caller;
-  newRow[CR.REQUESTOR_DESIG - 1]      = formData.requestorDesig;
-  newRow[CR.GROUP - 1]                = formData.group;
-  newRow[CR.ACCOUNTABLE_PERSON - 1]   = formData.accountablePerson;
-  newRow[CR.DEPARTMENT - 1]           = formData.department;
-  newRow[CR.LOCATION - 1]             = formData.location;
-  newRow[CR.PC_NAME - 1]              = formData.pcName;
-  newRow[CR.PRISM - 1]                = formData.prism;
-  newRow[CR.PURCHASE_ORDER - 1]       = formData.purchaseOrder;
-  newRow[CR.IHELP_NUMBER - 1]         = formData.ihelpNumber;
-  newRow[CR.PRODUCT_TYPE - 1]         = formData.productType;
-  newRow[CR.PRODUCT_NAME - 1]         = formData.productName;
-  newRow[CR.TYPE_OF_PURCHASE - 1]     = formData.typeOfPurchase;
-  newRow[CR.TYPE_OF_LICENSE - 1]      = formData.typeOfLicense;
-  newRow[CR.CONTRACT_START - 1]       = formData.contractStart;
-  newRow[CR.CONTRACT_END - 1]         = formData.contractEnd;
-  newRow[CR.SUPPLIER_NAME - 1]        = formData.supplierName;
-  newRow[CR.REQUESTOR_REMARK - 1]     = formData.requestorRemark;
-  newRow[CR.EXPECTED_ATTACHMENTS - 1] = files.length;  // record-keeping; deprecated field, slated for removal
-  newRow[CR.RESUBMIT_COUNT - 1]       = 0;
+  // Step 4 — Write the request row (always PENDING_1). group is a group_id.
+  const sheet  = getSheet(SHEET_NAMES.REQUESTS);
+  const newRow = new Array(CR.RESUBMIT_COUNT).fill("");
+  newRow[CR.REQUEST_ID - 1]         = requestId;
+  newRow[CR.CONTROL_NUMBER - 1]     = controlNo;
+  newRow[CR.STATUS - 1]             = STATUS.PENDING_1;   // cache
+  newRow[CR.STEP - 1]               = 1;                  // cache
+  newRow[CR.DATE_OF_FILING - 1]     = new Date();
+  newRow[CR.PROJECT_TITLE - 1]      = formData.projectTitle;
+  newRow[CR.REQUESTOR - 1]          = caller;
+  newRow[CR.REQUESTOR_DESIG - 1]    = formData.requestorDesig;
+  newRow[CR.GROUP - 1]              = formData.group;     // group_id (from the dropdown)
+  newRow[CR.ACCOUNTABLE_PERSON - 1] = formData.accountablePerson;
+  newRow[CR.DEPARTMENT - 1]         = formData.department;
+  newRow[CR.LOCATION - 1]           = formData.location;
+  newRow[CR.PC_NAME - 1]            = formData.pcName;
+  newRow[CR.PRISM - 1]              = formData.prism;
+  newRow[CR.PURCHASE_ORDER - 1]     = formData.purchaseOrder;
+  newRow[CR.IHELP_NUMBER - 1]       = formData.ihelpNumber;
+  newRow[CR.PRODUCT_TYPE - 1]       = formData.productType;
+  newRow[CR.PRODUCT_NAME - 1]       = formData.productName;
+  newRow[CR.TYPE_OF_PURCHASE - 1]   = formData.typeOfPurchase;
+  newRow[CR.TYPE_OF_LICENSE - 1]    = formData.typeOfLicense;
+  newRow[CR.CONTRACT_START - 1]     = formData.contractStart;
+  newRow[CR.CONTRACT_END - 1]       = formData.contractEnd;
+  newRow[CR.SUPPLIER_NAME - 1]      = formData.supplierName;
+  newRow[CR.REQUESTOR_REMARK - 1]   = formData.requestorRemark;
+  newRow[CR.RESUBMIT_COUNT - 1]     = 0;                  // cache
   sheet.appendRow(newRow);
 
-  // Step 5 — Write attachment child rows (one batched write)
-  writeAttachmentRows(requestId, uploaded);
+  // Log the submit on the append-only timeline (cycle 0, no step).
+  appendAction(requestId, formData.group, 0, null, caller, ACTION.SUBMITTED, "");
+
+  // Step 5 — Write attachment child rows (one batched write; cycle 0 = first submit)
+  writeAttachmentRows(requestId, uploaded, 0);
 
   // Step 6 — Send approval email LAST (all files are live in Drive at this point)
   sendApprovalRequest(requestId);
@@ -866,68 +818,25 @@ function handleDecline(requestId, remark) {
       (AH stores prior approvers; requestor + returner + prior approvers emailed)
 */
 function handleReturn(requestId, remark) {
-  const sheet  = getSheet(SHEET_NAMES.CERTIFICATE_REQUESTS);
-  const rowNum = getRowNumberByRequestId(requestId);
-  if (rowNum === -1) return { success: false, message: "Request not found." };
+  const row = getRequestRowData(requestId);
+  if (!row) return { success: false, message: "Request not found." };
 
-  // Capture returner identity + reason BEFORE state is mutated.
-  // Stored as a [PENDING] entry that resubmit() later promotes to a
-  // numbered "Resubmit #N" entry. This is the only reliable point
-  // in the workflow where Step still reflects who actually returned.
-  const rowData       = sheet.getRange(rowNum, 1, 1, 33).getValues()[0];
-  const step          = rowData[CR.STEP - 1];
-  const group         = rowData[CR.GROUP - 1];
-  const approvers     = getApprovers(group) || {};
+  const step          = row[CR.STEP - 1];
+  const groupId       = row[CR.GROUP - 1];
   const returnerEmail = Session.getActiveUser().getEmail();
 
-  // Only the current approver may return this request. Checked before any
-  // write so an unauthorized caller cannot mutate history or AH.
-  if (!sameEmail(getCurrentApprover(step, group), returnerEmail)) {
+  // Only the current approver may return this request (checked before any write).
+  if (!sameEmail(getCurrentApprover(step, groupId), returnerEmail)) {
     return { success: false, error: "Unauthorized" };
   }
 
   const approverLabel = `Approver ${step}`;
-  const timestamp     = formatPHTime(new Date());
-  const pendingEntry  =
-    `[PENDING] ${approverLabel} (${returnerEmail})\n` +
-    `Return date: ${timestamp}\n` +
-    `Reason: ${remark || "No reason provided."}`;
 
-  // Capture which approvers had already approved BEFORE resubmit() clears the
-  // AppN_Date columns. Stored as structured JSON in the dedicated AH column —
-  // keeps Resubmit_History (AG) as pure narrative.
-  const previousApprovals = [];
-  if (rowData[CR.APP1_DATE - 1] && approvers.approver1) {
-    previousApprovals.push({ step: 1, email: approvers.approver1, date: formatPHTime(new Date(rowData[CR.APP1_DATE - 1])) });
-  }
-  if (rowData[CR.APP2_DATE - 1] && approvers.approver2) {
-    previousApprovals.push({ step: 2, email: approvers.approver2, date: formatPHTime(new Date(rowData[CR.APP2_DATE - 1])) });
-  }
-  if (rowData[CR.APP3_DATE - 1] && approvers.approver3) {
-    previousApprovals.push({ step: 3, email: approvers.approver3, date: formatPHTime(new Date(rowData[CR.APP3_DATE - 1])) });
-  }
-  sheet.getRange(rowNum, CR.PREVIOUS_APPROVALS).setValue(JSON.stringify(previousApprovals));
-
-  const existingHistory = String(rowData[CR.RESUBMIT_HISTORY - 1] || "").trim();
-
-  // A request can only have one active [PENDING] entry at a time.
-  // If one already exists, replace it — do not stack a second one.
-  let newHistory;
-  if (existingHistory.includes("[PENDING]")) {
-    const pendingIndex    = existingHistory.indexOf("[PENDING]");
-    const beforePending   = existingHistory
-      .substring(0, pendingIndex)
-      .replace(/\n\n---\n\n$/, "")
-      .trim();
-    newHistory = beforePending
-      ? beforePending + "\n\n---\n\n" + pendingEntry
-      : pendingEntry;
-  } else {
-    newHistory = existingHistory
-      ? existingHistory + "\n\n---\n\n" + pendingEntry
-      : pendingEntry;
-  }
-  sheet.getRange(rowNum, CR.RESUBMIT_HISTORY).setValue(newHistory);
+  // Who had already approved this cycle — for the prior-approver notification.
+  // Derived from the append-only timeline; no [PENDING]/PREVIOUS_APPROVALS
+  // bookkeeping columns anymore (returnRequest() appends a RETURNED action, and
+  // getApprovalView reconstructs history + previousApprovals from the timeline).
+  const previousApprovals = getApprovalView(requestId).previousApprovals;
 
   const result = returnRequest(requestId, remark);
   if (result.success) {
@@ -988,8 +897,8 @@ function handleResubmit(requestId, newFiles) {
     return { success: false, error: "Unauthorized" };
   }
 
-  // Capture return reason + count BEFORE resubmit() clears the remark columns.
-  const returnReason  = row[CR.APP3_REMARK - 1] || row[CR.APP2_REMARK - 1] || row[CR.APP1_REMARK - 1] || "No reason provided.";
+  // Return reason (latest decline/return remark) + next cycle, derived from the timeline.
+  const returnReason  = getApprovalView(requestId).latestRemark || "No reason provided.";
   const resubmitCount = (parseInt(row[CR.RESUBMIT_COUNT - 1]) || 0) + 1; // +1 mirrors what resubmit() will write
 
   // Optional re-upload: validate + upload-first any new/corrected documents.
@@ -1021,7 +930,7 @@ function handleResubmit(requestId, newFiles) {
       Logger.log("handleResubmit(): Upload failed — " + err.message + ". Resubmit aborted.");
       return { success: false, error: "File upload failed. The request was not resubmitted. Please try again." };
     }
-    writeAttachmentRows(requestId, uploaded); // append — keeps the original files
+    writeAttachmentRows(requestId, uploaded, resubmitCount); // append — keeps the original files
   }
 
   const result = resubmit(requestId);
