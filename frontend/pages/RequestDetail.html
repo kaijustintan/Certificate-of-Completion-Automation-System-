@@ -367,42 +367,102 @@ function toggleResubmitHistory() {
 // Renders the attachments card. Files are private (Phase 8 gated serving):
 // each row shows the filename + description inline (always visible) + a "View"
 // button served through the identity-gated downloadAttachment. No Drive link.
+// Resubmitted requests group files by cycle (#6): "Current submission" vs
+// "Previous versions". Shared with ReviewDetail.html.
 /*
   Function Name: renderAttachmentsBlock
   LAYMAN    : Ipakita ang listahan ng mga supporting documents. Bawat file ay
               may filename (bold) at description (muted, laging nakikita — hindi
               kailangan pang mag-click para makita), at isang "View" button na
               bubuksan ang file nang dumadaan sa server na may identity-check.
-              Description is shown by default: it's the primary decision-relevant
-              info for approvers (often more readable than the raw filename).
-  TECHNICAL : Renders .card; each row: attachment-view-name (filename) +
-              attachment-view-desc (description, always visible, not toggled) +
-              View button (viewAttachmentFile(attachmentId) → gated server fetch).
-              Only attachmentId goes to onclick (safe chars; no injection risk).
+              Kung naka-resubmit na ang request, hinahati ang files: "Current
+              submission" (yung pinakabagong cycle) vs "Previous versions" (mga
+              luma, naka-label per cycle: Original / Resubmit #N). Kaya kita mo
+              agad kung alin ang dati at alin ang bago habang nagre-review o
+              nagre-resubmit. Description is shown by default: it's the primary
+              decision-relevant info for approvers.
+  TECHNICAL : Renders .card. A file's cycle = a.resubmitCycle (0 = original,
+              N = Resubmit #N); the request's current cycle = detail.resubmitCount.
+              When currentCycle === 0 (never resubmitted) it renders the flat list
+              exactly as before — no group headers in the common case. When
+              resubmitted: a "Current submission" group (cycle === currentCycle,
+              may be empty if the latest resubmit added no files) + a "Previous
+              versions" group (cycle < currentCycle, sub-grouped by cycle, newest
+              first). Each row: attachment-view-name + attachment-view-desc +
+              View button (viewAttachmentFile → gated server fetch). Only
+              attachmentId goes to onclick (safe chars; no injection risk).
               No fileLink in the DTO — the URL never leaves the server.
   PARAMS    : detail — DTO from getRequestDetail(); canManage — bool (retained
               for signature compatibility; UI is identical for both roles).
 */
 function renderAttachmentsBlock(detail, canManage) {
-  const attachments = detail.attachments || [];
+  const attachments  = detail.attachments || [];
+  const currentCycle = parseInt(detail.resubmitCount, 10) || 0;
+
+  // One file row — shared by the flat list and every grouped section.
+  function attachmentRow(a) {
+    const name = a.filename    || 'Attachment';
+    const desc = a.description || '';
+    const aid  = escapeHtml(a.attachmentId);
+    return '' +
+      '<div class="attachment-view-row">' +
+        '<div class="attachment-view-info">' +
+          '<span class="attachment-view-name" title="' + escapeHtml(name) + '">' + escapeHtml(name) + '</span>' +
+          (desc ? '<span class="attachment-view-desc">' + escapeHtml(desc) + '</span>' : '') +
+        '</div>' +
+        '<button type="button" class="attachment-link-btn" onclick="viewAttachmentFile(\'' + aid + '\')">View</button>' +
+      '</div>';
+  }
+  function cycleOf(a) { return parseInt(a.resubmitCycle, 10) || 0; }
 
   let body;
   if (attachments.length === 0) {
     body = '<div class="text-muted">No attachments on this request.</div>';
+  } else if (currentCycle === 0) {
+    // Never resubmitted → single flat list (unchanged common-case UX).
+    body = attachments.map(attachmentRow).join('');
   } else {
-    body = attachments.map(function (a) {
-      const name = a.filename    || 'Attachment';
-      const desc = a.description || '';
-      const aid  = escapeHtml(a.attachmentId);
-      return '' +
-        '<div class="attachment-view-row">' +
-          '<div class="attachment-view-info">' +
-            '<span class="attachment-view-name" title="' + escapeHtml(name) + '">' + escapeHtml(name) + '</span>' +
-            (desc ? '<span class="attachment-view-desc">' + escapeHtml(desc) + '</span>' : '') +
-          '</div>' +
-          '<button type="button" class="attachment-link-btn" onclick="viewAttachmentFile(\'' + aid + '\')">View</button>' +
-        '</div>';
-    }).join('');
+    // Resubmitted → "Current submission" vs "Previous versions".
+    const current  = attachments.filter(function (a) { return cycleOf(a) === currentCycle; });
+    const previous = attachments.filter(function (a) { return cycleOf(a) <   currentCycle; });
+    const sections = [];
+
+    // Current submission (the latest cycle). May legitimately be empty: a
+    // resubmit is allowed with zero new files (the prior docs carry over).
+    sections.push(
+      '<div class="attachment-group">' +
+        '<div class="attachment-group-label">Current submission · Resubmit #' + currentCycle + '</div>' +
+        (current.length
+          ? current.map(attachmentRow).join('')
+          : '<div class="text-muted attachment-group-empty">No new documents added this submission.</div>') +
+      '</div>'
+    );
+
+    // Previous versions — sub-grouped by cycle, newest first.
+    if (previous.length) {
+      const byCycle = {};
+      previous.forEach(function (a) {
+        const c = cycleOf(a);
+        (byCycle[c] = byCycle[c] || []).push(a);
+      });
+      const cycles = Object.keys(byCycle)
+        .map(Number)
+        .sort(function (x, y) { return y - x; });
+      let prevRows = '';
+      cycles.forEach(function (c) {
+        const label = (c === 0) ? 'Original submission' : ('Resubmit #' + c);
+        prevRows += '<div class="attachment-subgroup-label">' + label + '</div>' +
+                    byCycle[c].map(attachmentRow).join('');
+      });
+      sections.push(
+        '<div class="attachment-group attachment-group-previous">' +
+          '<div class="attachment-group-label">Previous versions</div>' +
+          prevRows +
+        '</div>'
+      );
+    }
+
+    body = sections.join('');
   }
 
   return '' +

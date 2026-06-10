@@ -53,7 +53,7 @@ The Apps Script port intentionally diverges from the original AppSheet behavior 
 
 **AppSheet behavior:** Requestor submitted first, then uploaded files. A `"Syncing Files"` state held the request in limbo until file count matched `Expected_Attachments`. The Sync Finisher Bot then unlocked the request.
 
-**Target behavior:** Requestor must upload all required documents BEFORE clicking submit. The submit button is disabled until required files are attached. There is no `"Syncing Files"` state. Required documents are defined per product type and enforced by the form.
+**Implemented (Phase 8):** Requestor must upload **at least one** supporting document BEFORE clicking submit; submit is blocked until a file is attached. There is no `"Syncing Files"` state. (The originally-planned per-product-type required-docs matrix was **dropped** — supervisor confirmed "basta ≥1 supporting document"; `productType` stays free-text.) Files upload to Drive only at submit time, atomically (rollback on failure), stored private and served via the gated `downloadAttachment()`.
 
 **Why changed:**
 - AppSheet's two-step flow allowed requests to sit incomplete in the system
@@ -183,89 +183,58 @@ The Apps Script port intentionally diverges from the original AppSheet behavior 
 
 ## 4. Data Structure
 
-The app has **3 tables**, backed by Google Sheets tabs in one workbook.
+> **⚡ Normalized 2026-06-10.** The app was originally 3 tables (`Certificate_Requests` monolith + `Approver_Settings` + `Request_Attachments`). It is now **7 normalized tables** behind the `backend/Accessors.js` seam. This section describes the current schema at design level; the **authoritative per-column map is `reference/COLUMN_MAP (1).md`** (mirrors `backend/Constants.js`). The original 3-table layout survives only in git history.
+
+The app has **7 tables**, backed by Google Sheets tabs in one workbook. `Activity_Log` is the source of truth for request history; `Requests.status/step/resubmit_count` are a denormalized read-cache.
 
 ### 4.1 Relationship diagram
 
 ```
-Approver_Settings  (lookup table, keyed by Group)
-        ▲
-        │  Certificate_Requests.Group  ──►  Approver_Settings.Group
-        │
-Certificate_Requests  (parent / request header, keyed by Request ID)
-        ▲
-        │  Request_Attachments.Request ID  ──►  Certificate_Requests.Request ID
-        │
-Request_Attachments  (child / supporting files, keyed by Attachment ID)
+Groups  (registry, surrogate key group_id)
+   ▲  │
+   │  └──< Group_Approvers.group_id        (one group : many ordered approvers, unlimited)
+   │
+   │  Requests.group ──► Groups.group_id    (FK is a group_id, not a name)
+   │
+Requests  (request header, keyed by Request ID; status/step/count = cache)
+   ▲
+   ├──< Activity_Log.request_id             (append-only timeline — SOURCE OF TRUTH for history)
+   ├──< Request_Attachments.Request ID      (supporting files, tagged by resubmit_cycle)
+   └──< COC_PDFs.request_id                 (generated certificate PDFs, re-issuance capable)
+
+Admins  (standalone allowlist, keyed by email — checked by isAdmin())
 ```
 
-### 4.2 Table: `Approver_Settings`
+### 4.2 Tables: `Groups` + `Group_Approvers` (was `Approver_Settings`)
 
-Lookup table mapping each department/group to up to three approvers with their designations.
+The old flat 3-slot `Approver_Settings` is split into a group registry and a normalized approver chain.
 
-| # | Column | Type | Key | Notes |
-|---|--------|------|-----|-------|
-| 1 | `Group` | Text | **KEY** | Department/group identifier |
-| 2 | `Approver 1` | Email | – | Required |
-| 3 | `App 1 Designation` | Text | – | Job title of Approver 1 |
-| 4 | `Approver 2` | Email | – | Optional — leave blank if group has only one approver |
-| 5 | `App 2 Designation` | Text | – | Optional |
-| 6 | `Approver 3` | Email | – | Optional |
-| 7 | `App 3 Designation` | Text | – | Optional |
+- **`Groups`** — `group_id` (surrogate KEY, e.g. `G001`) · `group_name` (renameable) · `active` · `created_at`. The surrogate key means a group can be renamed without breaking routing.
+- **`Group_Approvers`** — `id` (KEY) · `group_id` (FK) · `sequence` (1..N order) · `approver_email` · `designation` · `active`. Composite key (group_id, sequence). **Unlimited approvers** — the old 3-slot cap is gone; `active` soft-disables a slot.
 
-**Current state:** All 5 configured groups only have Approver 1 filled. Approvers 2 and 3 are blank across the board. The system handles this gracefully — requests skip null approvers and auto-advance to terminal states.
+> `getApprovers(groupId)` (`Accessors.js`) still returns the **legacy 6-field shape** (`approver1/2/3` + designations) from the first 3 sequences, so chain logic, signatories, N-of-M, and the DTO are unchanged. The system still skips null/blank approver slots and auto-advances.
 
-### 4.3 Table: `Certificate_Requests`
+### 4.3 Table: `Requests` (was `Certificate_Requests`)
 
-Main request/approval header. **31 columns total.**
+Main request header. **25 columns** (down from 35 — the approval-history columns moved to `Activity_Log`). Full map in `COLUMN_MAP (1).md`. Highlights:
 
-| # | Column | Type | Notes |
-|---|--------|------|-------|
-| 1 | `Request ID` | Text | **KEY** — 3-character unique ID |
-| 2 | `Control Number` | Text | Human-readable ID, e.g. `EC-2026-00001-A3F` |
-| 3 | `Status` | Text | Workflow state — drives all routing |
-| 4 | `Step` | Number | Workflow counter (0/1/2/3) |
-| 5 | `Date of Filing` | Date | Set on submit |
-| 6 | `Project Title` | LongText | LABEL column |
-| 7 | `Requestor` | Email | Auto-captured from session |
-| 8 | `Requestor's Designation` | Text | |
-| 9 | `Group` | Text | **Foreign key** to Approver_Settings.Group |
-| 10 | `Accountable Person` | Text | |
-| 11 | `Department` | Text | |
-| 12 | `Location` | Text | |
-| 13 | `PC Name` | Text | |
-| 14 | `PRISM` | Text | Optional |
-| 15 | `Purchase Order` | Text | |
-| 16 | `IHelp Number` | Text | Optional |
-| 17 | `Product Type` | Enum | |
-| 18 | `Product Name` | Text | |
-| 19 | `Type of Purchase` | Enum | |
-| 20 | `Type of License` | Text | e.g., "3-year Subscription" |
-| 21 | `Contract Start Date` | Date | |
-| 22 | `Contract End Date` | Date | |
-| 23 | `Supplier Name` | Text | |
-| 24 | `Requestor's Remark` | LongText | Purpose of request |
-| 25 | `Approver 1's Remark` | LongText | Filled by Approver 1 when actioning |
-| 26 | `Approver 2's Remark` | LongText | Filled by Approver 2 when actioning |
-| 27 | `Approver 3's Remark` | LongText | Filled by Approver 3 when actioning |
-| 28 | `Expected_Attachments` | Number | Legacy field — to be deprecated in attachment flow redesign |
-| 29 | `App1_Date` | DateTime | Timestamp of Approver 1's action |
-| 30 | `App2_Date` | DateTime | Timestamp of Approver 2's action |
-| 31 | `App3_Date` | DateTime | Timestamp of Approver 3's action |
+- Core fields A–X unchanged in meaning (Request ID, Control Number, Status, Step, filing/project/requestor/group/contract/supplier/remark, etc.).
+- `Group` (col 9) is now a **`group_id` FK → `Groups`**, not a group name.
+- `Status` (3) / `Step` (4) / `Resubmit_Count` (25) are a **denormalized read-cache**, written only by `setRequestCache()`; the source of truth is `Activity_Log`.
+- **Removed** (now derived from `Activity_Log`): `App1/2/3_Remark`, `App1/2/3_Date`, `Expected_Attachments`, `Resubmit_Count` history, `Resubmit_History`, `Previous_Approvals`, `Last_Action_By`.
 
-**Note on `_RowNumber`:** AppSheet listed this as Column 1. It does NOT exist in the actual Sheet — it was an AppSheet internal value. Apps Script does not reference it.
+### 4.3a Table: `Activity_Log` (NEW — append-only timeline)
+
+The audit/history backbone. **9 columns:** `action_id` (KEY) · `request_id` (FK) · `group_id` (FK, denormalized) · `resubmit_cycle` · `approver_step` · `actor_email` · `action` (`ACTION.*` enum) · `remark` · `timestamp`. One row per action, **never updated or deleted** (written only via `appendAction()`). `getApprovalView()` derives the old per-step/history/previousApprovals/N-of-M/resubmit-history shapes from it.
 
 ### 4.4 Table: `Request_Attachments`
 
-Child table for files attached to a request. **5 columns total.**
+Child table for supporting files. **8 columns:** `Attachment ID` (KEY) · `Request ID` (FK) · `File` (display filename) · `File_Link` (Drive URL — server-side only) · `Description` · `resubmit_cycle` (0 = original, N = Resubmit #N) · `uploaded_by` · `uploaded_at`. Files are private; served only through the identity-gated `downloadAttachment()`.
 
-| # | Column | Type | Notes |
-|---|--------|------|-------|
-| 1 | `Attachment ID` | Text | **KEY** — unique per file |
-| 2 | `Request ID` | Text | **Foreign key** to Certificate_Requests |
-| 3 | `File` | Text | Google Drive file ID (post-Phase 8) |
-| 4 | `File_Link` | Url | Google Drive shareable link (post-Phase 8) |
-| 5 | `Description` | LongText | Human-readable label, e.g. "Supplier Quotation" |
+### 4.4a Tables: `Admins` + `COC_PDFs` (NEW)
+
+- **`Admins`** — `email` (KEY) · `active` · `added_at`. Allowlist for the deferred admin role; checked by `isAdmin()`.
+- **`COC_PDFs`** — `coc_id` (KEY) · `request_id` (FK, not unique) · `control_number` · `pdf_link` · `drive_file_id` · `generated_at`. One row per generated certificate PDF; appended by `generateCOC()` on full approval (re-issuance capable).
 
 ### 4.5 Virtual columns (computed by Apps Script, not stored in Sheets)
 
@@ -311,9 +280,10 @@ Child table for files attached to a request. **5 columns total.**
 
 ### 6.1 Role detection
 
-`detectRole(email)` queries `Approver_Settings`:
-- If email appears as Approver 1, 2, or 3 in any group → returns `"approver"`
+`detectRole(email)` (`Accessors.js`) queries `Group_Approvers`:
+- If email appears as an `approver_email` in any group → returns `"approver"`
 - Otherwise → returns `"requestor"`
+- (Admin is intentionally NOT returned here yet — the `Admins` allowlist + `isAdmin()` exist for when the admin UI is built.)
 
 ### 6.2 Approver visibility rules
 
@@ -357,38 +327,25 @@ Backed by `getPendingApprovals()` filter: `getCurrentApprover(step, group) === e
 | 9 | Google Drive integration for attachment storage (private + gated) | Phase 8 | ✅ Done — `downloadAttachment()` identity-gated; no bearer links |
 | 10 | Replace placeholder Miga images with finalized mascot PNGs | Phase 12 | ⏳ Pending licensed/transparent art — pure drop-in re-encode |
 
-### 7.3 Known schema design debt (post-go-live refactor)
+### 7.3 Schema normalization — ✅ DONE (2026-06-10, big-bang)
 
-`Certificate_Requests` has 35 columns that conflate three separate concerns. This works today but carries debt that will compound over time.
+> This was previously "known design debt, post-go-live." It **shipped early** as a big-bang refactor. Kept here as the record of what changed and why.
 
-**The core problem — approval state as a repeating group:**
+**The original problem — the 35-col `Certificate_Requests` conflated three concerns:** request core (fine), approval state flattened into fixed `App1/2/3_Date`/`_Remark` columns (one-to-many crammed into fixed slots → hard 3-approver cap), and resubmit/audit data that was partly cleared on each resubmit (cross-cycle history lost).
 
-| Concern | Columns | Problem |
-|---|---|---|
-| Request core (project, requestor, product, contract…) | 1–24 | ✅ Fine — one entity |
-| Approval state (App1/2/3_Date, App1/2/3_Remark, Step, Status) | 25–31 + CR.STATUS/STEP | ❌ One-to-many relationship flattened into fixed columns |
-| Resubmit/audit (Resubmit_Count, History, Previous_Approvals, Last_Action_By) | 32–35 | ⚠️ Mixed-in audit data, some cleared on resubmit |
-
-**The fix — extract approval state into an append-only `Approvals` table:**
+**What was done — approval state extracted into the append-only `Activity_Log`:**
 
 ```
-Approvals: request_id | step | approver | decision | remark | timestamp
+Activity_Log: action_id | request_id | group_id | resubmit_cycle | approver_step | actor_email | action | remark | timestamp
 ```
 
-One row per action, never cleared, never overwritten. This single change would:
-1. **Remove ~8 columns** from `Certificate_Requests` (App1/2/3 date+remark, Previous_Approvals, Last_Action_By).
-2. **Lift the hard 3-approver cap** — N approvers, free.
-3. **Deliver Phase 11 (Audit Log) for free** — the append-only `Approvals` table IS the audit timeline. Same instinct as ChainCert's `LogVerification` / `LogIssuerStatusChange` — Sheet rows don't give you an audit log; you have to write one explicitly.
-4. **Fix resubmit data loss** — approval history no longer cleared each cycle.
+One row per action, never cleared, never overwritten (written only via `appendAction()`). This delivered, as predicted:
+1. **Removed the repeating columns** from the request row (App1/2/3 date+remark, Expected_Attachments, Resubmit_History, Previous_Approvals, Last_Action_By) — `Certificate_Requests` (35 cols) → `Requests` (25 cols).
+2. **Lifted the 3-approver cap** — `Approver_Settings` → `Groups` + `Group_Approvers` (unlimited, ordered, soft-deletable).
+3. **Delivered Phase 11 (Audit Log) for free** — `Activity_Log` IS the audit timeline. Same instinct as ChainCert's `LogVerification` / `LogIssuerStatusChange`.
+4. **Fixed resubmit data loss** — history is derived from the timeline, never cleared.
 
-`Request_Attachments` is already normalized (correct). `Approver_Settings` has the same flat-columns smell (`Approver_1/2/3`) but is low-stakes.
-
-**Why not now:** massive regression surface (every getter, `Approvals.js`, emails, the trigger, frontend approval-chain rendering, and column-contract docs all assume the flat layout). Wrong timing for a working, nearly-deployed system. Do this:
-- When a group needs **more than 3 approvers**.
-- When a genuine **audit/compliance requirement** lands (build `Approvals` table *instead of* a bolt-on audit log).
-- When the resubmit history loss actually hurts someone.
-
-Until then: note it, don't pay it down. See `ROADMAP.md` for the post-go-live entry.
+**How the regression surface was contained:** all normalized access goes through the **`backend/Accessors.js`** seam, which reconstructs the legacy data shapes (`getApprovers` 6-field, `getApprovalView` per-step/history/previousApprovals/N-of-M). The **frontend DTO was frozen**, so getters, emails, triggers, and the approval-chain UI were barely touched. `Requests.status/step/resubmit_count` remain as a denormalized read-cache (`setRequestCache()`) for cheap dashboard reads. See `COLUMN_MAP (1).md` for the full per-sheet maps.
 
 ### 7.4 Open questions for supervisor
 
@@ -414,7 +371,7 @@ This section documents the original AppSheet implementation. Useful for verifyin
 | Return Notification Bot | `Certificate_Requests` | Status changed to starts-with "Returned to" | Sent 2 emails: return notice + confirmation |
 | Sync Finisher Bot | `Request_Attachments` | New attachment + count ≥ Expected_Attachments | Flipped parent Status to "Pending Approver 1" |
 
-All 5 bots have been replaced by a single Apps Script `onSheetChange()` handler in `Triggers.js` that routes by Status value. The Sync Finisher equivalent will be removed as part of the attachment redesign in Phase 8.
+All 5 bots have been replaced by a single Apps Script `onSheetChange()` handler in `Triggers.js` that routes by Status value. The Sync Finisher equivalent was removed in Phase 8 (upload-before-submit) — its legacy code is kept deprecated-dormant, off the live path.
 
 ### 8.2 AppSheet email templates
 
@@ -422,7 +379,7 @@ The original email body templates are preserved verbatim in `Emails.js` as JavaS
 
 ### 8.3 AppSheet actions
 
-The 4 user-facing actions (Approve, Decline, Return Request, Resubmit Request) and the 1 hidden action (Set Status to Pending Approver) have been ported to JavaScript functions in `Approvals.js`. The hidden Sync Finisher action will be removed in Phase 8 along with the Syncing Files status.
+The 4 user-facing actions (Approve, Decline, Return Request, Resubmit Request) and the 1 hidden action (Set Status to Pending Approver) have been ported to JavaScript functions in `Approvals.js`. The hidden Sync Finisher action was removed in Phase 8 along with the `"Syncing Files"` status.
 
 ### 8.4 AppSheet security rules
 

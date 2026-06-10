@@ -80,9 +80,11 @@ build the signatory table as **1 row × 4 columns**:
 
 ## Placeholder reference (token → source → port-logic)
 
-All sources are 1-based `CR.*` columns from `Constants.js` / `COLUMN_MAP (1).md`, read via
-`getRequestRowData(requestId)` (returns a 34-col 0-indexed array). Approver names/designations come from
-`getApprovers(group)` (the Approver_Settings join), NOT from the request row.
+Most sources are 1-based `CR.*` columns from `Constants.js` / `COLUMN_MAP (1).md`, read via
+`getRequestRowData(requestId)` (returns a 25-col 0-indexed array — the whole `Requests` row). Approver
+names/designations come from `getApprovers(group)` (the `Group_Approvers` join), NOT from the request row.
+Approver **action dates** are no longer request columns — they come from the timeline via
+`getApprovalView(requestId).byStep[n].date`.
 
 ### Header
 | Token | Source | Port-logic |
@@ -123,13 +125,13 @@ All sources are 1-based `CR.*` columns from `Constants.js` / `COLUMN_MAP (1).md`
 | `{{prepared_date}}` | CR.DATE_OF_FILING (5) | format `"MM-dd-yyyy"` |
 | `{{approver1}}` | `getApprovers(group).approver1` | direct |
 | `{{desig1}}` | `getApprovers(group).designation1` | direct |
-| `{{app1_date}}` | CR.APP1_DATE (29) | format `"MM-dd-yyyy HH:mm:ss"` |
+| `{{app1_date}}` | `getApprovalView(requestId).byStep[1].date` | format `"MM-dd-yyyy HH:mm:ss"` |
 | `{{approver2}}` | `getApprovers(group).approver2` | cell cleared if null |
 | `{{desig2}}` | `getApprovers(group).designation2` | cell cleared if null |
-| `{{app2_date}}` | CR.APP2_DATE (30) | format `"MM-dd-yyyy HH:mm:ss"` |
+| `{{app2_date}}` | `getApprovalView(requestId).byStep[2].date` | format `"MM-dd-yyyy HH:mm:ss"` |
 | `{{approver3}}` | `getApprovers(group).approver3` | cell cleared if null |
 | `{{desig3}}` | `getApprovers(group).designation3` | cell cleared if null |
-| `{{app3_date}}` | CR.APP3_DATE (31) | format `"MM-dd-yyyy HH:mm:ss"` |
+| `{{app3_date}}` | `getApprovalView(requestId).byStep[3].date` | format `"MM-dd-yyyy HH:mm:ss"` |
 
 ---
 
@@ -159,5 +161,8 @@ All sources are 1-based `CR.*` columns from `Constants.js` / `COLUMN_MAP (1).md`
 - **Execute-as / permissions:** the account running the script must have read access to the template Doc
   and write access to the archive folder. In dev this is your gmail; in production it's the Megaworld
   account (see CLAUDE.md production checklist).
-- **No schema change.** Every token maps to an existing column or the Approver_Settings join — this is
-  the whole reason Template 1 was chosen over Template 2.
+- **No new fields for the COC itself.** Every token maps to a `Requests` column, the `Group_Approvers`
+  join (`getApprovers`), or the `Activity_Log`-derived action dates (`getApprovalView`) — this is the
+  whole reason Template 1 was chosen over Template 2. (The 2026-06-10 normalization moved where the
+  approver dates live, but did not add any token-facing field.) Each generated PDF is now also logged to
+  the `COC_PDFs` sheet.

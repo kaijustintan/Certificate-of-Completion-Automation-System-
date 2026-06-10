@@ -448,8 +448,9 @@ function getMyActionedRequests() {
                   approvals na-parse, attachments naka-sama.
       Technical : Dates via Utilities.formatDate; PREVIOUS_APPROVALS JSON.parse
                   in a try/catch (bad JSON → []); attachments mapped to
-                  {attachmentId, filename, description} — NO Drive URL (Phase 8
-                  gated serving; the UI fetches bytes via downloadAttachment).
+                  {attachmentId, filename, description, resubmitCycle} — NO Drive
+                  URL (Phase 8 gated serving; the UI fetches bytes via
+                  downloadAttachment). resubmitCycle drives the #6 cycle grouping.
 
   EXAMPLE
     // As the requestor or a chain approver:
@@ -529,9 +530,13 @@ function getRequestDetail(requestId) {
     // No raw Drive URL is sent to the frontend. The UI uses attachmentId to call
     // the identity-gated downloadAttachment(); FILE holds the display filename.
     attachments:          getAttachmentsForRequest(row[CR.REQUEST_ID - 1]).map(a => ({
-      attachmentId: a[RA.ATTACHMENT_ID - 1],
-      filename:     a[RA.FILE - 1],
-      description:  a[RA.DESCRIPTION - 1],
+      attachmentId:  a[RA.ATTACHMENT_ID - 1],
+      filename:      a[RA.FILE - 1],
+      description:   a[RA.DESCRIPTION - 1],
+      // Which submission cycle this file belongs to (0 = original, N = Resubmit #N).
+      // Additive DTO field — drives the "Current submission" vs "Previous versions"
+      // grouping in renderAttachmentsBlock (#6). Compare against detail.resubmitCount.
+      resubmitCycle: parseInt(a[RA.RESUBMIT_CYCLE - 1], 10) || 0,
     })),
   };
 }

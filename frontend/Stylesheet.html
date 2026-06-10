@@ -596,6 +596,33 @@
     background: var(--navy-100);
   }
 
+  /* Attachment cycle grouping (#6) — "Current submission" vs "Previous versions".
+     Only rendered when a request has been resubmitted (more than one cycle). */
+  .attachment-group + .attachment-group { margin-top: 14px; }
+  .attachment-group-label {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--gray-900);
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    padding: 6px 0;
+    border-bottom: 1px solid var(--gray-200);
+    margin-bottom: 2px;
+  }
+  /* "Previous versions" header is de-emphasized vs the current submission. */
+  .attachment-group-previous .attachment-group-label { color: var(--gray-600); }
+  /* Per-cycle sub-label inside "Previous versions" (Original / Resubmit #N). */
+  .attachment-subgroup-label {
+    font-size: 11px;
+    font-weight: 500;
+    color: var(--gray-400);
+    padding: 8px 0 2px;
+  }
+  .attachment-group-empty {
+    font-size: 12px;
+    padding: 8px 0;
+  }
+
 
   /* ─── DETAIL ROWS (request detail page) ─────────────────── */
   .detail-row {

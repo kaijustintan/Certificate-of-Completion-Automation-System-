@@ -1,8 +1,10 @@
 # E-Certificate Portal — Implementation Roadmap (Living Status Doc)
 
 **Project:** Megaworld COC Automation — AppSheet → Google Apps Script migration
-**Last updated:** 2026-06-09
+**Last updated:** 2026-06-10
 **Purpose:** Single source of truth for *what's built, what's left, and in what order*. Supersedes the "Known Gaps" section of `ARCHITECTURE.md`. Format per project doc standard: **Layman first, Technical second.**
+
+> **⚡ 2026-06-10 — Big-bang schema normalization SHIPPED (ahead of the old "post-go-live" plan).** The 35-col `Certificate_Requests` monolith + `Approver_Settings` were replaced by **7 normalized sheets** behind the `backend/Accessors.js` seam. This flips three roadmap items that were written against the flat schema — see the **Schema Normalization** and **Phase 11** sections below (now ✅) and the **Activity_Log** as the free audit timeline. Historical Part A/B entries below describe what was built *at the time* (flat schema) and are left as-is for provenance.
 
 **Legend:** ✅ DONE · ⏳ PENDING · ⏸️ DEFERRED
 
@@ -71,29 +73,32 @@
 - **Technical:** Replace `assets/MIGA-<EMOTION>.png` crops with clean transparent-bg, licensed versions → re-encode each to `data:` URI → swap into `MIGA_IMAGES` slots (no other code change). Optionally add new emotion variants (e.g. `loading`, `error`) if UX calls for them. Drop-in process documented in `MigaWidget.html` header comment.
 - **Note:** No code change needed beyond re-encoding the source PNGs. The mechanism is fully in place.
 
-### ⏳ Phase 11 — Audit Log *(OPTIONAL — only if a real audit requirement exists)*
-- **Layman:** A permanent, never-overwritten record of *every* action on a request (submit / approve / decline / return / resubmit) — who, when, at what step, with what remark. Today only the **return narrative** survives across resubmits (`Resubmit_History` / AG); structured approval data (`AppN_Date`, `AppN_Remark`, `Previous_Approvals`) is **cleared each resubmit**, so cross-cycle history is lost. This would power a full ServiceNow-style "Activity Timeline".
-- **Technical:** New `Request_Audit_Log` sheet tab + a `logAction(requestId, action, actor, step, remark, timestamp)` helper, called from `submitNewRequest` / `approve` / `decline` / `returnRequest` / `resubmit`. Append-only, never overwritten. This is the COC analog of the capstone's immutable on-chain `Log*` functions (`LogVerification`, `LogIssuerStatusChange`) — the Sheet doesn't give an audit log "for free" (no dual-write / no ledger), so it must be added explicitly.
-- **Decision rule (friction-earned):** if the supervisor only needs "why was it returned" → the existing AG narrative already covers it, **don't build this.** Build only if there's a genuine audit/compliance requirement or a need for the full timeline.
+### ✅ Phase 11 — Audit Log — *DELIVERED by the normalization (free)*
+- **Layman:** A permanent, never-overwritten record of *every* action on a request (submit / approve / decline / return / resubmit) — who, when, at what step, with what remark. This now exists: it's the **`Activity_Log`** sheet, which the normalization added as the source of truth. Cross-cycle history is no longer lost on resubmit. A full "Activity Timeline" UI could be built on top whenever wanted — the data is already there.
+- **Technical:** The append-only `Activity_Log` (written only via `appendAction()` from `submitNewRequest` / `approve` / `decline` / `returnRequest` / `resubmit`) IS the audit timeline — exactly the COC analog of ChainCert's immutable `Log*` functions. This was the "trivially free" payoff predicted in the Schema Normalization section. **Remaining (optional):** a dedicated read-only timeline view in the UI; the data layer is complete.
 
-### ⏸️ Post-Go-Live — Schema Normalization (known design debt)
-- **Layman:** Right now the main `Certificate_Requests` sheet has 35 columns — including all the approval history (who approved on which date, their remarks) flattened into fixed `App1/App2/App3` columns. This creates a hard cap of 3 approvers, loses cross-cycle history on every resubmit, and makes the sheet feel bloated. The right long-term fix is to pull approval actions out into their own sheet (one row per action, never cleared), which also delivers the full audit timeline *for free* — no extra code needed beyond the table itself.
-- **Technical:** Extract the repeating `App1/2/3_Date`, `App1/2/3_Remark`, `Previous_Approvals`, `Last_Action_By` columns into a new **append-only `Approvals` sheet**: `request_id | step | approver | decision | remark | timestamp`. Removes ~8 columns from `Certificate_Requests`, lifts the 3-approver cap, and makes **Phase 11 (Audit Log) trivially free** — the append-only table IS the audit timeline (same pattern as ChainCert's `LogVerification`). `Approver_Settings` `Approver_1/2/3` flat columns have the same smell but are low-stakes.
-- **Why deferred:** Massive regression surface — every getter, `Approvals.js`, emails, triggers, and frontend approval-chain rendering assumes the flat layout. Wrong timing for a nearly-deployed system.
-- **Trigger condition — do this when any of these become real:** (a) a group needs more than 3 approvers; (b) a genuine audit/compliance requirement lands (build the `Approvals` table *instead of* a bolt-on Phase 11); (c) resubmit history loss actually hurts someone. See `ARCHITECTURE.md § 7.3` for the full technical breakdown.
+### ✅ Schema Normalization — *DONE (2026-06-10, big-bang)*
+- **Layman:** The 35-column `Certificate_Requests` monolith — which crammed all approval history (who approved, when, their remarks) into fixed `App1/2/3` columns — was split into purpose-built sheets. This lifted the 3-approver cap, stopped losing cross-cycle history, and delivered a full audit timeline *for free*. The frontend barely moved because a translation layer keeps the old data shapes.
+- **Technical:** `Certificate_Requests` → **`Requests`** (25 cols; status/step/resubmit_count now a denormalized read-cache). The repeating `App1/2/3_Date`/`_Remark`, `Previous_Approvals`, `Last_Action_By`, `Resubmit_History`, `Expected_Attachments` columns were extracted into the **append-only `Activity_Log`** (`request_id | group_id | resubmit_cycle | approver_step | actor | action | remark | timestamp`). `Approver_Settings` (3-slot) → **`Groups`** (surrogate `group_id`) + **`Group_Approvers`** (composite key, unlimited approvers). Added **`Admins`** (allowlist) + **`COC_PDFs`** (one row per generated PDF). New **`backend/Accessors.js`** seam centralizes all normalized reads/writes and reconstructs the legacy shapes (`getApprovers` 6-field, `getApprovalView` per-step/history/previousApprovals/N-of-M) so the **frontend DTO is frozen**. `Constants.js`: `AS` removed; `CR` retained (renamed sheet, same meaning) + new `ACT`/`GRP`/`GAP`/`ADM`/`COCPDF`. See `COLUMN_MAP (1).md` for the full per-sheet maps.
+- **Note:** Sheets were created/seeded manually; code matches. The old flat-schema `ARCHITECTURE.md § 7.3` breakdown is now historical.
 
-### ⏳ Location Dropdown — *1st in sequence (next, quick win)*
-- **Layman:** Change the request form's "Location" field from a free-text box to a fixed dropdown (AGT / GCP / EGP / TWS / Other) so location data is consistent and filterable instead of every requestor typing it differently.
-- **Technical:** Convert the `location` `<input type=text>` in `NewRequest.html` to a `<select>` with the canonical Megaworld property codes + "Other". If "Other" → reveal a free-text fallback input. `validateNewRequest` already treats `location` as required — no backend change (still writes `CR.LOCATION`). **Open:** confirm the exact option set + display labels (do the codes show as bare codes or full property names?) and whether "Other" needs a free-text fallback.
+### ✅ Attachment Cycle Grouping (#6) — *DONE (2026-06-10)*
+- **Layman:** On a request that's been resubmitted, the Attachments card now separates **"Current submission"** from **"Previous versions"** (labeled Original / Resubmit #N) so the requestor and reviewer can tell which documents belong to which cycle. Never-resubmitted requests still show a plain flat list.
+- **Technical:** `getRequestDetail` DTO exposes `resubmitCycle` per attachment (additive, frozen-DTO safe); `renderAttachmentsBlock` (shared by RequestDetail + ReviewDetail) groups by `RA.RESUBMIT_CYCLE` against `detail.resubmitCount`. CSS `.attachment-group*` in `Stylesheet.html` (existing `:root` vars only).
+
+### ✅ Location Dropdown — *DONE*
+- **Layman:** The request form's "Location" field is now a fixed dropdown (predefined Megaworld property list + "Other" free-text) instead of free text, so location data is consistent and filterable.
+- **Technical:** `location` `<select>` in `NewRequest.html` with the canonical property codes + an "Other" → free-text fallback. No backend change (still writes `CR.LOCATION`).
 
 ### ⏳ In-Portal Admin Role — *2nd in sequence*
 - **Layman:** A web-based admin who can see ALL requests across every group and manage the approver groups (who approves what) without ever touching the raw Google Sheet. The goal: give a non-technical manager safe control through the portal instead of handing them the spreadsheet (where one wrong edit breaks the column structure).
-- **⚠️ Scope gate (confirm with supervisor before building):** *who manages `Approver_Settings` post-handoff, and do they get direct Sheet access?* The answer picks the tier:
+- **⚠️ Scope gate (confirm with supervisor before building):** *who manages `Groups` / `Group_Approvers` post-handoff, and do they get direct Sheet access?* The answer picks the tier:
   - **Tier 0 — Don't build.** If the Sheet owner keeps direct access and is fine managing groups there. (Original deferral logic.)
   - **Tier 1 — Oversight-only** (~half day): read-only "all requests" dashboard (filter by status/group/requestor/date) + read-only group list. Good if the manager wants *visibility*, not control.
-  - **Tier 2 — Group management** (~1–2 days, the real "admin"): Tier 1 + guarded CRUD on `Approver_Settings` (add/edit/remove approvers + groups, validated so a malformed group can't be saved). **Recommended target** if a non-technical manager needs control.
-  - **Tier 3 — Request intervention** (deferred): reassign a stuck request's approver, force-advance/cancel/reopen. **Blocked on the audit foundation** — admin overrides MUST be logged, so this waits for the post-go-live `Approvals` table (see Schema Normalization). Do NOT build Tier 3 pre-go-live.
-- **Technical:** New third role `state.user.role = "admin"` (today only `approver`|`requestor`). Admin identity resolved **server-side** (`Session.getActiveUser().getEmail()` against an admin allowlist — new sheet/column or `Constants.js` list); every admin callable guards `isAdmin(caller)` server-side, same discipline as the existing auth layer. New admin page + nav link gated on role. Group CRUD writes validated + ideally `LockService`-guarded.
+  - **Tier 2 — Group management** (~1–2 days, the real "admin"): Tier 1 + guarded CRUD on `Groups` + `Group_Approvers` (add/edit/remove approvers + groups, validated so a malformed group can't be saved). Easier now — the normalized `Group_Approvers` is purpose-built for this (unlimited rows, soft-delete via `active`). **Recommended target** if a non-technical manager needs control.
+  - **Tier 3 — Request intervention**: reassign a stuck request's approver, force-advance/cancel/reopen. Admin overrides MUST be logged — now **unblocked** since `Activity_Log` exists (append an action with the admin as actor). Still recommended post-go-live, but no longer gated on building an audit table.
+- **Technical:** New third role `state.user.role = "admin"` (today only `approver`|`requestor`). Admin identity resolved **server-side** against an admin allowlist; every admin callable guards `isAdmin(caller)`, same discipline as the existing auth layer. New admin page + nav link gated on role. Group CRUD writes validated + ideally `LockService`-guarded.
+- **⚡ Already scaffolded by the normalization:** the **`Admins`** sheet (`ADM`) and **`isAdmin(email)`** (`Accessors.js`) exist and work server-side; `detectRole()` intentionally does NOT return `"admin"` yet. Group CRUD also got easier — `Group_Approvers` is the table an admin would edit (unlimited approvers, soft-delete via `active`). What's left is purely the **UI** (admin page + nav + the guarded CRUD callables).
 - **Sequencing note:** Built pre-go-live, so it can only reach **Tier 1–2** (oversight + group management). Tier 3 (intervention) is intentionally post-go-live because it depends on the audit log.
 
 ### ⏳ Pre-Production Go-Live Gate
@@ -102,22 +107,21 @@
   - [ ] `EMAIL_DEV_TAG = false` in `backend/Emails.js`
   - [ ] `clasp push` **and publish** a new `/exec` version (deep-links point to `/exec`)
   - [ ] Swap `COC.ARCHIVE_FOLDER_ID` (Constants.js) from the dev folder to the Megaworld folder `1RJ1P7vZXgLa85KfsdQKCLBLqsaDqde-Y`; confirm executing account can read the template Doc + write that folder
-  - [x] `LAST_ACTION_BY` header present in sheet (manual ✅)
-  - [ ] Update `COLUMN_MAP.md` to 35 cols (done ✅)
-  - [ ] Optional: Location dropdown (AGT/GCP/EGP/TWS/Other) — fold into Phase 8
+  - [ ] Swap `COC.ATTACHMENTS_FOLDER_ID` to the Megaworld supporting-docs folder; set both Drive folders to **Restricted** (no link sharing); purge old `ANYONE_WITH_LINK` dev test files
+  - [ ] All **7 normalized sheet tabs** present with exact `SHEET_NAMES` names + headers; `Groups`/`Group_Approvers` seeded (each request's `group` is a valid `group_id` FK)
+  - [x] `COLUMN_MAP (1).md` synced to the normalized schema (done ✅, 2026-06-10)
+  - [x] Location dropdown (done ✅)
 
 ---
 
 ## Recommended sequence for what's left
-~~Phase 9~~ ✅ → ~~Phase 8~~ ✅ → ~~Phase 10~~ ✅ → **Location dropdown → Admin role → Phase 12 → Go-live gate → Schema normalization → Phase 11**.
+~~Phase 9~~ ✅ → ~~Phase 8~~ ✅ → ~~Phase 10~~ ✅ → ~~Location dropdown~~ ✅ → ~~Schema normalization~~ ✅ → ~~#6 attachment grouping~~ ✅ → **Contract-expiry indicator (#10) → Admin role UI → Phase 12 → Go-live gate**.
 
-Phases 8, 9, 10 done — **all major architectural work is complete.** Agreed order for what's left (2026-06-09):
+**All major architectural work is complete** — including the schema normalization that was originally deferred to post-go-live (shipped early as a big-bang, 2026-06-10). Updated order for what's left:
 
-1. **Location dropdown** — quick win, do next.
-2. **Admin role** — after the supervisor confirms scope (Tier 1 oversight vs Tier 2 group management). Buildable pre-go-live up to Tier 2; Tier 3 intervention waits for the audit log.
-3. **Phase 12 (Miga final polish)** — *floats*: externally blocked on licensed/transparent art, slot it in whenever the art lands. Pure drop-in re-encode (no code).
-4. **Go-live gate** — **intentionally last.** Dev runs on a personal Google account; the Megaworld-account migration + folder/link swaps + `EMAIL_DEV_TAG=false` all happen at the very end, once everything is verified working on the personal setup.
-5. **Schema normalization** — **post-go-live**, on-demand (per the trigger conditions). Ship first on the proven flat schema; refactor when the wall is actually hit, without launch pressure.
-6. **Phase 11 (Audit Log)** — last, and **free once normalization exists** (the append-only `Approvals` table IS the audit timeline). Don't build it as a separate bolt-on.
+1. **Contract-expiry indicator + "Expired" filter (#10)** — surface when a COC's contract period has lapsed + a dashboard filter. Reads `CR.CONTRACT_END`; no schema change.
+2. **Admin role UI** — data layer is already scaffolded (`Admins` sheet, `isAdmin()`, `Group_Approvers` as the editable chain). What's left is the admin page + nav + guarded CRUD callables. Tier 1 (oversight) / Tier 2 (group management) buildable pre-go-live; Tier 3 (intervention) is now unblocked by `Activity_Log` if wanted.
+3. **Phase 12 (Miga final polish)** — *floats*: externally blocked on licensed/transparent art; pure drop-in re-encode (no code).
+4. **Go-live gate** — **intentionally last.** Megaworld-account migration + folder/link swaps + `EMAIL_DEV_TAG=false` happen at the very end.
 
-**Admin role** is now in the active sequence (was deferred). **Phase 11** stays after normalization by design.
+**Phase 11 (Audit Log)** is no longer a separate build — `Activity_Log` already IS the append-only audit timeline; only an optional read-only timeline UI remains.
