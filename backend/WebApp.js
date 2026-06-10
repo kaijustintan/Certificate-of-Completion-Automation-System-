@@ -255,7 +255,9 @@ function getCurrentUser() {
               projects a slim dashboard DTO per row.
   PARAMS    : (none) — identity from Session.
   RETURNS   : Array of { requestId, controlNumber, projectTitle, group, status,
-              step, dateFiled }. Empty if the user has submitted nothing.
+              step, dateFiled, contractEnd, isExpired }. Empty if the user has
+              submitted nothing. isExpired (#10) is computed server-side via
+              isContractExpired() so the UI never parses date strings.
 
   STEPS
     Step 1 — Resolve caller + load rows
@@ -290,6 +292,10 @@ function getMyRequests() {
       dateFiled:     row[CR.DATE_OF_FILING - 1]
         ? Utilities.formatDate(new Date(row[CR.DATE_OF_FILING - 1]), "Asia/Manila", "MMM dd, yyyy")
         : "",
+      contractEnd:   row[CR.CONTRACT_END - 1]
+        ? Utilities.formatDate(new Date(row[CR.CONTRACT_END - 1]), "Asia/Manila", "MMM dd, yyyy")
+        : "",
+      isExpired:     isContractExpired(row[CR.CONTRACT_END - 1]),
     }));
 }
 
@@ -304,7 +310,7 @@ function getMyRequests() {
               dashboard DTO (same shape as getMyActionedRequests).
   PARAMS    : (none) — identity from Session.
   RETURNS   : Array of { requestId, controlNumber, projectTitle, requestor,
-              group, status, step, dateFiled }.
+              group, status, step, dateFiled, contractEnd, isExpired }.
 
   STEPS
     Step 1 — Resolve caller + load rows + pending-status set
@@ -347,6 +353,10 @@ function getPendingApprovals() {
       dateFiled:     row[CR.DATE_OF_FILING - 1]
         ? Utilities.formatDate(new Date(row[CR.DATE_OF_FILING - 1]), "Asia/Manila", "MMM dd, yyyy")
         : "",
+      contractEnd:   row[CR.CONTRACT_END - 1]
+        ? Utilities.formatDate(new Date(row[CR.CONTRACT_END - 1]), "Asia/Manila", "MMM dd, yyyy")
+        : "",
+      isExpired:     isContractExpired(row[CR.CONTRACT_END - 1]),
     }));
 }
 
@@ -357,32 +367,32 @@ function getPendingApprovals() {
               mo na — inapprove, dineny, o ibinalik — lalabas dito. Ginagamit
               ng "Actioned by you" view. Identity mo galing session, hindi
               pinapasa galing frontend.
-  TECHNICAL : Returns every row the active user has acted on. A row counts if
-              EITHER (a) LAST_ACTION_BY === me (covers declines/returns that
-              stamp no approval date) OR (b) I occupy an approver slot AND my
-              matching AppN_Date is filled (an approval that persists after a
-              later action).
+  TECHNICAL : Returns every row the active user has acted on, derived from the
+              append-only Activity_Log timeline: a request counts if it has any
+              approved/declined/returned action whose actor is the caller. This
+              survives resubmits and later actions by others (the timeline is
+              never cleared).
   PARAMS    : (none) — identity from Session.
-  RETURNS   : Array of the same 8-field DTO as getPendingApprovals() (empty if none).
+  RETURNS   : Array of the same DTO shape as getPendingApprovals() (empty if none).
 
   STEPS
     Step 1 — Resolve caller + load rows
       Layman    : Kunin ang naka-login at lahat ng request rows.
       Technical : Session email + getDataRows(REQUESTS).
-    Step 2 — Filter: "did I act on this?"
-      Layman    : Isama kung (a) ako ang huling gumalaw, o (b) approver ako AT
-                  may petsa na ang approval ko. Walang config na group → laktawan.
-      Technical : sameEmail(LAST_ACTION_BY, me) OR (my slot matches AND my
-                  APPn_DATE is non-empty). getApprovers() null → drop.
-    Step 3 — Project + format date
-      Layman    : Gawing DTO; petsa → readable PH format.
-      Technical : map to the 8-field DTO; blank date → "".
+    Step 2 — Build the "acted" set from the timeline
+      Layman    : Isang pass sa Activity_Log: lahat ng request na ako ang
+                  umaprove/nag-decline/nagbalik, itala.
+      Technical : One getDataRows(ACTIVITY_LOG) scan → membership map keyed by
+                  request_id (no per-row sheet reads).
+    Step 3 — Filter + project + format date
+      Layman    : Panatilihin ang nasa listahan; gawing DTO; petsa → PH format.
+      Technical : filter via the map; map to the DTO; blank date → "".
 
   EXAMPLE
     // approver2 declined EC-…007 and earlier approved EC-…004
     getMyActionedRequests()
-    → [ { controlNumber:"EC-2026-00007-145", status:"Declined", … },  // via LAST_ACTION_BY
-        { controlNumber:"EC-2026-00004-682", status:"Fully Approved", … } ] // via APP2_DATE
+    → [ { controlNumber:"EC-2026-00007-145", status:"Declined", … },
+        { controlNumber:"EC-2026-00004-682", status:"Fully Approved", … } ]
 */
 function getMyActionedRequests() {
   const email = Session.getActiveUser().getEmail();
@@ -414,6 +424,10 @@ function getMyActionedRequests() {
         dateFiled:     row[CR.DATE_OF_FILING - 1]
           ? Utilities.formatDate(new Date(row[CR.DATE_OF_FILING - 1]), "Asia/Manila", "MMM dd, yyyy")
           : "",
+        contractEnd:   row[CR.CONTRACT_END - 1]
+          ? Utilities.formatDate(new Date(row[CR.CONTRACT_END - 1]), "Asia/Manila", "MMM dd, yyyy")
+          : "",
+        isExpired:     isContractExpired(row[CR.CONTRACT_END - 1]),
       };
     });
 }
@@ -509,6 +523,7 @@ function getRequestDetail(requestId) {
     typeOfLicense:        row[CR.TYPE_OF_LICENSE - 1],
     contractStart:        fmtDateOnly(row[CR.CONTRACT_START - 1]),
     contractEnd:          fmtDateOnly(row[CR.CONTRACT_END - 1]),
+    isExpired:            isContractExpired(row[CR.CONTRACT_END - 1]),  // #10 — drives the detail-page "Expired" chip
     supplierName:         row[CR.SUPPLIER_NAME - 1],
     requestorRemark:      row[CR.REQUESTOR_REMARK - 1],
     app1Remark:           stepRemark(1),

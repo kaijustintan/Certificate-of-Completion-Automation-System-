@@ -9,10 +9,11 @@
   na tandaan kung saang column nakalagay ang bawat field (delikado sa typo),
   iisang sentral na listahan lang dito ang sinasandalan ng lahat. NORMALIZED
   na ang database: hiwalay nang sheets ang requests, approval actions, groups,
-  approvers, attachments, at admins — kaya mas malinis at walang 3-approver cap.
+  approvers, attachments, admins, at COC PDFs — kaya mas malinis at walang
+  3-approver cap.
 
   TECHNICAL:
-  Central column-index maps + enums for the NORMALIZED 6-sheet schema.
+  Central column-index maps + enums for the NORMALIZED 7-sheet schema.
   Top-level const objects; Apps Script shares ONE global scope so these are
   visible everywhere with no import.
 
@@ -230,18 +231,27 @@ const STATUS = {
 
 
 /*
-  ACTION — the Approval_Actions.action enum (ACT.ACTION values).
+  ACTION — the Activity_Log.action enum (ACT.ACTION values).
   LAYMAN    : Anong klaseng galaw — sumite, aprubado, tinanggihan, ibinalik,
-              o muling sinumite.
-  TECHNICAL : Stored lowercase in ACT.ACTION. Used to derive status, history,
-              who-acted, and N-of-M from the append-only timeline.
+              muling sinumite, o paalala ng pag-expire ng contract.
+  TECHNICAL : Stored lowercase in ACT.ACTION. The first five drive derived
+              status, history, who-acted, and N-of-M from the append-only
+              timeline. The three EXPIRY_* values are SYSTEM-written idempotency
+              flags (#10) — appended by checkContractExpiries() when each renewal
+              reminder is emailed (T-3 / day-of / overdue), so the daily sweep
+              never double-notifies for the same stage. getApprovalView() ignores
+              them (it only branches on approved/declined/returned/resubmitted),
+              so history reconstruction is unaffected.
 */
 const ACTION = {
-  SUBMITTED:   "submitted",
-  APPROVED:    "approved",
-  DECLINED:    "declined",
-  RETURNED:    "returned",
-  RESUBMITTED: "resubmitted",
+  SUBMITTED:      "submitted",
+  APPROVED:       "approved",
+  DECLINED:       "declined",
+  RETURNED:       "returned",
+  RESUBMITTED:    "resubmitted",
+  EXPIRY_WARNING: "expiry_warning",  // system: T-3 "expiring soon" reminder sent
+  EXPIRY_NOTICE:  "expiry_notice",   // system: day-of "expires today" reminder sent
+  EXPIRY_OVERDUE: "expiry_overdue",  // system: post-expiry "has expired" reminder sent
 };
 
 

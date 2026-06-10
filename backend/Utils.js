@@ -217,6 +217,60 @@ function nowFormatted() {
   return formatPHTime(new Date());
 }
 
+/*
+  Function Name: isContractExpired
+  LAYMAN    : Lapsed na ba ang contract ng request? Oo kung may Contract End
+              Date at lumipas na ito. Blangko ang end date → hindi expired.
+  TECHNICAL : Server-side comparison so the frontend never parses date strings.
+              Compares end-of-day (23:59:59.999) of the contract-end date against
+              now — a contract is NOT expired on its own end date, only after it.
+              Invalid/unparseable values → false (treated as no end date).
+  PARAMS    : rawEnd — the raw CR.CONTRACT_END cell value (Date, string, or blank).
+  RETURNS   : Boolean.
+*/
+function isContractExpired(rawEnd) {
+  if (!rawEnd) return false;
+  const end = new Date(rawEnd);
+  if (isNaN(end.getTime())) return false;
+  end.setHours(23, 59, 59, 999);
+  return end.getTime() < Date.now();
+}
+
+/*
+  Function Name: daysUntilContractEnd
+  LAYMAN    : Ilang araw bago (o pagkatapos) mag-expire ang contract? Positibo =
+              hindi pa, 0 = expires today, negatibo = lumipas na. Blangko/invalid
+              na petsa → null. Ginagamit ng daily expiry-reminder sweep (#10).
+  TECHNICAL : Whole CALENDAR-day delta in Asia/Manila (not a raw ms/86.4M floor,
+              which would drift with the time-of-day component). Both "today" and
+              the contract-end date are reduced to their Manila yyyy-MM-dd, parsed
+              as UTC midnights, then differenced — DST/tz-safe and stable
+              regardless of when in the day the trigger runs.
+  PARAMS    : rawEnd — the raw CR.CONTRACT_END cell value (Date, string, or blank).
+  RETURNS   : Integer day delta (end − today), or null if blank/unparseable.
+
+  EXAMPLE
+    // today (Manila) = 2026-06-10
+    daysUntilContractEnd("2026-06-17")  → 7
+    daysUntilContractEnd("2026-06-10")  → 0
+    daysUntilContractEnd("2026-06-08")  → -2
+    daysUntilContractEnd("")            → null
+*/
+function daysUntilContractEnd(rawEnd) {
+  if (!rawEnd) return null;
+  const end = new Date(rawEnd);
+  if (isNaN(end.getTime())) return null;
+  // Reduce both dates to a Manila calendar day, then to a UTC midnight, so the
+  // subtraction is a clean integer count of days with no time-of-day component.
+  const toManilaMidnightUTC = function (d) {
+    const ymd = Utilities.formatDate(d, "Asia/Manila", "yyyy-MM-dd");
+    return new Date(ymd + "T00:00:00Z").getTime();
+  };
+  const MS_PER_DAY = 24 * 60 * 60 * 1000;
+  const diff = toManilaMidnightUTC(end) - toManilaMidnightUTC(new Date());
+  return Math.round(diff / MS_PER_DAY);
+}
+
 
 // =========================================================================================================
 // ID GENERATORS

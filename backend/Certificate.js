@@ -23,8 +23,9 @@
   formatting, IF ISNOTBLANK → "N/A", UTCNOW()+offset, <<If>> approver blocks) is
   ported here as plain JS. The signatory table is taken as the LAST table in the
   doc, and its approver-2/3 columns are cleared when those slots are unconfigured.
-  Reads via getRequestRowData() (34-col array) + getApprovers() (Approver_Settings
-  join). Identity/auth is NOT re-checked here — generateCOC runs after the approval
+  Reads via getRequestRowData() (25-col Requests row) + getApprovers() (the
+  Group_Approvers join) + getApprovalView() (action dates from Activity_Log).
+  Identity/auth is NOT re-checked here — generateCOC runs after the approval
   flow has authorized + finalized the request; it is not a frontend-callable.
 
   ⚠️ SETUP: requires COC.TEMPLATE_DOC_ID set in Constants.js. See
@@ -82,9 +83,9 @@
                   setup hint. Avoids a cryptic Drive error.
     Step 2 — Load the request row + approvers
       Layman    : Kunin ang datos ng request at kung sinong approver(s) ng group.
-      Technical : getRequestRowData (34-col array) + getApprovers(group). Missing
-                  row → { success:false }. Approvers default to {} so token reads
-                  are null-safe.
+      Technical : getRequestRowData (25-col Requests row) + getApprovers(group).
+                  Missing row → { success:false }. Approvers default to {} so
+                  token reads are null-safe.
     Step 3 — Copy the template Doc
       Layman    : Gumawa ng kopya ng template, pangalanan base sa control number.
       Technical : DriveApp.getFileById(TEMPLATE).makeCopy("COC - <ctrl>"). The

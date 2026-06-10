@@ -470,6 +470,78 @@ Open this request: ${getPortalUrl(requestId, "request")}`;
 
 
 // ============================================================
+// EMAIL 5b — Contract-expiry renewal reminder to requestor (#10)
+// No AppSheet equivalent — new with the expiry-notification feature.
+// ============================================================
+/*
+  Function Name: sendExpiryReminderToRequestor
+
+  LAYMAN (Tropang Ex):
+  Paalala sa requestor na malapit nang (o lumipas na) mag-expire ang contract ng
+  isang fully-approved na COC — para may panahon silang mag-renew. Dalawang beses
+  lang ito pinapadala kada request: isa pag 3 araw na lang, isa pag araw na mismo
+  (o lumipas na kung na-miss ang 8am run). Requestor lang ang tumatanggap.
+
+  TECHNICAL:
+  Fired by checkContractExpiries() (Triggers.js) only — not frontend-callable.
+  TO: REQUESTOR. Reuses emailSubject / buildInfoBlock / getPortalUrl, so it
+  inherits the EMAIL_DEV_TAG audience prefix and the standard body shape. The
+  subject label + lead line vary by daysUntil. No attachment (this is a nudge,
+  not a certificate). Idempotency lives in the caller (Activity_Log flags), not
+  here — this function just sends.
+
+  PARAMS:
+  - requestId — the COC request to remind about.
+  - daysUntil — whole days to contract end (from daysUntilContractEnd):
+                >0 = "Expiring Soon", 0 = "Expires Today", <0 = "Expired".
+
+  RETURNS:
+  (void). No-op if the request row can't be loaded.
+
+  EXAMPLE
+    sendExpiryReminderToRequestor("REQ-9b1", 3)   // "…| Expiring Soon", "in 3 days"
+    sendExpiryReminderToRequestor("REQ-9b1", 0)   // "…| Expires Today"
+    sendExpiryReminderToRequestor("REQ-9b1", -3)  // "…| Expired", "3 days ago"
+*/
+function sendExpiryReminderToRequestor(requestId, daysUntil) {
+  const data = getRequestData(requestId);
+  if (!data) return;
+  const { rowData } = data;
+
+  const requestor     = rowData[CR.REQUESTOR - 1];
+  const controlNumber = rowData[CR.CONTROL_NUMBER - 1];
+  const endRaw        = rowData[CR.CONTRACT_END - 1];
+  const endStr        = endRaw
+    ? Utilities.formatDate(new Date(endRaw), "Asia/Manila", "MMMM dd, yyyy")
+    : "(not set)";
+
+  // Subject label + the one-line lead, both driven by the day delta.
+  const label = daysUntil > 0 ? "Expiring Soon"
+              : daysUntil === 0 ? "Expires Today"
+              : "Expired";
+  const lead  = daysUntil > 1  ? `The contract for this certificate expires in ${daysUntil} days.`
+              : daysUntil === 1 ? "The contract for this certificate expires tomorrow."
+              : daysUntil === 0 ? "The contract for this certificate expires today."
+              : daysUntil === -1 ? "The contract for this certificate expired yesterday."
+              : `The contract for this certificate expired ${Math.abs(daysUntil)} days ago.`;
+
+  const subject = emailSubject(controlNumber, label, "REQUESTOR");
+
+  const body = `Good day!
+
+${lead} If this contract is being renewed, please file a new e-certificate request for the renewed term.
+
+${buildInfoBlock(rowData)}
+Contract End Date: ${endStr}
+
+Open this request: ${getPortalUrl(requestId, "request")}`;
+
+  GmailApp.sendEmail(requestor, subject, body);
+  Logger.log(`sendExpiryReminderToRequestor(): ${label} reminder sent to ${requestor} for ${controlNumber} (daysUntil=${daysUntil}).`);
+}
+
+
+// ============================================================
 // EMAIL 6 — Notify requestor their request was returned
 // AppSheet equivalent: Return Bot → Process_NotifyReturn
 // ============================================================

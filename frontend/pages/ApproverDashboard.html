@@ -19,7 +19,7 @@
   FUNCTIONS:
     - renderApproverDashboardPage()         main renderer; parallel fetch
     - renderApproverControls()              view + sort + conditional status dropdowns
-    - computeApproverActionedCounts()       {all,approved,declined,returned} for status dropdown
+    - computeApproverActionedCounts()       {all,approved,declined,returned,expired} for status dropdown
     - afterRender_approverDashboard()       hook: sync active stat card
     - approverViewChange(el)               view dropdown change
     - approverSortChange(el)               sort dropdown change
@@ -63,6 +63,10 @@ async function renderApproverDashboardPage() {
   const approvedCount = _approverActionedCache.filter(function (r) { return r.status === 'Fully Approved'; }).length;
   const declinedCount = _approverActionedCache.filter(function (r) { return r.status === 'Declined'; }).length;
   const returnedCount = _approverActionedCache.filter(function (r) { return r.status === 'Returned to Requestor'; }).length;
+  // #10 — expired among requests you've actioned (matches the Expired sub-filter,
+  // which scopes to the Actioned view). An awaiting request that happens to be
+  // expired still shows its red chip in the list; it's just not counted here.
+  const expiredCount  = _approverActionedCache.filter(function (r) { return r.isExpired; }).length;
 
   return `
     <div class="page-header">
@@ -93,6 +97,10 @@ async function renderApproverDashboardPage() {
       <div class="stat-card clickable" data-statkey="returned" onclick="approverStatClick('actioned','returned')">
         <div class="stat-number">${returnedCount}</div>
         <div class="stat-label">Returned by you</div>
+      </div>
+      <div class="stat-card clickable" data-statkey="expired" onclick="approverStatClick('actioned','expired')">
+        <div class="stat-number red">${expiredCount}</div>
+        <div class="stat-label">Expired</div>
       </div>
     </div>
 
@@ -149,6 +157,7 @@ function renderApproverControls() {
       { value: 'approved', label: 'Approved' },
       { value: 'declined', label: 'Declined' },
       { value: 'returned', label: 'Returned' },
+      { value: 'expired',  label: 'Expired'  }, // #10 — contract end date lapsed (any status)
     ];
     const statusHtml = statusOptions.map(function (o) {
       return '<option value="' + o.value + '"' +
@@ -178,16 +187,19 @@ function renderApproverControls() {
 /*
   Function Name: computeApproverActionedCounts
   LAYMAN    : Para sa Status dropdown, bilangin kung ilan ang approved, declined,
-              returned, at lahat sa actioned cache.
-  TECHNICAL : Iterates _approverActionedCache; maps via getDashboardFilter. Returns
-              {all, approved, declined, returned}.
+              returned, expired, at lahat sa actioned cache. Ang "expired" ay
+              hiwalay na bilang — cross-cutting sa status (#10).
+  TECHNICAL : Iterates _approverActionedCache; status buckets via getDashboardFilter;
+              expired via the server-computed r.isExpired flag. Returns
+              {all, approved, declined, returned, expired}.
 */
 function computeApproverActionedCounts() {
-  const counts = { all: 0, approved: 0, declined: 0, returned: 0 };
+  const counts = { all: 0, approved: 0, declined: 0, returned: 0, expired: 0 };
   for (const r of _approverActionedCache) {
     counts.all++;
     const bucket = getDashboardFilter(r.status);
     if (counts[bucket] !== undefined) counts[bucket]++;
+    if (r.isExpired) counts.expired++;
   }
   return counts;
 }
@@ -268,6 +280,9 @@ function applyApproverView() {
     rows = _approverPendingCache;
   } else if (_approverActionedStatus === 'all') {
     rows = _approverActionedCache;
+  } else if (_approverActionedStatus === 'expired') {
+    // #10 — expired is a cross-cutting flag, not a status bucket.
+    rows = _approverActionedCache.filter(function (r) { return r.isExpired; });
   } else {
     rows = _approverActionedCache.filter(function (r) {
       return getDashboardFilter(r.status) === _approverActionedStatus;
@@ -324,9 +339,11 @@ function renderApproverActionedList(actioned) {
   Function Name: renderApproverTable
   LAYMAN    : Gumawa ng HTML table na may approver-specific columns (Control No.,
               Project, Requestor, Group, Status, Filed). Bawat row ay clickable
-              papunta sa review detail page.
+              papunta sa review detail page. Kung lapsed na ang contract, may
+              gray na "Expired" chip sa tabi ng status badge (#10).
   TECHNICAL : Returns .data-table HTML; each <tr> onclick navigateTo('review',{id}).
-              Used by both awaiting and actioned list renderers.
+              Used by both awaiting and actioned list renderers. Expired chip
+              driven by the server-computed r.isExpired flag.
 */
 function renderApproverTable(rows) {
   const tableRows = rows.map(function (r) {
@@ -337,7 +354,9 @@ function renderApproverTable(rows) {
         '<td>' + escapeHtml(r.projectTitle)  + '</td>' +
         '<td>' + escapeHtml(r.requestor)     + '</td>' +
         '<td>' + escapeHtml(r.group)         + '</td>' +
-        '<td>' + renderStatusBadge(r.status) + '</td>' +
+        '<td>' + renderStatusBadge(r.status) +
+          (r.isExpired ? ' <span class="badge badge-expired" title="Contract end date has passed">Expired</span>' : '') +
+        '</td>' +
         '<td>' + escapeHtml(r.dateFiled)     + '</td>' +
       '</tr>';
   }).join('');

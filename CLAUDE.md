@@ -44,6 +44,8 @@ The database is **normalized into 7 sheets**. Use the column-map constants from 
 
 `ACTION.*` from `Constants.js`: `SUBMITTED | APPROVED | DECLINED | RETURNED | RESUBMITTED` (stored lowercase). The timeline's action drives derived status, history, who-acted, and N-of-M.
 
+> Two **system** action values also exist: `EXPIRY_WARNING | EXPIRY_NOTICE` (#10). They are idempotency flags written by `checkContractExpiries()` when a contract-expiry reminder is emailed — NOT approval events. `getApprovalView()` ignores them (it only branches on the five workflow actions), so history reconstruction is unaffected. Don't treat them as approval history.
+
 ## Authorization pattern (backend)
 
 Every sensitive callable must:
@@ -129,6 +131,12 @@ The old `EXPECTED_ATTACHMENTS` column and the `SYNCING` flow are **gone**. `subm
 - Each attachment row stores its `RA.RESUBMIT_CYCLE` (0 = original submit; N = files added on Resubmit #N). `handleResubmit()` **appends** new files (prior files are kept) tagged with the next cycle.
 - `getRequestDetail()` exposes `resubmitCycle` per attachment; `renderAttachmentsBlock()` groups them into **"Current submission"** (cycle === `detail.resubmitCount`) vs **"Previous versions"** (older cycles, sub-labeled Original / Resubmit #N). Never-resubmitted requests render a flat list (no headers).
 
+### Contract expiry — indicator + daily reminders (#10)
+
+Expiry is a **derived lens, not a stored status** — never add an `"Expired"` value to the STATUS enum. `isContractExpired(rawEnd)` (`Utils.js`) computes it live; `getMyRequests`/`getPendingApprovals`/`getMyActionedRequests`/`getRequestDetail` expose `isExpired` (+ `contractEnd`) as additive DTO fields. The UI shows a `.badge-expired` chip next to (never instead of) the status badge, plus an "Expired" dropdown filter on both dashboards.
+
+**Scheduled reminders:** `checkContractExpiries()` (`Triggers.js`) is the system's **only time-based trigger** — a daily ~8am sweep that emails the **requestor only**, for **Fully-Approved** rows, in **three stages**: **T-3 days** ("Expiring Soon"), **day-of** ("Expires Today"), and **post-expiry** ("Has Expired"). The warning + overdue stages use self-healing ranges (a skipped run catches up); day-of is exact. The post-expiry email exists because requestors rarely watch the portal, so the passive "Expired" label isn't enough — email is the real awareness channel. Idempotency is per-stage via `Activity_Log` system actions (`ACTION.EXPIRY_WARNING` / `EXPIRY_NOTICE` / `EXPIRY_OVERDUE`), not a column/sheet. ⚠️ The trigger must be registered manually **once per Google account** via `registerExpiryTrigger()` — so it must be re-run on the Megaworld account after migration (it's NOT auto-created by `clasp push`).
+
 ## Documentation standard
 
 Follow the format defined in the global `CLAUDE.md` → `### For technical documentation entries`.
@@ -147,6 +155,7 @@ Reference files for "full treatment" examples: `backend/WebApp.js`, `backend/App
       (`clasp push` updates `/dev` immediately but `/exec` still runs the old version until republished)
 - [ ] All **7 normalized sheet tabs** exist with the exact names in `SHEET_NAMES` (`Requests`, `Activity_Log`, `Groups`, `Group_Approvers`, `Request_Attachments`, `Admins`, `COC_PDFs`) and matching headers (sheets were set up manually ✅)
 - [ ] `Groups` + `Group_Approvers` seeded (each request's `Requests.group` holds a valid `group_id` FK; each group has ≥1 active approver row)
+- [ ] Run `registerExpiryTrigger()` **once on the Megaworld account** (daily 8am expiry-reminder sweep, #10) — triggers are per-account and are NOT created by `clasp push`
 
 ### Phase 8 — Attachments (added this session)
 - [ ] `COC.ATTACHMENTS_FOLDER_ID` in `backend/Constants.js` swapped to the **Megaworld prod** supporting-docs folder

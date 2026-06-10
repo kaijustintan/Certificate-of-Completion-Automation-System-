@@ -109,19 +109,24 @@
   - [ ] Swap `COC.ARCHIVE_FOLDER_ID` (Constants.js) from the dev folder to the Megaworld folder `1RJ1P7vZXgLa85KfsdQKCLBLqsaDqde-Y`; confirm executing account can read the template Doc + write that folder
   - [ ] Swap `COC.ATTACHMENTS_FOLDER_ID` to the Megaworld supporting-docs folder; set both Drive folders to **Restricted** (no link sharing); purge old `ANYONE_WITH_LINK` dev test files
   - [ ] All **7 normalized sheet tabs** present with exact `SHEET_NAMES` names + headers; `Groups`/`Group_Approvers` seeded (each request's `group` is a valid `group_id` FK)
+  - [ ] Run `registerExpiryTrigger()` once **on the Megaworld account** (daily 8am expiry-reminder sweep #10; triggers are per-account, not created by `clasp push`)
   - [x] `COLUMN_MAP (1).md` synced to the normalized schema (done ✅, 2026-06-10)
   - [x] Location dropdown (done ✅)
 
 ---
 
+### ✅ Contract-Expiry Indicator + Reminders (#10) — *DONE (2026-06-10; live verification pending)*
+- **Layman:** Dalawang bahagi. (1) **Indicator** — kapag lumipas na ang Contract End Date, may maliit na gray na "Expired" chip sa tabi ng status badge sa parehong dashboards AT sa detail pages, plus "Expired" option sa Status dropdown. (2) **Reminders** — tuwing 8am, may email sa requestor kapag 3 araw na lang, araw na mismo, o lumipas na ang contract ng isang fully-approved na COC, para may panahon mag-renew.
+- **Technical (indicator):** Server-side `isContractExpired(rawEnd)` (`Utils.js`) — end-of-day comparison, blank/invalid → false; frontend never parses dates. `getMyRequests` / `getPendingApprovals` / `getMyActionedRequests` / `getRequestDetail` DTOs gained additive `contractEnd` + `isExpired`. `.badge-expired` chip on both dashboard tables + both detail-page headers; "Expired (N)" dropdown option + filter branch on the requestor Status dropdown and the approver Actioned-status dropdown. No stat-card change; no schema change.
+- **Technical (reminders):** `checkContractExpiries()` (`Triggers.js`) — the system's **first time-based trigger**, daily ~8am (Asia/Manila per `appsscript.json`). Sweeps Fully-Approved rows with a contract end; **three stages** emailing the **requestor only** via `sendExpiryReminderToRequestor()` (`Emails.js`, reuses `emailSubject`/`buildInfoBlock`/`getPortalUrl`/`EMAIL_DEV_TAG`): `1..3` days → "Expiring Soon" (range), `===0` → "Expires Today" (exact), `<0` → "Has Expired" (range). Per-stage idempotency via `Activity_Log` system actions `EXPIRY_WARNING`/`EXPIRY_NOTICE`/`EXPIRY_OVERDUE` (no new sheet/column; `getApprovalView` ignores them) + `daysUntilContractEnd()` helper. The post-expiry email is the real awareness channel (requestors rarely watch the portal). ⚠️ Requires a one-time **per-account** `registerExpiryTrigger()` run. Approver notifications intentionally out of scope.
+
 ## Recommended sequence for what's left
-~~Phase 9~~ ✅ → ~~Phase 8~~ ✅ → ~~Phase 10~~ ✅ → ~~Location dropdown~~ ✅ → ~~Schema normalization~~ ✅ → ~~#6 attachment grouping~~ ✅ → **Contract-expiry indicator (#10) → Admin role UI → Phase 12 → Go-live gate**.
+~~Phase 9~~ ✅ → ~~Phase 8~~ ✅ → ~~Phase 10~~ ✅ → ~~Location dropdown~~ ✅ → ~~Schema normalization~~ ✅ → ~~#6 attachment grouping~~ ✅ → ~~#10 expiry filter~~ ✅ → **Admin role UI → Phase 12 → Go-live gate**.
 
-**All major architectural work is complete** — including the schema normalization that was originally deferred to post-go-live (shipped early as a big-bang, 2026-06-10). Updated order for what's left:
+**All pre-admin work is complete.** Updated order for what's left:
 
-1. **Contract-expiry indicator + "Expired" filter (#10)** — surface when a COC's contract period has lapsed + a dashboard filter. Reads `CR.CONTRACT_END`; no schema change.
-2. **Admin role UI** — data layer is already scaffolded (`Admins` sheet, `isAdmin()`, `Group_Approvers` as the editable chain). What's left is the admin page + nav + guarded CRUD callables. Tier 1 (oversight) / Tier 2 (group management) buildable pre-go-live; Tier 3 (intervention) is now unblocked by `Activity_Log` if wanted.
-3. **Phase 12 (Miga final polish)** — *floats*: externally blocked on licensed/transparent art; pure drop-in re-encode (no code).
-4. **Go-live gate** — **intentionally last.** Megaworld-account migration + folder/link swaps + `EMAIL_DEV_TAG=false` happen at the very end.
+1. **Admin role UI** — data layer is already scaffolded (`Admins` sheet, `isAdmin()`, `Group_Approvers` as the editable chain). What's left is the admin page + nav + guarded CRUD callables. Tier 1 (oversight) / Tier 2 (group management) buildable pre-go-live; Tier 3 (intervention) is now unblocked by `Activity_Log` if wanted. **Blocked on the supervisor tier decision.**
+2. **Phase 12 (Miga final polish)** — *floats*: externally blocked on licensed/transparent art; pure drop-in re-encode (no code).
+3. **Go-live gate** — **intentionally last.** Megaworld-account migration + folder/link swaps + `EMAIL_DEV_TAG=false` happen at the very end.
 
 **Phase 11 (Audit Log)** is no longer a separate build — `Activity_Log` already IS the append-only audit timeline; only an optional read-only timeline UI remains.

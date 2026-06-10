@@ -648,7 +648,7 @@ async function renderRequestDetailPage(params) {
       <div>
         <div class="text-tiny text-muted">${escapeHtml(detail.controlNumber)}</div>
         <div class="page-title">${escapeHtml(detail.projectTitle)}</div>
-        <div class="page-subtitle">${renderStatusBadge(detail.status)}</div>
+        <div class="page-subtitle">${renderStatusBadge(detail.status)}${detail.isExpired ? ' <span class="badge badge-expired" title="Contract end date has passed">Expired</span>' : ''}</div>
       </div>
       <button class="btn btn-secondary" onclick="navigateTo('home')">← Back</button>
     </div>

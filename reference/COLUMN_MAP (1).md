@@ -96,7 +96,7 @@ row[CR.STATUS - 1]               // 0-based array index — subtract 1
 | D | 4 | `resubmit_cycle` | 0 = first cycle; 1+ after each resubmit. |
 | E | 5 | `approver_step` | Approver position 1/2/3 the action pertains to; blank for submit/resubmit. |
 | F | 6 | `actor_email` | Who performed the action. |
-| G | 7 | `action` | `ACTION.*` enum (lowercase): `submitted` / `approved` / `declined` / `returned` / `resubmitted`. |
+| G | 7 | `action` | `ACTION.*` enum (lowercase). Workflow: `submitted` / `approved` / `declined` / `returned` / `resubmitted`. System (#10 expiry flags, idempotency only — ignored by `getApprovalView`): `expiry_warning` / `expiry_notice` / `expiry_overdue`. |
 | H | 8 | `remark` | Comment / decline reason / return reason. |
 | I | 9 | `timestamp` | Server time. |
 

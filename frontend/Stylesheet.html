@@ -388,6 +388,10 @@
   .badge-declined { background: var(--red-bg);    color: var(--red-text); }
   .badge-returned { background: var(--amber-bg);  color: var(--amber-text); }
   .badge-syncing  { background: var(--purple-bg); color: var(--purple-text); }
+  /* #10 — contract end date lapsed. Red = urgent; rendered NEXT TO the status
+     badge, never instead of it (so a Declined+expired row shows two red pills —
+     acceptable; the labels read differently). */
+  .badge-expired  { background: var(--red-bg);    color: var(--red-text); }
 
 
   /* ─── TABLES ────────────────────────────────────────────── */

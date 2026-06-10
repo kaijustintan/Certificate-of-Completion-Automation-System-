@@ -12,8 +12,11 @@
   ang trigger MINSAN sa Apps Script UI (basa ang registerTrigger() docs below).
 
   TECHNICAL:
-  Installable onEdit trigger entry point. Routes to sheet-specific handlers by
-  tab name; certificate-request changes route further by column (STATUS only).
+  Two trigger kinds live here. (1) An installable onEdit trigger entry point that
+  routes to sheet-specific handlers by tab name (STATUS-column changes only). (2)
+  A daily TIME-BASED trigger (#10) — the system's only scheduled job — that sweeps
+  for lapsing contracts and emails the requestor. Both need a one-time manual
+  registration (see registerTrigger / registerExpiryTrigger).
 
   ────────────────────────────────────────────────────────────
   OUTLINE
@@ -22,6 +25,8 @@
   - handleCertificateRequestChange     STATUS-column watcher; fires emails
   - handleAttachmentChange             new-row detector; calls sync check
   - registerTrigger()                  one-time setup; run once manually
+  - checkContractExpiries()            daily 8am clock handler; expiry reminders (#10)
+  - registerExpiryTrigger()            one-time setup for the daily trigger
 */
 
 
@@ -233,4 +238,123 @@ function registerTrigger() {
     .create();
 
   Logger.log("registerTrigger(): onSheetChange trigger registered successfully.");
+}
+
+
+// ============================================================
+// DAILY EXPIRY SWEEP (#10)
+// The system's only scheduled job. Runs every morning and emails the
+// requestor when a fully-approved COC's contract is about to lapse
+// (T-3 days) or has reached/passed its end date (day-of / overdue).
+// ============================================================
+/*
+  Function Name: checkContractExpiries
+
+  LAYMAN (Tropang Ex):
+  Tuwing umaga (8am), nililibot nito lahat ng fully-approved na request at
+  tinitingnan kung malapit nang mag-expire ang contract. Kung 3 araw na lang,
+  may "Expiring Soon" na email sa requestor. Kung araw na mismo (o lumampas na),
+  may "Expires Today/Expired" na email. Para hindi paulit-ulit, naglalagay ito
+  ng marka sa Activity_Log kada padala — kaya isang beses lang bawat yugto.
+
+  TECHNICAL:
+  Time-based trigger handler (registered by registerExpiryTrigger). One pass over
+  the Requests sheet; only STATUS === APPROVED rows with a non-blank CONTRACT_END
+  are considered. Three stages, each idempotent via its own Activity_Log system
+  action (so a manual/duplicate run never double-sends the same stage):
+    • 1..3 days out + no EXPIRY_WARNING → "Expiring Soon"  + log EXPIRY_WARNING  (range; self-heals)
+    • exactly 0 days + no EXPIRY_NOTICE → "Expires Today"  + log EXPIRY_NOTICE   (best-effort, exact day)
+    • < 0 days       + no EXPIRY_OVERDUE → "Has Expired"   + log EXPIRY_OVERDUE  (range; self-heals)
+  Rationale: the requestor often isn't watching the portal, so the post-expiry
+  "has expired" push is the real awareness channel — and because it's a range
+  (any run after the end date), a skipped day-of run still results in an
+  "expired" email the next run. else-if → at most one email per request per run.
+  Each request is wrapped in try/catch so one bad row never aborts the sweep.
+
+  ⚠️ QUOTA: GmailApp sends count against the daily quota (~100 consumer / ~1500
+  Workspace). At expected COC volume this is comfortably under, but the per-row
+  try/catch + logging make a partial run observable if a quota ceiling is ever hit.
+
+  ⚠️ RENEWAL-BY-EDIT: if a contract end date is later extended on the same row,
+  the existing flags suppress new reminders. By design renewals are NEW requests,
+  so this is acceptable; revisit if in-place renewals become a real workflow.
+
+  PARAMS  : (none) — invoked by the daily trigger.
+  RETURNS : (void) — logs a summary.
+*/
+function checkContractExpiries() {
+  const rows = getDataRows(SHEET_NAMES.REQUESTS);
+  let warned = 0, noticed = 0, overdue = 0;
+
+  rows.forEach(function (row) {
+    try {
+      if (row[CR.STATUS - 1] !== STATUS.APPROVED) return;
+      const rawEnd = row[CR.CONTRACT_END - 1];
+      if (!rawEnd) return;
+
+      const daysUntil = daysUntilContractEnd(rawEnd);
+      if (daysUntil === null) return;
+
+      const requestId = row[CR.REQUEST_ID - 1];
+      const groupId   = row[CR.GROUP - 1];
+      const actions   = getApprovalActions(requestId);
+      const hasWarning = actions.some(function (a) { return a.action === ACTION.EXPIRY_WARNING; });
+      const hasNotice  = actions.some(function (a) { return a.action === ACTION.EXPIRY_NOTICE; });
+      const hasOverdue = actions.some(function (a) { return a.action === ACTION.EXPIRY_OVERDUE; });
+
+      const endStr = Utilities.formatDate(new Date(rawEnd), "Asia/Manila", "yyyy-MM-dd");
+
+      if (daysUntil >= 1 && daysUntil <= 3 && !hasWarning) {
+        sendExpiryReminderToRequestor(requestId, daysUntil);
+        appendAction(requestId, groupId, 0, null, "system", ACTION.EXPIRY_WARNING, "Contract expires " + endStr);
+        warned++;
+      } else if (daysUntil === 0 && !hasNotice) {
+        sendExpiryReminderToRequestor(requestId, daysUntil);
+        appendAction(requestId, groupId, 0, null, "system", ACTION.EXPIRY_NOTICE, "Contract expires today " + endStr);
+        noticed++;
+      } else if (daysUntil < 0 && !hasOverdue) {
+        sendExpiryReminderToRequestor(requestId, daysUntil);
+        appendAction(requestId, groupId, 0, null, "system", ACTION.EXPIRY_OVERDUE, "Contract expired " + endStr);
+        overdue++;
+      }
+    } catch (err) {
+      Logger.log("checkContractExpiries(): row error for " + row[CR.REQUEST_ID - 1] + " — " + err.message);
+    }
+  });
+
+  Logger.log("checkContractExpiries(): done — " + warned + " warning(s), " + noticed + " day-of, " + overdue + " overdue.");
+}
+
+// ============================================================
+// Run this function ONCE manually (per Google account) to register
+// the daily expiry sweep. Mirrors registerTrigger().
+// ⚠️ Triggers are per-script-PER-USER: when the project is migrated to
+// the Megaworld account, someone must run this there too.
+// ============================================================
+/*
+  Function Name: registerExpiryTrigger
+  LAYMAN    : I-run ITO ISANG BESES para mag-umpisa ang araw-araw na 8am na
+              expiry check. Nagde-dedup din: tinatanggal ang lumang trigger bago
+              magrehistro ng bago.
+  TECHNICAL : Removes any existing checkContractExpiries triggers, then creates a
+              daily time-based trigger at 8am (project timezone is Asia/Manila per
+              appsscript.json).
+  PARAMS    : (none) — run manually once in the Apps Script editor, per account.
+  RETURNS   : (void) — logs confirmation.
+*/
+function registerExpiryTrigger() {
+  const triggers = ScriptApp.getProjectTriggers();
+  triggers.forEach(function (trigger) {
+    if (trigger.getHandlerFunction() === "checkContractExpiries") {
+      ScriptApp.deleteTrigger(trigger);
+    }
+  });
+
+  ScriptApp.newTrigger("checkContractExpiries")
+    .timeBased()
+    .atHour(8)
+    .everyDays(1)
+    .create();
+
+  Logger.log("registerExpiryTrigger(): daily checkContractExpiries trigger registered for ~8am Manila.");
 }

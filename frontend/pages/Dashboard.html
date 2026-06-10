@@ -24,9 +24,9 @@
     - dashboardFilterChange(el)      status dropdown change
     - dashboardSortChange(el)        sort dropdown change
     - applyDashboardView()           filter + sort + re-render #dashboard-list
-    - computeDashboardTabCounts()    {all,pending,approved,returned,declined} counts
+    - computeDashboardTabCounts()    {all,pending,approved,returned,declined,expired} counts
     - getDashboardFilter(status)     status string → filter bucket key
-    - computeRequestorStats()        {total,pending,approved,declined} for stat grid
+    - computeRequestorStats()        {total,pending,approved,declined,expired} for stat grid
     - renderRequestorTable()         <table> HTML for request rows
 -->
 
@@ -89,6 +89,10 @@ async function renderDashboardPage() {
         <div class="stat-number red">${stats.declined}</div>
         <div class="stat-label">Declined</div>
       </div>
+      <div class="stat-card clickable" data-filter="expired" onclick="dashboardStatClick('expired')">
+        <div class="stat-number red">${stats.expired}</div>
+        <div class="stat-label">Expired</div>
+      </div>
     </div>
 
     <div class="card">
@@ -122,6 +126,7 @@ function renderDashboardControls(requests) {
     { value: 'approved', label: 'Approved' },
     { value: 'returned', label: 'Returned' },
     { value: 'declined', label: 'Declined' },
+    { value: 'expired',  label: 'Expired'  }, // #10 — contract end date lapsed (any status)
   ];
   const sortOptions = [
     { value: 'newest',  label: 'Most Recent'  },
@@ -216,9 +221,12 @@ function applyDashboardView() {
   syncDashboardStatCards();
   const filtered = _dashboardCurrentFilter === 'all'
     ? _dashboardRequests
-    : _dashboardRequests.filter(function (r) {
-        return getDashboardFilter(r.status) === _dashboardCurrentFilter;
-      });
+    : _dashboardCurrentFilter === 'expired'
+      // #10 — expired is a cross-cutting flag, not a status bucket.
+      ? _dashboardRequests.filter(function (r) { return r.isExpired; })
+      : _dashboardRequests.filter(function (r) {
+          return getDashboardFilter(r.status) === _dashboardCurrentFilter;
+        });
   const sorted = sortRequests(filtered, _dashboardCurrentSort);
   const listEl = document.getElementById('dashboard-list');
   if (!listEl) return;
@@ -230,6 +238,7 @@ function applyDashboardView() {
       approved: 'No approved requests',
       returned: 'No returned requests',
       declined: 'No declined requests',
+      expired:  'No expired contracts',
     };
     listEl.innerHTML = renderEmptyState({
       title:   emptyTitles[_dashboardCurrentFilter] || 'No requests',
@@ -251,13 +260,18 @@ function applyDashboardView() {
 /*
   Function Name: computeDashboardTabCounts
   LAYMAN    : Bilang ng requests sa bawat bucket para ipakita sa dropdown options.
-  TECHNICAL : Returns {all, pending, approved, returned, declined} counts using getDashboardFilter.
+              Ang "expired" ay hiwalay na bilang — cross-cutting sa status (isang
+              request ay pwedeng Pending AT expired sabay).
+  TECHNICAL : Returns {all, pending, approved, returned, declined, expired} counts.
+              Status buckets via getDashboardFilter; expired via the server-computed
+              r.isExpired flag (#10) — orthogonal to status, so counted separately.
 */
 function computeDashboardTabCounts(requests) {
-  const counts = { all: 0, pending: 0, approved: 0, returned: 0, declined: 0 };
+  const counts = { all: 0, pending: 0, approved: 0, returned: 0, declined: 0, expired: 0 };
   for (const r of requests) {
     counts.all++;
     counts[getDashboardFilter(r.status)]++;
+    if (r.isExpired) counts.expired++;
   }
   return counts;
 }
@@ -283,17 +297,21 @@ function getDashboardFilter(status) {
 
 /*
   Function Name: computeRequestorStats
-  LAYMAN    : Bilang para sa stat grid — total, in-progress, approved, declined.
-              NOTE: "returned" ay hindi hiwalay na stat dito (nabibilang sa pending).
-  TECHNICAL : Counts total, approved (Fully Approved), declined, and everything else as pending.
+  LAYMAN    : Bilang para sa stat grid — total, in-progress, approved, declined,
+              expired. NOTE: "returned" ay hindi hiwalay na stat dito (kasama sa
+              pending). Ang "expired" ay cross-cutting — kahit anong status, bibilangin
+              kung lapsed na ang contract (#10).
+  TECHNICAL : Counts total, approved (Fully Approved), declined, everything-else as
+              pending, plus an orthogonal expired count from the server isExpired flag.
 */
 function computeRequestorStats(requests) {
-  const stats = { total: 0, pending: 0, approved: 0, declined: 0 };
+  const stats = { total: 0, pending: 0, approved: 0, declined: 0, expired: 0 };
   for (const r of requests) {
     stats.total++;
     if (r.status === 'Fully Approved')      stats.approved++;
     else if (r.status === 'Declined')       stats.declined++;
     else                                    stats.pending++;
+    if (r.isExpired)                        stats.expired++;
   }
   return stats;
 }
@@ -302,7 +320,11 @@ function computeRequestorStats(requests) {
   Function Name: renderRequestorTable
   LAYMAN    : Gumawa ng HTML table na may lahat ng requests na ipinasa.
               Bawat row ay clickable — mapupunta sa request detail page.
-  TECHNICAL : Returns a .data-table HTML string; each <tr> has onclick navigateTo('request',{id}).
+              Kung lapsed na ang contract, may maliit na gray na "Expired" chip
+              sa tabi ng status badge (#10).
+  TECHNICAL : Returns a .data-table HTML string; each <tr> has onclick
+              navigateTo('request',{id}). Expired chip driven by the
+              server-computed r.isExpired flag — no client date parsing.
 */
 function renderRequestorTable(requests) {
   const rows = requests.map(function (r) {
@@ -312,7 +334,9 @@ function renderRequestorTable(requests) {
         '<td>' + escapeHtml(r.controlNumber) + '</td>' +
         '<td>' + escapeHtml(r.projectTitle)  + '</td>' +
         '<td>' + escapeHtml(r.group)         + '</td>' +
-        '<td>' + renderStatusBadge(r.status) + '</td>' +
+        '<td>' + renderStatusBadge(r.status) +
+          (r.isExpired ? ' <span class="badge badge-expired" title="Contract end date has passed">Expired</span>' : '') +
+        '</td>' +
         '<td>' + escapeHtml(r.dateFiled)     + '</td>' +
       '</tr>';
   }).join('');
