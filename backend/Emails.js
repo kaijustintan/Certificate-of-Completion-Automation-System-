@@ -33,7 +33,7 @@
     - getRequestData()       flat {rowData, rowNum, group, approvers} for email use
 
   ────────────────────────────────────────────────────────────
-  EMAIL FUNCTIONS (12)
+  EMAIL FUNCTIONS (event-fired, via handle* in WebApp.js)
   #   Function                          To              Fires when
   1   sendApprovalRequest               next approver   submit + resubmit (SYNCING→PENDING)
   2   sendDeclineToApprover             decliner        declined
@@ -47,6 +47,10 @@
   10  sendReturnedChainNotification     prior approvers any return
   11  sendResubmitConfirmToRequestor    requestor       resubmit
   12  sendResubmitApprovalRequest       approver 1      resubmit
+
+  EMAIL FUNCTIONS (trigger-fired, via the daily sweeps in Triggers.js)
+  13  sendExpiryReminderToRequestor     requestor       daily expiry sweep (#10)
+  14  sendPendingApprovalReminder       current approver daily approver-reminder sweep (digest)
 */
 
 
@@ -538,6 +542,88 @@ Open this request: ${getPortalUrl(requestId, "request")}`;
 
   GmailApp.sendEmail(requestor, subject, body);
   Logger.log(`sendExpiryReminderToRequestor(): ${label} reminder sent to ${requestor} for ${controlNumber} (daysUntil=${daysUntil}).`);
+}
+
+
+// ============================================================
+// EMAIL 14 — Daily nudge to a pending approver (digest)
+// Fired by checkPendingApprovals() in Triggers.js, once per approver
+// per daily sweep. NOT an event email — there is no handle* caller.
+// ============================================================
+/*
+  Function Name: sendPendingApprovalReminder
+
+  LAYMAN (Tropang Ex):
+  Araw-araw na paalala sa isang approver: "May hinihintay pa pala sa'yo." Imbes na
+  isa-isang email kada request, pinagsama-sama lahat ng nakabinbin niya sa ISANG
+  email. Pero kompleto pa rin ang detalye kada request — title, ID, requestor, group,
+  supporting documents, at approval progress — kapareho ng normal na "needs your
+  approval" email, plus link na diretso sa review page. Para hindi na malunod sa
+  inbox, ito yung pang-gising kada umaga hangga't may pending pa.
+
+  TECHNICAL:
+  Digest sender. Receives the approver email + the list of pending request rows
+  already bucketed for them by checkPendingApprovals (so this function does no
+  filtering/auth — that's the caller's job). For EACH request it renders the same
+  full detail block as sendApprovalRequest — buildInfoBlock + buildAttachmentList +
+  buildApprovalLog(rowData, getApprovers(group)) + getPortalUrl(id, "review") — and
+  joins multiple requests with a divider. Reuses emailSubject so it inherits the
+  EMAIL_DEV_TAG audience prefix. Singular/plural wording adapts to count.
+
+  PARAMS:
+  - approverEmail — recipient (the current approver). No-op if blank.
+  - requestRows  — array of 0-indexed Requests rows (CR.* indexing). No-op if empty.
+
+  RETURNS:
+  (void). No-op when approverEmail is falsy or requestRows is empty.
+
+  STEPS
+    Step 1 — Render a full detail block per request
+      Layman    : Bawat pending → kompletong detalye (parang normal approval email).
+      Technical : map over requestRows; buildInfoBlock + buildAttachmentList +
+                  buildApprovalLog(rowData, getApprovers(group)) + review deep-link.
+                  Join blocks with a divider when there's more than one.
+    Step 2 — Subject + intro, then send
+      Layman    : Bilangin ilan, gawing pang-isahan/maramihan, ipadala.
+      Technical : emailSubject("Reminder", "N Pending Approval(s)", "APPROVER");
+                  GmailApp.sendEmail; log the count.
+
+  EXAMPLE
+    sendPendingApprovalReminder("boss@corp.com", [rowA, rowB])
+    → "[COC Request]: Reminder | 2 Pending Approvals", two full detail blocks, divided.
+    sendPendingApprovalReminder("boss@corp.com", [rowA])
+    → "…| 1 Pending Approval" (singular wording, one detail block).
+*/
+function sendPendingApprovalReminder(approverEmail, requestRows) {
+  if (!approverEmail || !requestRows || !requestRows.length) return;
+
+  const blocks = requestRows.map(function (row) {
+    const requestId = row[CR.REQUEST_ID - 1];
+    const approvers = getApprovers(row[CR.GROUP - 1]);
+    return `${buildInfoBlock(row)}
+
+Supporting Documents:
+${buildAttachmentList(requestId)}
+
+Approval Progress:
+${buildApprovalLog(row, approvers)}
+
+Open this request: ${getPortalUrl(requestId, "review")}`;
+  }).join("\n\n————————————————————\n\n");
+
+  const n       = requestRows.length;
+  const subject = emailSubject("Reminder", n + " Pending Approval" + (n > 1 ? "s" : ""), "APPROVER");
+
+  const body = `Good day!
+
+This is a daily reminder that the following e-certificate request${n > 1 ? "s are" : " is"} awaiting your review and action:
+
+${blocks}
+
+Please review and act on ${n > 1 ? "each" : "the"} request in the portal. Thank you!`;
+
+  GmailApp.sendEmail(approverEmail, subject, body);
+  Logger.log("sendPendingApprovalReminder(): " + n + " request(s) -> " + approverEmail);
 }
 
 

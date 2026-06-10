@@ -14,19 +14,23 @@
   TECHNICAL:
   Two trigger kinds live here. (1) An installable onEdit trigger entry point that
   routes to sheet-specific handlers by tab name (STATUS-column changes only). (2)
-  A daily TIME-BASED trigger (#10) — the system's only scheduled job — that sweeps
-  for lapsing contracts and emails the requestor. Both need a one-time manual
-  registration (see registerTrigger / registerExpiryTrigger).
+  TWO daily TIME-BASED triggers (both ~8am Manila): checkContractExpiries (#10)
+  emails the requestor about lapsing contracts; checkPendingApprovals emails the
+  current approver a digest of requests still awaiting their action. All three
+  need a one-time manual registration (registerTrigger / registerExpiryTrigger /
+  registerApproverReminderTrigger).
 
   ────────────────────────────────────────────────────────────
   OUTLINE
   ────────────────────────────────────────────────────────────
-  - onSheetChange(e)                   entry point; routes by sheet name
-  - handleCertificateRequestChange     STATUS-column watcher; fires emails
-  - handleAttachmentChange             new-row detector; calls sync check
-  - registerTrigger()                  one-time setup; run once manually
-  - checkContractExpiries()            daily 8am clock handler; expiry reminders (#10)
-  - registerExpiryTrigger()            one-time setup for the daily trigger
+  - onSheetChange(e)                       entry point; routes by sheet name
+  - handleCertificateRequestChange         STATUS-column watcher; fires emails
+  - handleAttachmentChange                 new-row detector; calls sync check
+  - registerTrigger()                      one-time setup; run once manually
+  - checkContractExpiries()                daily 8am clock handler; expiry reminders (#10)
+  - registerExpiryTrigger()                one-time setup for the expiry trigger
+  - checkPendingApprovals()                daily 8am clock handler; approver nudge digest
+  - registerApproverReminderTrigger()      one-time setup for the approver-reminder trigger
 */
 
 
@@ -357,4 +361,121 @@ function registerExpiryTrigger() {
     .create();
 
   Logger.log("registerExpiryTrigger(): daily checkContractExpiries trigger registered for ~8am Manila.");
+}
+
+
+// ============================================================
+// DAILY APPROVER-REMINDER SWEEP
+// Second scheduled job. Runs every morning and nudges whoever is
+// currently holding up a pending request — one digest email per
+// approver, listing all requests awaiting their action.
+// ============================================================
+/*
+  Function Name: checkPendingApprovals
+
+  LAYMAN (Tropang Ex):
+  Tuwing umaga (8am), nililibot nito lahat ng request na naka-PENDING pa. Para sa
+  bawat isa, tinitingnan kung kaninong pirma ang hinihintay ngayon (current approver),
+  tapos pinagsasama-sama lahat ng nakabinbin para sa iisang approver sa ISANG email.
+  Ganito kasi minsan natatabunan yung unang email — kaya araw-araw na paalala hangga't
+  pending pa. Walang marka sa Activity_Log: ang araw-araw na schedule na mismo ang
+  "idempotency" — isang takbo kada araw, kaya isang padala kada araw.
+
+  TECHNICAL:
+  Time-based trigger handler (registered by registerApproverReminderTrigger). One pass
+  over the Requests sheet; only the three PENDING_* statuses are considered. For each,
+  getCurrentApprover(step, group) resolves the responsible approver email; rows are
+  bucketed by normalizeEmail(approver) so a single approver gets ONE digest covering
+  all their pending requests (regardless of step/group). Then sendPendingApprovalReminder
+  fires once per bucket.
+
+  Unlike checkContractExpiries this writes NOTHING to Activity_Log and uses NO system
+  ACTION flag — a daily nudge is MEANT to repeat, so the once-a-day trigger schedule is
+  the idempotency. Logging each reminder would append one row per pending request per
+  day and bloat the append-only timeline. Each row + each send is wrapped in try/catch
+  so one bad row/approver never aborts the sweep.
+
+  ⚠️ QUOTA: GmailApp sends count against the daily quota (~100 consumer / ~1500
+  Workspace). Digest-per-approver (not per-request) keeps the send count low.
+
+  PARAMS  : (none) — invoked by the daily trigger.
+  RETURNS : (void) — logs a summary.
+
+  STEPS
+    Step 1 — Sweep + bucket
+      Layman    : Lakad sa lahat ng row; kung pending, alamin kanino, isalansan.
+      Technical : Filter PENDING_*; getCurrentApprover→normalizeEmail key; push rowData.
+    Step 2 — Send one digest per approver
+      Layman    : Kada approver, isang email na listahan ng lahat niyang pending.
+      Technical : Iterate buckets; sendPendingApprovalReminder(email, rows); count sends.
+
+  EXAMPLE
+    (trigger fires at 8am; approverA holds 2 pending, approverB holds 1)
+    → 2 emails sent; log "reminded 2 approver(s)."
+    → no pending rows: 0 emails; log "reminded 0 approver(s)."
+*/
+function checkPendingApprovals() {
+  const rows    = getDataRows(SHEET_NAMES.REQUESTS);
+  const pending = [STATUS.PENDING_1, STATUS.PENDING_2, STATUS.PENDING_3];
+  const byApprover = {};   // normalized email -> [rowData, ...]
+
+  rows.forEach(function (row) {
+    try {
+      if (pending.indexOf(row[CR.STATUS - 1]) === -1) return;
+      const approver = getCurrentApprover(row[CR.STEP - 1], row[CR.GROUP - 1]);
+      if (!approver) return;                       // unconfigured group / step 0 — skip
+      const key = normalizeEmail(approver);
+      if (!key) return;                            // guard against a blank approver cell
+      (byApprover[key] = byApprover[key] || []).push(row);
+    } catch (err) {
+      Logger.log("checkPendingApprovals(): row error for " + row[CR.REQUEST_ID - 1] + " — " + err.message);
+    }
+  });
+
+  let sent = 0;
+  Object.keys(byApprover).forEach(function (email) {
+    try {
+      sendPendingApprovalReminder(email, byApprover[email]);
+      sent++;
+    } catch (err) {
+      Logger.log("checkPendingApprovals(): email error for " + email + " — " + err.message);
+    }
+  });
+
+  Logger.log("checkPendingApprovals(): done — reminded " + sent + " approver(s).");
+}
+
+// ============================================================
+// Run this function ONCE manually (per Google account) to register
+// the daily approver-reminder sweep. Mirrors registerExpiryTrigger().
+// ⚠️ Triggers are per-script-PER-USER: when the project is migrated to
+// the Megaworld account, someone must run this there too.
+// ============================================================
+/*
+  Function Name: registerApproverReminderTrigger
+  LAYMAN    : I-run ITO ISANG BESES para mag-umpisa ang araw-araw na 8am na
+              paalala sa mga approver. Nagde-dedup din: tinatanggal ang lumang
+              trigger bago magrehistro ng bago.
+  TECHNICAL : Removes any existing checkPendingApprovals triggers, then creates a
+              daily time-based trigger at 8am (project timezone is Asia/Manila per
+              appsscript.json). Independent of registerExpiryTrigger — two separate
+              daily jobs, both must be registered once per account.
+  PARAMS    : (none) — run manually once in the Apps Script editor, per account.
+  RETURNS   : (void) — logs confirmation.
+*/
+function registerApproverReminderTrigger() {
+  const triggers = ScriptApp.getProjectTriggers();
+  triggers.forEach(function (trigger) {
+    if (trigger.getHandlerFunction() === "checkPendingApprovals") {
+      ScriptApp.deleteTrigger(trigger);
+    }
+  });
+
+  ScriptApp.newTrigger("checkPendingApprovals")
+    .timeBased()
+    .atHour(8)
+    .everyDays(1)
+    .create();
+
+  Logger.log("registerApproverReminderTrigger(): daily checkPendingApprovals trigger registered for ~8am Manila.");
 }
