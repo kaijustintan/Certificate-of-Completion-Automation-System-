@@ -39,6 +39,13 @@
     - getCurrentApprover(step, groupId)  email at a given sequence
     - getGroupById / getGroupNameById / getGroupIdByName
     - getApproverGroups()                [{id, name}] for the form dropdown
+  GROUPS / APPROVERS — ADMIN (read incl. inactive + write primitives)
+    - getAllGroups()                     all groups incl. inactive
+    - getGroupChain(groupId)             active chain rows, full fields
+    - createGroup(name)                  append a Groups row
+    - updateGroupFields(groupId, fields) in-place name/active update
+    - replaceGroupChain(groupId, slots)  in-place update (append on grow, deactivate on shrink)
+    - appendAdminLog(admin, action, gid, details)  audit an admin action
   ROLE
     - detectRole(email) / isAdmin(email)
   APPROVAL ACTIONS (read)
@@ -64,6 +71,10 @@ function generateGroupApproverId() {
 /* generateCocId — unique COC_PDFs key (e.g. "COC-1A2B3C4D"). */
 function generateCocId() {
   return "COC-" + Utilities.getUuid().replace(/-/g, "").substring(0, 8).toUpperCase();
+}
+/* generateAdminLogId — unique Admins_Log key (e.g. "ADL-1A2B3C4D"). */
+function generateAdminLogId() {
+  return "ADL-" + Utilities.getUuid().replace(/-/g, "").substring(0, 8).toUpperCase();
 }
 /*
   generateGroupId — next sequential group id "G###".
@@ -161,16 +172,254 @@ function getGroupIdByName(name) {
   return m ? m[GRP.GROUP_ID - 1] : "";
 }
 /*
-  getApproverGroups — active groups for the new-request dropdown.
-  RETURNS : [{ id, name }] (active groups only). NOTE: shape changed from a
-            string[] to objects — the frontend dropdown is updated to match.
+  getApproverGroups — selectable groups for the new-request dropdown.
+  LAYMAN    : Mga group na PWEDENG piliin ng requestor — active AT may kahit
+              isang approver. Kung walang approver pa ang group, hindi ito
+              lalabas (kung hindi, masa-submit sa wala, ma-stuck habambuhay).
+              Makikita pa rin ito ng admin (naka-flag na "no chain").
+  TECHNICAL : Filters GRP.ACTIVE AND ≥1 active Group_Approvers row. The
+              has-approver set is built in one pass over GROUP_APPROVERS.
+  RETURNS   : [{ id, name }] (selectable groups only). NOTE: shape is objects,
+              not string[] — the frontend dropdown matches.
 */
 function getApproverGroups() {
+  const hasApprover = {};
+  getDataRows(SHEET_NAMES.GROUP_APPROVERS).forEach(function (r) {
+    if (String(r[GAP.ACTIVE - 1]).toUpperCase() !== "FALSE" && r[GAP.GROUP_ID - 1]) {
+      hasApprover[String(r[GAP.GROUP_ID - 1])] = true;
+    }
+  });
   return getDataRows(SHEET_NAMES.GROUPS)
     .filter(function (r) {
-      return r[GRP.GROUP_ID - 1] && String(r[GRP.ACTIVE - 1]).toUpperCase() !== "FALSE";
+      return r[GRP.GROUP_ID - 1] &&
+             String(r[GRP.ACTIVE - 1]).toUpperCase() !== "FALSE" &&
+             hasApprover[String(r[GRP.GROUP_ID - 1])];
     })
     .map(function (r) { return { id: r[GRP.GROUP_ID - 1], name: r[GRP.GROUP_NAME - 1] }; });
+}
+
+
+// ============================================================
+// GROUPS / APPROVERS — ADMIN
+// Read-incl.-inactive + write primitives for the admin page.
+// MECHANICAL ONLY — validation/policy lives in Admin.js callables.
+// ============================================================
+/*
+  getAllGroups — every Groups row, INCLUDING inactive.
+  LAYMAN    : Lahat ng groups, pati yung naka-deactivate — para makita at
+              ma-manage ng admin. (Ang getApproverGroups ay active lang,
+              para sa new-request dropdown — huwag itong galawin.)
+  TECHNICAL : Same projection as getApproverGroups plus active/createdAt;
+              no ACTIVE filter.
+  RETURNS   : [{ id, name, active(bool), createdAt(Date|"") }].
+*/
+function getAllGroups() {
+  return getDataRows(SHEET_NAMES.GROUPS)
+    .filter(function (r) { return r[GRP.GROUP_ID - 1]; })
+    .map(function (r) {
+      return {
+        id:        r[GRP.GROUP_ID - 1],
+        name:      r[GRP.GROUP_NAME - 1] || "",
+        active:    String(r[GRP.ACTIVE - 1]).toUpperCase() !== "FALSE",
+        createdAt: r[GRP.CREATED_AT - 1] || "",
+      };
+    });
+}
+
+/*
+  getGroupChain — active chain rows for a group, ALL fields.
+  LAYMAN    : Yung kasalukuyang buhay na approver chain ng isang group, kasama
+              ang row id at active flag — para sa chain editor ng admin.
+  TECHNICAL : Superset of getGroupApprovers' 3-field shape (adds id + active).
+              Active rows only — deactivated rows are audit history, not the
+              editable chain.
+  RETURNS   : [{ id, sequence, email, designation, active }] sorted by sequence.
+*/
+function getGroupChain(groupId) {
+  const target = String(groupId);
+  return getDataRows(SHEET_NAMES.GROUP_APPROVERS)
+    .filter(function (r) {
+      return String(r[GAP.GROUP_ID - 1]) === target &&
+             String(r[GAP.ACTIVE - 1]).toUpperCase() !== "FALSE";
+    })
+    .map(function (r) {
+      return {
+        id:          r[GAP.ID - 1],
+        sequence:    parseInt(r[GAP.SEQUENCE - 1], 10) || 0,
+        email:       r[GAP.APPROVER_EMAIL - 1] || "",
+        designation: r[GAP.DESIGNATION - 1] || "",
+        active:      true,
+      };
+    })
+    .sort(function (a, b) { return a.sequence - b.sequence; });
+}
+
+/*
+  createGroup — append a new Groups row.
+  LAYMAN    : Magdagdag ng bagong group sa registry. Walang validation dito —
+              ang Admin.js ang nagche-check ng pangalan bago tumawag.
+  TECHNICAL : generateGroupId() surrogate PK; ACTIVE defaults TRUE.
+  PARAMS    : name — display name (caller has already validated/trimmed).
+  RETURNS   : { id, name } of the new group.
+*/
+function createGroup(name) {
+  const sheet = getSheet(SHEET_NAMES.GROUPS);
+  const id    = generateGroupId();
+  const row   = new Array(4).fill("");
+  row[GRP.GROUP_ID - 1]   = id;
+  row[GRP.GROUP_NAME - 1] = name;
+  row[GRP.ACTIVE - 1]     = "TRUE";
+  row[GRP.CREATED_AT - 1] = new Date();
+  sheet.appendRow(row);
+  return { id: id, name: name };
+}
+
+/*
+  updateGroupFields — in-place update of a Groups row (name and/or active).
+  LAYMAN    : Palitan ang pangalan o i-on/off ang group. Safe ang rename dahil
+              group_id ang naka-FK sa requests, hindi ang pangalan.
+  TECHNICAL : Only writes the fields provided (setRequestCache style). active
+              is stored as "TRUE"/"FALSE" strings to match the seeded sheet.
+  PARAMS    : groupId; fields — { name?, active?(bool) }.
+  RETURNS   : true if the row was found and updated, false otherwise.
+*/
+function updateGroupFields(groupId, fields) {
+  const sheet  = getSheet(SHEET_NAMES.GROUPS);
+  const rows   = getDataRows(SHEET_NAMES.GROUPS);
+  const target = String(groupId);
+  for (let i = 0; i < rows.length; i++) {
+    if (String(rows[i][GRP.GROUP_ID - 1]) === target) {
+      const rowNum = i + 2; // +1 header, +1 1-based
+      if (fields.name !== undefined)   sheet.getRange(rowNum, GRP.GROUP_NAME).setValue(fields.name);
+      if (fields.active !== undefined) sheet.getRange(rowNum, GRP.ACTIVE).setValue(fields.active ? "TRUE" : "FALSE");
+      return true;
+    }
+  }
+  return false;
+}
+
+/*
+  Function Name: replaceGroupChain
+
+  LAYMAN (Tropang Ex):
+  I-update ang approver chain ng isang group nang IN-PLACE: kung pumalit lang ang
+  email o nagbago ang pagkakasunod (reorder), babaguhin lang ang VALUES ng mga
+  dati nang rows — WALANG bagong row, WALANG tombstone. Magdadagdag lang ng row
+  kapag may DINAGDAG na approver; magmamarka lang ng inactive kapag may TINANGGAL.
+  Dating buong-palit ito (bagong rows + inactive na luma), pero dahil may
+  Admins_Log na tayo na may diff + timestamp, redundant na ang tombstone rows —
+  kaya in-place na (mas malinis ang sheet).
+
+  TECHNICAL:
+  Position-matched in-place update under LockService.getScriptLock(). The k-th
+  existing ACTIVE row (in sequence order) is reused for the k-th new slot — one
+  batched setValues over the contiguous SEQUENCE/EMAIL/DESIGNATION cols (3-4-5),
+  keeping its GAP.ID stable. Grow → append the extra rows; shrink → set the
+  leftover old rows ACTIVE=FALSE (rare; the only remaining tombstone case).
+  Server assigns sequences 1..N from array order — client numbers never trusted.
+  No row deletion → existing row indices stay valid through the whole pass.
+
+  PARAMS:
+  - groupId — the group whose chain is updated.
+  - slots — [{ email, designation }] in desired order (caller has validated).
+
+  RETURNS:
+  (void). Throws if the script lock cannot be acquired within 10s.
+
+  STEPS
+    Step 1 — Lock + collect existing ACTIVE rows (sequence order)
+      Layman    : Pila muna; tipunin ang kasalukuyang approver rows ng group.
+      Technical : waitLock(10000); scan Group_Approvers for this group's active
+                  rows + their sheet row numbers; sort by sequence.
+    Step 2 — Reuse rows positionally / append the surplus
+      Layman    : Bawat bagong slot, gamitin ang dating row sa parehong pwesto
+                  (palitan lang ang seq/email/designation). Kung kulang, magdagdag.
+      Technical : For k<existing: setValues([[k+1,email,desig]]) on cols 3-5;
+                  for k≥existing: collect a fresh 6-col row to append in one batch.
+    Step 3 — Deactivate leftover rows (shrink only)
+      Layman    : Kung umikli ang chain, markahan FALSE ang sobrang lumang rows.
+      Technical : setValue(GAP.ACTIVE,"FALSE") for k = n .. existing-1.
+    Step 4 — Release the lock (finally)
+
+  EXAMPLE
+    // reorder [A(1),B(2)] → [B(1),A(2)]
+    replaceGroupChain("G001", [{email:"b@x.com"}, {email:"a@x.com"}])
+    → SAME two rows, emails swapped; no new rows, no inactive rows.
+    // add C
+    replaceGroupChain("G001", [{email:"a@x.com"},{email:"b@x.com"},{email:"c@x.com"}])
+    → rows 1–2 unchanged; ONE new row seq 3 (C).
+*/
+function replaceGroupChain(groupId, slots) {
+  const lock = LockService.getScriptLock();
+  lock.waitLock(10000);
+  try {
+    const sheet  = getSheet(SHEET_NAMES.GROUP_APPROVERS);
+    const data   = getDataRows(SHEET_NAMES.GROUP_APPROVERS);
+    const target = String(groupId);
+
+    // Existing ACTIVE rows for this group, with sheet row numbers, in sequence order.
+    const activeRows = [];
+    data.forEach(function (r, i) {
+      if (String(r[GAP.GROUP_ID - 1]) === target &&
+          String(r[GAP.ACTIVE - 1]).toUpperCase() !== "FALSE") {
+        activeRows.push({ rowNum: i + 2, sequence: parseInt(r[GAP.SEQUENCE - 1], 10) || 0 });
+      }
+    });
+    activeRows.sort(function (a, b) { return a.sequence - b.sequence; });
+
+    const n = slots.length;
+    const appends = [];
+    for (let k = 0; k < n; k++) {
+      if (k < activeRows.length) {
+        // Reuse the existing row at position k — overwrite SEQUENCE/EMAIL/
+        // DESIGNATION (contiguous cols 3-4-5) in place. ID + ACTIVE untouched.
+        sheet.getRange(activeRows[k].rowNum, GAP.SEQUENCE, 1, 3)
+             .setValues([[k + 1, slots[k].email, slots[k].designation || ""]]);
+      } else {
+        const row = new Array(6).fill("");
+        row[GAP.ID - 1]             = generateGroupApproverId();
+        row[GAP.GROUP_ID - 1]       = groupId;
+        row[GAP.SEQUENCE - 1]       = k + 1;
+        row[GAP.APPROVER_EMAIL - 1] = slots[k].email;
+        row[GAP.DESIGNATION - 1]    = slots[k].designation || "";
+        row[GAP.ACTIVE - 1]         = "TRUE";
+        appends.push(row);
+      }
+    }
+
+    // Shrink: deactivate leftover old rows beyond the new length.
+    for (let k = n; k < activeRows.length; k++) {
+      sheet.getRange(activeRows[k].rowNum, GAP.ACTIVE).setValue("FALSE");
+    }
+
+    if (appends.length) {
+      sheet.getRange(sheet.getLastRow() + 1, 1, appends.length, 6).setValues(appends);
+    }
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+/*
+  appendAdminLog — append one row to the Admins_Log audit timeline (append-only).
+  LAYMAN    : Itala ang ginawa ng admin: sino, ano, aling group, ano ang nabago,
+              kailan. Hindi binubura. Hiwalay sa Activity_Log (iba ang klase).
+  TECHNICAL : Mechanical writer (mirror of appendAction). Never updates/deletes.
+              No-op-safe: blank details allowed. Called from Admin.js mutations.
+  PARAMS    : adminEmail; action (ADMIN_ACTION.*); targetGroupId; details (string).
+  RETURNS   : (void).
+*/
+function appendAdminLog(adminEmail, action, targetGroupId, details) {
+  const sheet = getSheet(SHEET_NAMES.ADMINS_LOG);
+  if (!sheet) return; // tab not created yet — never break the mutation over audit
+  const row = new Array(6).fill("");
+  row[ADL.LOG_ID - 1]       = generateAdminLogId();
+  row[ADL.ADMIN_EMAIL - 1]  = adminEmail || "";
+  row[ADL.ACTION - 1]       = action || "";
+  row[ADL.TARGET_GROUP - 1] = targetGroupId || "";
+  row[ADL.DETAILS - 1]      = details || "";
+  row[ADL.TIMESTAMP - 1]    = new Date();
+  sheet.appendRow(row);
 }
 
 

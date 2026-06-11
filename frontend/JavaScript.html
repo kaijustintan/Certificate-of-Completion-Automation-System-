@@ -79,7 +79,7 @@
               should READ but not write state directly — go through navigateTo.
 */
 const state = {
-  user:            null,   // { email, role } once getCurrentUser() resolves
+  user:            null,   // { email, role, isAdmin } once getCurrentUser() resolves
   currentPage:     null,   // string — last page navigated to
   params:          {},     // route params, e.g. { id: 'REQ-123' }
   approverGroups:  null,   // cached list of group names for the new-request form
@@ -453,6 +453,7 @@ async function navigateTo(page, params) {
       case 'request':           html = await renderRequestDetailPage(params);     break;
       case 'approverDashboard': html = await renderApproverDashboardPage(params); break;
       case 'review':            html = await renderReviewDetailPage(params);      break;
+      case 'admin':             html = await renderAdminPage(params);             break;
       default:
         html = renderEmptyState({
           title:   'Page not found',
@@ -514,7 +515,8 @@ function onHashChange() {
   Function Name: refreshNavbar
   LAYMAN    : Lagyan ng tamang laman ang sidebar: email ng user, initial
               letter ng avatar, at mga nav links base sa role (approver →
-              My Approvals + My Requests; requestor → My Requests only).
+              My Approvals + My Requests; requestor → My Requests only;
+              admin → dagdag na "Admin" link sa dulo, hindi kapalit ng iba).
   TECHNICAL : Writes display name / initial to #navbar-user-name / #navbar-avatar;
               rebuilds #navbar-links innerHTML; calls updateNavActiveLink().
               Depends on state.user being set (bootstrap does this first).
@@ -540,6 +542,10 @@ function refreshNavbar() {
       html += '<span class="navbar-link" data-page="dashboard" onclick="navigateTo(\'dashboard\')">My Requests</span>';
     } else {
       html = '<span class="navbar-link" data-page="dashboard" onclick="navigateTo(\'dashboard\')">My Requests</span>';
+    }
+    // Additive admin flag — shown alongside the role links, never instead of them.
+    if (state.user.isAdmin) {
+      html += '<span class="navbar-link" data-page="admin" onclick="navigateTo(\'admin\')">Admin</span>';
     }
     linksEl.innerHTML = html;
   }

@@ -56,6 +56,7 @@ const SHEET_NAMES = {
   GROUP_APPROVERS:     "Group_Approvers",
   REQUEST_ATTACHMENTS: "Request_Attachments",
   ADMINS:              "Admins",
+  ADMINS_LOG:          "Admins_Log",          // append-only audit of admin group/chain actions
   COC_PDFS:            "COC_PDFs",            // one row per generated certificate PDF
 };
 
@@ -212,6 +213,27 @@ const ADM = {
 
 
 /*
+  ADL — Admins_Log column map (append-only audit of admin actions).
+  LAYMAN    : Bawat ginawa ng admin sa mga group/chain — gumawa, nagpangalan,
+              nag-on/off, nagpalit ng approvers — isang row dito: sino, ano,
+              aling group, ano ang nabago, at kailan. Hindi binubura. Hiwalay
+              ito sa Activity_Log dahil iba ang klase (config-scoped, walang
+              request_id). Tab name: "Admins_Log".
+  TECHNICAL : 1-based, 6 cols, append-only. Written ONLY via appendAdminLog()
+              from the admin* mutations. Deliberately NOT in Activity_Log
+              (request-scoped; getApprovalView walks it). ACTION = ADMIN_ACTION.
+*/
+const ADL = {
+  LOG_ID:       1,  // A  ← KEY
+  ADMIN_EMAIL:  2,  // B  (who performed the action)
+  ACTION:       3,  // C  ← ADMIN_ACTION enum
+  TARGET_GROUP: 4,  // D  (the group_id acted on)
+  DETAILS:      5,  // E  (human-readable change description / before→after diff)
+  TIMESTAMP:    6,  // F  (server time)
+};
+
+
+/*
   STATUS — the request status strings (Requests.status / CR.STATUS).
   LAYMAN    : Buong "buhay" ng request: routed sa approver 1/2/3 → tapos
               (approved / declined / returned). Wala nang "Syncing Files" —
@@ -252,6 +274,31 @@ const ACTION = {
   EXPIRY_WARNING: "expiry_warning",  // system: T-3 "expiring soon" reminder sent
   EXPIRY_NOTICE:  "expiry_notice",   // system: day-of "expires today" reminder sent
   EXPIRY_OVERDUE: "expiry_overdue",  // system: post-expiry "has expired" reminder sent
+};
+
+
+/*
+  ADMIN_ACTION — the Admins_Log.action enum (ADL.ACTION values).
+  LAYMAN    : Anong klaseng galaw ng admin — gumawa ng group, nagpangalan,
+              nag-activate/deactivate, o nagpalit ng approver chain.
+  TECHNICAL : Stored lowercase in ADL.ACTION. Written by appendAdminLog() from
+              the admin* mutations in Admin.js. Config-scoped audit — separate
+              from the request-scoped ACTION enum.
+*/
+const ADMIN_ACTION = {
+  GROUP_CREATED:     "group_created",
+  GROUP_RENAMED:     "group_renamed",
+  GROUP_ACTIVATED:   "group_activated",
+  GROUP_DEACTIVATED: "group_deactivated",
+  // Chain edits are classified by what actually changed (chainChangeAction_ in
+  // Admin.js) so the log reads "approver_added" / "_removed" etc. instead of a
+  // generic label. CHAIN_CHANGED is the fallback for a designation-only edit or
+  // a mixed change that doesn't fit one bucket.
+  APPROVER_ADDED:    "approver_added",     // grew: someone new, nobody dropped
+  APPROVER_REMOVED:  "approver_removed",   // shrank: someone dropped, nobody new
+  APPROVER_REPLACED: "approver_replaced",  // swap: someone in AND someone out
+  CHAIN_REORDERED:   "chain_reordered",    // same people, different order
+  CHAIN_CHANGED:     "chain_changed",      // fallback (designation-only / mixed)
 };
 
 

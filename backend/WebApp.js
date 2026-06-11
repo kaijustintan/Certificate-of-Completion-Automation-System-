@@ -47,7 +47,7 @@
      - isChainApprover(row, caller)   is caller any approver for the group?
 
   D. READ-ONLY GETTERS  (return DTOs for the frontend)
-     - getCurrentUser()               { email, role }
+     - getCurrentUser()               { email, role, isAdmin }
      - getMyRequests()                requestor dashboard list
      - getPendingApprovals()          approver "awaiting" list
      - getMyActionedRequests()        approver "actioned" list
@@ -238,12 +238,14 @@ function isChainApprover(row, callerEmail) {
               app sa simula para malaman kung saang dashboard dadalhin.
   TECHNICAL : Reads the session email and classifies it via detectRole().
   PARAMS    : (none) — identity from Session.
-  RETURNS   : { email, role }.
+  RETURNS   : { email, role, isAdmin }. isAdmin is ADDITIVE — role semantics
+              are unchanged (an admin who is also an approver keeps role
+              "approver"); the flag only adds the Admin nav link + page.
 */
 function getCurrentUser() {
   const email = Session.getActiveUser().getEmail();
   const role  = detectRole(email);
-  return { email, role };
+  return { email, role, isAdmin: isAdmin(email) };
 }
 
 
@@ -437,10 +439,10 @@ function getMyActionedRequests() {
   Function Name: getRequestDetail
   LAYMAN    : Buong detalye ng IISANG request — lahat ng field, approvers,
               attachments, resubmit history — para sa detail page. May guard:
-              ang requestor lang o isang approver ng group nito ang makakakita.
-              Kung wala kang karapatan, null ang babalik (hindi error).
+              ang requestor, isang approver ng group nito, o isang admin lang
+              ang makakakita. Kung wala kang karapatan, null ang babalik (hindi error).
   TECHNICAL : Reads the full row, authorizes the caller (requestor OR chain
-              approver), then returns a rich DTO (dates pre-formatted,
+              approver OR admin), then returns a rich DTO (dates pre-formatted,
               PREVIOUS_APPROVALS JSON-parsed, attachments joined in).
   PARAMS    : requestId — the request to load.
   RETURNS   : Detail DTO object, or null if not found OR caller unauthorized.
@@ -453,10 +455,13 @@ function getMyActionedRequests() {
       Layman    : Basahin ang buong row at ang approvers ng group.
       Technical : getRange(rowNum,1,1,34); getApprovers(group) || {}.
     Step 3 — Authorize the caller (view gate)
-      Layman    : Requestor ka ba o approver ng chain? Kung hindi, null.
+      Layman    : Requestor ka ba, approver ng chain, o admin? Kung hindi, null.
       Technical : return null unless sameEmail(REQUESTOR, caller) ||
-                  isChainApprover(row, caller). Null (not an error object) so
-                  the detail renderer treats it as "not found / no access".
+                  isChainApprover(row, caller) || isAdmin(caller). Null (not an
+                  error object) so the detail renderer treats it as "not found
+                  / no access". Admin access is read-only by construction —
+                  action panels are owner/current-approver gated in the UI and
+                  the action handlers re-verify server-side.
     Step 4 — Build the DTO (format + parse)
       Layman    : Buuin ang malinis na object: petsa naka-format, prev
                   approvals na-parse, attachments naka-sama.
@@ -483,9 +488,11 @@ function getRequestDetail(requestId) {
   const groupId   = row[CR.GROUP - 1];
   const approvers = getApprovers(groupId) || {};
 
-  // Only the requestor or an approver in this request's chain may view it.
+  // Only the requestor, an approver in this request's chain, or an admin
+  // (Tier-2 oversight — read-only; the UI hides action panels for non-owners)
+  // may view it.
   const caller = Session.getActiveUser().getEmail();
-  if (!sameEmail(row[CR.REQUESTOR - 1], caller) && !isChainApprover(row, caller)) {
+  if (!sameEmail(row[CR.REQUESTOR - 1], caller) && !isChainApprover(row, caller) && !isAdmin(caller)) {
     return null;
   }
 

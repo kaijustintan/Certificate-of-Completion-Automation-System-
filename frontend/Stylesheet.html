@@ -43,6 +43,9 @@
   EMPTY STATE            .empty-state
   LOGIN SPLASH           .login-shell, .login-card
   TAB ROW                .tab-row, .tab, .tab-count (kept for reference)
+  ADMIN CONSOLE          .admin-groups-head, .admin-group-card/-title/-name/-meta/-actions,
+                         .admin-inline-form, .admin-warn, .admin-chain-editor,
+                         .chain-slot-row, .chain-slot-seq
   UTILITIES              .hidden, .flex, .gap-sm/md, .mt/mb-sm/md, .text-right, .required
   RESPONSIVE             @media (max-width:1024px), (max-width:768px), (max-width:640px)
 -->
@@ -1031,6 +1034,119 @@
     font-size: 13px;
     color: var(--gray-900);
     line-height: 1.5;
+  }
+
+
+  /* ─── ADMIN CONSOLE ─────────────────────────────────────── */
+  /* Group cards + the approver-chain editor on the admin page.
+     Flex children carry min-width:0 so long emails can't overflow. */
+  .admin-groups-head { margin-bottom: 16px; }
+  .admin-group-card { margin-bottom: 16px; }
+  .admin-group-title {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+  }
+  .admin-group-name {
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--navy-900);
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+  .admin-group-meta {
+    font-size: 13px;
+    color: var(--gray-600);
+    margin: 4px 0 12px;
+  }
+  .admin-group-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 12px;
+  }
+  .admin-inline-form {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    align-items: center;
+  }
+  .admin-inline-form .form-input {
+    flex: 1;
+    min-width: 200px;
+  }
+  .admin-warn {
+    font-size: 13px;
+    color: var(--amber-text);
+    background: var(--amber-bg);
+    border-radius: var(--radius-sm);
+    padding: 6px 10px;
+    display: inline-block;
+    margin-bottom: 8px;
+  }
+  .admin-chain-editor {
+    margin-top: 12px;
+    padding-top: 12px;
+    border-top: 1px solid var(--gray-200);
+  }
+  .chain-slot-row {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    margin-bottom: 8px;
+  }
+  .chain-slot-row .form-input {
+    flex: 1;
+    min-width: 0;
+  }
+  .chain-slot-seq {
+    width: 24px;
+    height: 24px;
+    border-radius: 50%;
+    background: var(--navy-100);
+    color: var(--navy-800);
+    font-size: 13px;
+    font-weight: 600;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+  }
+  /* Two-tile admin landing (View Records / View Groups) — wider cards. */
+  .admin-landing {
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    max-width: 640px;
+  }
+  /* "← Admin home" back link above each section. */
+  .admin-back {
+    display: inline-block;
+    margin-bottom: 16px;
+    color: var(--navy-700);
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+  }
+  .admin-back:hover { text-decoration: underline; }
+  /* Soft-removed chain slots: greyed, pending until Save. */
+  .chain-removed-list {
+    margin: 8px 0;
+    padding-top: 8px;
+    border-top: 1px dashed var(--gray-200);
+  }
+  .chain-removed-head {
+    font-size: 12px;
+    color: var(--gray-400);
+    margin-bottom: 6px;
+  }
+  .chain-slot-removed { opacity: 0.7; }
+  .chain-slot-removed-label {
+    flex: 1;
+    min-width: 0;
+    font-size: 13px;
+    color: var(--gray-600);
+    text-decoration: line-through;
+    overflow-wrap: anywhere;
   }
 
 

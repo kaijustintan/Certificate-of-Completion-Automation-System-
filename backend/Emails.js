@@ -60,6 +60,14 @@
 // ⚠️ FLIP TO FALSE BEFORE GO-LIVE
 const EMAIL_DEV_TAG = true;
 
+// Standing note appended to IN-FLIGHT requestor emails (progress update, resubmit
+// confirmation). An admin can change a request's approver chain at any time, so a
+// requestor following up off a stale email could reach a former approver. This
+// points them at the portal, which always shows the live current handler. (#4)
+const REQUESTOR_PORTAL_NOTE =
+  "Note: approvers may change while your request is in progress — always open the " +
+  "portal for the current handler and status before following up.";
+
 
 /*
   Function Name: emailSubject
@@ -628,6 +636,124 @@ Please review and act on ${n > 1 ? "each" : "the"} request in the portal. Thank 
 
 
 // ============================================================
+// EMAIL 5b — Notify a newly-added approver of a group's chain
+// Fired by adminSaveChain when an admin adds someone to a chain.
+// ============================================================
+/*
+  Function Name: sendNewApproverNotice
+
+  LAYMAN (Tropang Ex):
+  Pag idinagdag ka ng admin bilang approver ng isang group, padadalhan ka kaagad
+  ng email: "ikaw na ngayon ang approver ng [group]." Hindi mo na hihintayin ang
+  8am digest. Kung may mga request na agad na naghihintay sa'yo dahil sa pagbabago,
+  nakalista na rin sila dito, kompleto ang detalye + link sa review page — para
+  makaaksyon ka na agad. Kung wala pa namang naghihintay, sasabihin lang na
+  aabisuhan ka pagdating ng mga request.
+
+  TECHNICAL:
+  One-shot assignment notice. Receives the recipient's email, the group's
+  display name, the recipient's sequence in the NEW chain (for the explicit
+  "You are Approver N" line), and (already filtered by the caller) the pending
+  request rows that NEWLY current-await this person. For each pending row it
+  renders the same full detail block as sendPendingApprovalReminder
+  (buildInfoBlock + buildAttachmentList + buildApprovalLog + review deep-link).
+  Reuses emailSubject so it inherits the EMAIL_DEV_TAG audience prefix. The ONLY
+  email an admin action sends — recipients are computed by notifyChainChanges_
+  (newly in the chain OR newly the current handler of an in-flight request).
+
+  PARAMS:
+  - approverEmail — recipient. No-op if blank.
+  - groupName     — the group's display name, for the assignment line.
+  - approverStep  — recipient's sequence in the NEW chain (1/2/3); blank → role line omitted.
+  - previousStep  — recipient's sequence BEFORE the change (1/2/3), or null/blank if
+                    they were NOT in the chain before. Drives the wording: blank →
+                    "added"; different from approverStep → "you were Approver M, now N".
+  - pendingRows   — 0-indexed Requests rows now awaiting this person (may be empty).
+
+  RETURNS:
+  (void). No-op when approverEmail is falsy.
+
+  STEPS
+    Step 1 — Render any immediately-inherited pending requests
+      Layman    : Kung may agad na naghihintay, gawing kompletong detalye + link.
+      Technical : map pendingRows → buildInfoBlock + buildAttachmentList +
+                  buildApprovalLog(row, getApprovers(group)) + review deep-link.
+    Step 2 — Compose the lead line (added vs role-changed), append pending, send
+      Layman    : Bago → "You have been added… Approver N." Reorder → "You were
+                  Approver M, now Approver N." Idugtong ang listahan kung meron.
+      Technical : branch on previousStep; emailSubject suffix "Added as Approver"
+                  vs "Approver Role Changed"; GmailApp.sendEmail.
+
+  EXAMPLE
+    sendNewApproverNotice("boss@corp.com", "Engineering", 1, null, [rowA])
+    → "…| Added as Approver"; "added… Your role: Approver 1"; one detail block.
+    sendNewApproverNotice("boss@corp.com", "Engineering", 1, 2, [rowA])
+    → "…| Approver Role Changed"; "You were Approver 2; you are now Approver 1."; block.
+*/
+function sendNewApproverNotice(approverEmail, groupName, approverStep, previousStep, pendingRows) {
+  if (!approverEmail) return;
+  const rows = pendingRows || [];
+
+  let pendingSection = "";
+  if (rows.length) {
+    const blocks = rows.map(function (row) {
+      const requestId = row[CR.REQUEST_ID - 1];
+      const approvers = getApprovers(row[CR.GROUP - 1]);
+      return `${buildInfoBlock(row)}
+
+Supporting Documents:
+${buildAttachmentList(requestId)}
+
+Approval Progress:
+${buildApprovalLog(row, approvers)}
+
+Open this request: ${getPortalUrl(requestId, "review")}`;
+    }).join("\n\n————————————————————\n\n");
+
+    const n = rows.length;
+    pendingSection = `
+
+The following request${n > 1 ? "s are" : " is"} already awaiting your review and action:
+
+${blocks}
+
+Please review and act on ${n > 1 ? "each" : "the"} request in the portal.`;
+  } else {
+    pendingSection = `
+
+You'll be notified as requests are routed to you for approval.`;
+  }
+
+  // Lead line + subject depend on whether this is a fresh add or a role change (reorder).
+  let lead, statusLabel;
+  if (!previousStep) {
+    statusLabel = "Added as Approver";
+    lead = `You have been added as an approver for the group: ${groupName}.` +
+           (approverStep ? `\nYour role: Approver ${approverStep} in this group.` : "");
+  } else if (previousStep !== approverStep) {
+    statusLabel = "Approver Role Changed";
+    lead = `Your approver role for the group "${groupName}" has changed.\n` +
+           `You were Approver ${previousStep}; you are now Approver ${approverStep}.`;
+  } else {
+    statusLabel = "Approver Role Changed";
+    lead = `You are now the current approver for the group "${groupName}" (Approver ${approverStep}).`;
+  }
+
+  const subject = emailSubject("Approver Assignment", statusLabel, "APPROVER");
+
+  const body = `Good day!
+
+${lead}${pendingSection}
+
+Thank you!`;
+
+  GmailApp.sendEmail(approverEmail, subject, body);
+  Logger.log("sendNewApproverNotice(): " + groupName + " -> " + approverEmail +
+             " (step " + (previousStep || "-") + "→" + (approverStep || "?") + ", " + rows.length + " pending)");
+}
+
+
+// ============================================================
 // EMAIL 6 — Notify requestor their request was returned
 // AppSheet equivalent: Return Bot → Process_NotifyReturn
 // ============================================================
@@ -795,6 +921,8 @@ Approval Progress So Far:
 ${approvalLog}
 
 You will be notified once the remaining steps are complete. Thank you for your patience.
+
+${REQUESTOR_PORTAL_NOTE}
 Open this request: ${getPortalUrl(requestId, "request")}`;
 
   GmailApp.sendEmail(requestor, subject, body);
@@ -895,6 +1023,8 @@ Resubmitted on: ${nowFormatted()}
 Previous Return Reason: ${returnReason || "No reason provided."}
 
 You will be notified as the request progresses through the approval chain.
+
+${REQUESTOR_PORTAL_NOTE}
 Open this request: ${getPortalUrl(requestId, "request")}`;
 
   GmailApp.sendEmail(requestor, subject, body);

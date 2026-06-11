@@ -1,0 +1,879 @@
+<!-- Admin.html -->
+<!--
+  ════════════════════════════════════════════════════════════
+  FILE: Admin.html  (page — admin console, Tier 2)
+  ════════════════════════════════════════════════════════════
+
+  LAYMAN (Tropang Ex):
+  Ito ang Admin console. Dalawang view sa iisang page: (1) "All requests" —
+  lahat ng requests sa system, kahit kaninong request, clickable papunta sa
+  read-only detail; at (2) "Groups & approver chains" — dito ginagawa, nire-
+  rename, at ino-on/off ang mga groups, at ine-edit ang approver chain ng
+  bawat isa (sino ang 1, 2, 3). Ang link papunta dito ay lalabas lang kung
+  admin ka (state.user.isAdmin) — pero tandaan, ang totoong bantay ay nasa
+  server: lahat ng admin* callables ay may isAdmin() guard.
+
+  TECHNICAL:
+  Mirrors the ApproverDashboard pattern: parallel fetch on entry into module
+  caches, client-side filter/sort, view dropdown re-rendering #admin-list.
+  Chain editing keeps a local draft (_adminChainDraft) — text inputs write
+  into the draft oninput (no re-render, so focus is preserved); structural
+  ops (add/remove/move) re-render the editor from the draft. All mutations:
+  showLoading → callServer → hideLoading in every branch → showToast →
+  refresh the groups cache.
+
+  FUNCTIONS:
+    - renderAdminPage()                 main renderer; parallel fetch; #admin-body shell
+    - renderAdminBody()                 dispatch on _adminSection (landing/records/groups)
+    - renderAdminLanding()              two clickable tiles (View Records / View Groups)
+    - renderAdminRecordsSection()       back link + stat grid + controls + request list
+    - renderAdminGroupsSection()        back link + groups list
+    - renderAdminBackLink()             "← Admin home" → landing
+    - adminGoSection(s) / adminRender() set section + re-render #admin-body (no refetch)
+    - adminFilteredRequests()           records rows for the active status filter
+    - renderAdminControls()             records-only Status + Sort dropdowns
+    - computeAdminRequestCounts()       {all,pending,approved,declined,returned,expired}
+    - afterRender_admin()               hook (no-op on landing)
+    - adminSortChange / adminStatusChange(el)  dropdown handlers
+    - adminStatClick(status)            stat card → records filter
+    - syncAdminStatCards()              highlights active stat card
+    - renderAdminRequestList(rows)      table or empty state
+    - renderAdminRequestTable(rows)     <table>; row click → request detail
+    - renderAdminGroupsList()           group cards + create form
+    - renderAdminGroupCard(g)           one group card (or its edit states)
+    - renderAdminChainEditor(g)         the draft-driven chain editor (+ soft-remove)
+    - adminRefreshGroups()              re-fetch groups cache + re-render
+    - adminShowCreateGroup / adminCancelCreate / adminSubmitCreateGroup()
+    - adminShowRename / adminCancelRename / adminSubmitRename(groupId)
+    - adminToggleGroupActive(groupId)   confirm + activate/deactivate
+    - adminEditChain(groupId)           load chain into the draft
+    - adminCancelChain()                discard the draft
+    - adminChainInput(i, field, value)  draft field write (no re-render)
+    - adminChainAdd / adminChainRemove(i) / adminChainRestore(j) / adminChainMove(i, dir)
+    - adminSubmitChain()                validate + confirm + save
+-->
+
+
+<script>
+let _adminRequestsCache = [];
+let _adminGroupsCache   = [];
+let _adminSection       = null;        // null = landing (two tiles) | 'records' | 'groups'
+let _adminCurrentSort   = 'newest';
+let _adminStatusFilter  = 'all';       // 'all' | 'pending' | 'approved' | 'declined' | 'returned' | 'expired'
+let _adminChainDraft    = null;        // { groupId, slots:[{email,designation}], removed:[{email,designation}] }
+let _adminRenamingId    = null;        // groupId whose name is being edited inline
+let _adminCreatingGroup = false;       // create-group form visible?
+
+/*
+  Function Name: renderAdminPage
+  LAYMAN    : I-load nang sabay ang lahat ng requests at lahat ng groups para
+              kumpleto agad ang stat cards at parehong view. Kung hindi admin
+              ang nakatingin (hal. tinype lang ang #admin sa URL), empty state —
+              pakitang-tao lang ito; ang server mismo ang tunay na bantay.
+  TECHNICAL : Defensive isAdmin bounce (cosmetic — server callables re-verify);
+              Promise.all([adminGetAllRequests, adminGetGroups]); resets view
+              state; returns page HTML with clickable stat grid + control/list slots.
+  RETURNS   : HTML string.
+*/
+async function renderAdminPage() {
+  if (!state.user || !state.user.isAdmin) {
+    return renderEmptyState({
+      title:   'Not authorized',
+      message: 'This page is for portal admins only.',
+      emotion: 'default',
+    });
+  }
+
+  [_adminRequestsCache, _adminGroupsCache] = await Promise.all([
+    callServer('adminGetAllRequests'),
+    callServer('adminGetGroups'),
+  ]);
+  _adminSection       = null;   // start on the two-tile landing
+  _adminCurrentSort   = 'newest';
+  _adminStatusFilter  = 'all';
+  _adminChainDraft    = null;
+  _adminRenamingId    = null;
+  _adminCreatingGroup = false;
+
+  return `
+    <div class="page-header">
+      <div>
+        <div class="page-title">Admin console</div>
+        <div class="page-subtitle">Every request in the system, plus group and approver-chain management.</div>
+      </div>
+    </div>
+
+    ${renderMiga('default',
+        'Oversight mode: you can open any request read-only. Chain edits apply to in-flight requests immediately.')}
+
+    <div id="admin-body">${renderAdminBody()}</div>
+  `;
+}
+
+/*
+  Function Name: renderAdminBody
+  LAYMAN    : Anong ipapakita base sa kasalukuyang section: landing (dalawang
+              tile), records, o groups. Sync ito — gamit ang naka-cache na data,
+              walang bagong server call.
+  TECHNICAL : Pure dispatch on _adminSection. Re-run by adminRender() into
+              #admin-body. No fetch (caches are loaded once in renderAdminPage).
+  RETURNS   : HTML string.
+*/
+function renderAdminBody() {
+  if (_adminSection === 'records') return renderAdminRecordsSection();
+  if (_adminSection === 'groups')  return renderAdminGroupsSection();
+  return renderAdminLanding();
+}
+
+/*
+  Function Name: renderAdminLanding
+  LAYMAN    : Ang unang salubong sa Admin: dalawang malaking pindutin —
+              "View Records" at "View Groups". Para malinaw ang pagpili (dati
+              kasi dropdown lang, akala filter).
+  TECHNICAL : Two .stat-card.clickable tiles in a 2-col .admin-landing grid;
+              each calls adminGoSection. Counts seeded from the caches.
+*/
+function renderAdminLanding() {
+  const counts = computeAdminRequestCounts();
+  return `
+    <div class="stat-grid admin-landing">
+      <div class="stat-card clickable" onclick="adminGoSection('records')">
+        <div class="stat-number blue">${counts.all}</div>
+        <div class="stat-label">View Records — all requests in the system</div>
+      </div>
+      <div class="stat-card clickable" onclick="adminGoSection('groups')">
+        <div class="stat-number">${_adminGroupsCache.length}</div>
+        <div class="stat-label">View Groups — manage groups &amp; approver chains</div>
+      </div>
+    </div>
+  `;
+}
+
+/*
+  Function Name: renderAdminRecordsSection
+  LAYMAN    : Ang "View Records": back link, status stat cards (clickable filter),
+              Status + Sort dropdowns, at ang talahanayan ng lahat ng requests.
+  TECHNICAL : Stat grid + #admin-controls + #admin-list live here (records only).
+              No View dropdown — the section IS the view.
+*/
+function renderAdminRecordsSection() {
+  const counts = computeAdminRequestCounts();
+  return `
+    ${renderAdminBackLink()}
+    <div class="stat-grid">
+      <div class="stat-card clickable" data-statkey="all" onclick="adminStatClick('all')">
+        <div class="stat-number blue">${counts.all}</div>
+        <div class="stat-label">Total requests</div>
+      </div>
+      <div class="stat-card clickable" data-statkey="pending" onclick="adminStatClick('pending')">
+        <div class="stat-number">${counts.pending}</div>
+        <div class="stat-label">Pending</div>
+      </div>
+      <div class="stat-card clickable" data-statkey="approved" onclick="adminStatClick('approved')">
+        <div class="stat-number green">${counts.approved}</div>
+        <div class="stat-label">Fully approved</div>
+      </div>
+      <div class="stat-card clickable" data-statkey="declined" onclick="adminStatClick('declined')">
+        <div class="stat-number red">${counts.declined}</div>
+        <div class="stat-label">Declined</div>
+      </div>
+      <div class="stat-card clickable" data-statkey="returned" onclick="adminStatClick('returned')">
+        <div class="stat-number">${counts.returned}</div>
+        <div class="stat-label">Returned</div>
+      </div>
+      <div class="stat-card clickable" data-statkey="expired" onclick="adminStatClick('expired')">
+        <div class="stat-number red">${counts.expired}</div>
+        <div class="stat-label">Expired</div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div id="admin-controls">${renderAdminControls()}</div>
+      <div id="admin-list">${renderAdminRequestList(sortRequests(adminFilteredRequests(), _adminCurrentSort))}</div>
+    </div>
+  `;
+}
+
+/*
+  Function Name: renderAdminGroupsSection
+  LAYMAN    : Ang "View Groups": back link + ang buong groups list (create + cards).
+  TECHNICAL : Thin wrapper — back link + renderAdminGroupsList().
+*/
+function renderAdminGroupsSection() {
+  return renderAdminBackLink() + renderAdminGroupsList();
+}
+
+/* renderAdminBackLink — "← Admin home" link back to the two-tile landing. */
+function renderAdminBackLink() {
+  return '<div class="admin-back" onclick="adminGoSection(null)">← Admin home</div>';
+}
+
+/*
+  Function Name: adminGoSection / adminRender
+  LAYMAN    : Lumipat ng section (landing/records/groups) o i-refresh ang
+              kasalukuyang section — walang bagong server call, mula sa cache lang.
+  TECHNICAL : adminGoSection sets _adminSection; adminRender swaps #admin-body
+              innerHTML = renderAdminBody() and re-syncs stat cards on records.
+*/
+function adminGoSection(section) {
+  _adminSection = section;
+  _adminCreatingGroup = false;
+  _adminRenamingId = null;
+  _adminChainDraft = null;
+  adminRender();
+}
+function adminRender() {
+  const body = document.getElementById('admin-body');
+  if (body) body.innerHTML = renderAdminBody();
+  if (_adminSection === 'records') syncAdminStatCards();
+}
+
+/* adminFilteredRequests — the records rows for the active status filter. */
+function adminFilteredRequests() {
+  if (_adminStatusFilter === 'all') return _adminRequestsCache;
+  if (_adminStatusFilter === 'expired') {
+    return _adminRequestsCache.filter(function (r) { return r.isExpired; });
+  }
+  return _adminRequestsCache.filter(function (r) {
+    return getDashboardFilter(r.status) === _adminStatusFilter;
+  });
+}
+
+
+// ─── Records controls ─────────────────────────────────────
+
+/*
+  Function Name: renderAdminControls
+  LAYMAN    : Records-only filter bar: Status (may bilang) + Sort. Wala nang
+              "View" dropdown — ang section na mismo ang view (#1).
+  TECHNICAL : Seeded from _adminStatusFilter / _adminCurrentSort.
+*/
+function renderAdminControls() {
+  const counts = computeAdminRequestCounts();
+  const statusOptions = [
+    { value: 'all',      label: 'All'      },
+    { value: 'pending',  label: 'Pending'  },
+    { value: 'approved', label: 'Approved' },
+    { value: 'declined', label: 'Declined' },
+    { value: 'returned', label: 'Returned' },
+    { value: 'expired',  label: 'Expired'  },
+  ];
+  const statusHtml = statusOptions.map(function (o) {
+    return '<option value="' + o.value + '"' +
+      (o.value === _adminStatusFilter ? ' selected' : '') + '>' +
+      o.label + ' (' + counts[o.value] + ')</option>';
+  }).join('');
+
+  const sortOptions = [
+    { value: 'newest',  label: 'Most Recent'  },
+    { value: 'oldest',  label: 'Oldest First' },
+    { value: 'project', label: 'Project A→Z' },
+    { value: 'group',   label: 'Group A→Z'   },
+  ];
+  const sortHtml = sortOptions.map(function (o) {
+    return '<option value="' + o.value + '"' +
+      (o.value === _adminCurrentSort ? ' selected' : '') + '>' + o.label + '</option>';
+  }).join('');
+
+  return '<div class="filter-bar">' +
+    '<div class="filter-group">' +
+      '<label class="filter-label">Status</label>' +
+      '<select class="filter-select" onchange="adminStatusChange(this)">' + statusHtml + '</select>' +
+    '</div>' +
+    '<div class="filter-group">' +
+      '<label class="filter-label">Sort by</label>' +
+      '<select class="filter-select" onchange="adminSortChange(this)">' + sortHtml + '</select>' +
+    '</div>' +
+  '</div>';
+}
+
+/*
+  Function Name: computeAdminRequestCounts
+  LAYMAN    : Bilangin ang requests kada status bucket (at expired) para sa
+              stat cards at Status dropdown.
+  TECHNICAL : One pass over _adminRequestsCache; buckets via getDashboardFilter;
+              expired via the server-computed isExpired flag (cross-cutting).
+*/
+function computeAdminRequestCounts() {
+  const counts = { all: 0, pending: 0, approved: 0, declined: 0, returned: 0, expired: 0 };
+  for (const r of _adminRequestsCache) {
+    counts.all++;
+    const bucket = getDashboardFilter(r.status);
+    if (counts[bucket] !== undefined) counts[bucket]++;
+    if (r.isExpired) counts.expired++;
+  }
+  return counts;
+}
+
+function adminSortChange(el) {
+  _adminCurrentSort = el.value;
+  adminRender();
+}
+
+function adminStatusChange(el) {
+  _adminStatusFilter = el.value;
+  adminRender();
+}
+
+/*
+  Function Name: afterRender_admin
+  LAYMAN    : Hook ng router. Nagsisimula sa landing (dalawang tile) kaya walang
+              stat card na i-highlight — no-op-safe.
+  TECHNICAL : afterRender hook (exact lowercase route key 'admin'). The landing
+              has no [data-statkey] cards, so syncAdminStatCards is a safe no-op.
+*/
+function afterRender_admin() {
+  syncAdminStatCards();
+}
+
+/*
+  Function Name: adminStatClick
+  LAYMAN    : Pindutin ang status stat card → i-filter ang records sa status na yon.
+  TECHNICAL : Records section only; sets _adminStatusFilter; adminRender().
+  PARAMS    : status — 'all' | 'pending' | 'approved' | 'declined' | 'returned' | 'expired'.
+*/
+function adminStatClick(status) {
+  _adminStatusFilter = status || 'all';
+  adminRender();
+}
+
+/*
+  Function Name: syncAdminStatCards
+  LAYMAN    : I-highlight ang stat card ng aktibong filter (records section lang).
+  TECHNICAL : .stat-card[data-statkey] vs _adminStatusFilter. No-op when the
+              current section has no such cards (landing / groups).
+*/
+function syncAdminStatCards() {
+  document.querySelectorAll('.stat-card[data-statkey]').forEach(function (card) {
+    if (card.getAttribute('data-statkey') === _adminStatusFilter) {
+      card.classList.add('active');
+    } else {
+      card.classList.remove('active');
+    }
+  });
+}
+
+
+// ─── All-requests view ────────────────────────────────────
+
+/*
+  Function Name: renderAdminRequestList
+  LAYMAN    : Listahan ng requests, o empty state kapag wala.
+  TECHNICAL : renderAdminRequestTable(rows) or renderEmptyState.
+*/
+function renderAdminRequestList(rows) {
+  if (rows.length === 0) {
+    return renderEmptyState({
+      title:   'No requests',
+      message: 'No requests match this filter.',
+      emotion: 'default',
+    });
+  }
+  return renderAdminRequestTable(rows);
+}
+
+/*
+  Function Name: renderAdminRequestTable
+  LAYMAN    : Table ng lahat ng requests. Bawat row clickable papunta sa
+              READ-ONLY detail page (yung 'request' route — hindi 'review',
+              kasi hindi naman ikaw ang aaprove; tingin lang).
+  TECHNICAL : Clone of renderApproverTable with the row click retargeted to
+              navigateTo('request', {id}). The detail page hides the resubmit
+              panel for non-owners, so admin lands read-only naturally.
+*/
+function renderAdminRequestTable(rows) {
+  const tableRows = rows.map(function (r) {
+    const idAttr = escapeHtml(r.requestId);
+    return '' +
+      '<tr onclick="navigateTo(\'request\', {id: \'' + idAttr + '\'})">' +
+        '<td>' + escapeHtml(r.controlNumber) + '</td>' +
+        '<td>' + escapeHtml(r.projectTitle)  + '</td>' +
+        '<td>' + escapeHtml(r.requestor)     + '</td>' +
+        '<td>' + escapeHtml(r.group)         + '</td>' +
+        '<td>' + renderStatusBadge(r.status) +
+          (r.isExpired ? ' <span class="badge badge-expired" title="Contract end date has passed">Expired</span>' : '') +
+        '</td>' +
+        '<td>' + escapeHtml(r.dateFiled)     + '</td>' +
+      '</tr>';
+  }).join('');
+
+  return '' +
+    '<table class="data-table">' +
+      '<thead><tr>' +
+        '<th>Control no.</th>' +
+        '<th>Project</th>' +
+        '<th>Requestor</th>' +
+        '<th>Group</th>' +
+        '<th>Status</th>' +
+        '<th>Filed</th>' +
+      '</tr></thead>' +
+      '<tbody>' + tableRows + '</tbody>' +
+    '</table>';
+}
+
+
+// ─── Groups & chains view ─────────────────────────────────
+
+/*
+  Function Name: renderAdminGroupsList
+  LAYMAN    : Yung buong Groups view: "New group" button (o ang create form
+              kapag nakabukas), tapos isang card kada group.
+  TECHNICAL : Driven by _adminGroupsCache + _adminCreatingGroup; group cards
+              delegate to renderAdminGroupCard.
+*/
+function renderAdminGroupsList() {
+  const createBlock = _adminCreatingGroup
+    ? '<div class="admin-inline-form">' +
+        '<input type="text" class="form-input" id="admin-new-group-name" placeholder="New group name" maxlength="80">' +
+        '<button class="btn btn-primary" onclick="adminSubmitCreateGroup()">Create</button>' +
+        '<button class="btn btn-secondary" onclick="adminCancelCreate()">Cancel</button>' +
+      '</div>'
+    : '<button class="btn btn-primary" onclick="adminShowCreateGroup()">+ New group</button>';
+
+  const cards = _adminGroupsCache.length === 0
+    ? renderEmptyState({
+        title:   'No groups yet',
+        message: 'Create a group, then set up its approver chain.',
+        emotion: 'default',
+      })
+    : _adminGroupsCache.map(renderAdminGroupCard).join('');
+
+  return '<div class="admin-groups-head">' + createBlock + '</div>' + cards;
+}
+
+/*
+  Function Name: renderAdminGroupCard
+  LAYMAN    : Isang card kada group: pangalan (+ Inactive chip kung patay),
+              bilang ng approvers at pending requests, at mga buttons. Kapag
+              nire-rename → may inline input; kapag ine-edit ang chain → bukas
+              ang chain editor sa loob mismo ng card.
+  TECHNICAL : Three render states per card: normal, renaming (_adminRenamingId),
+              chain-editing (_adminChainDraft.groupId). Buttons call the
+              admin* handlers; group fields escaped.
+*/
+function renderAdminGroupCard(g) {
+  const idAttr = escapeHtml(g.id);
+  const editingChain = _adminChainDraft && _adminChainDraft.groupId === g.id;
+
+  let nameBlock;
+  if (_adminRenamingId === g.id) {
+    nameBlock =
+      '<div class="admin-inline-form">' +
+        '<input type="text" class="form-input" id="admin-rename-input" value="' + escapeHtml(g.name) + '" maxlength="80">' +
+        '<button class="btn btn-primary" onclick="adminSubmitRename(\'' + idAttr + '\')">Save</button>' +
+        '<button class="btn btn-secondary" onclick="adminCancelRename()">Cancel</button>' +
+      '</div>';
+  } else {
+    nameBlock =
+      '<div class="admin-group-title">' +
+        '<span class="admin-group-name">' + escapeHtml(g.name) + '</span>' +
+        (g.active ? '' : ' <span class="badge badge-declined">Inactive</span>') +
+      '</div>';
+  }
+
+  const meta =
+    '<div class="admin-group-meta">' +
+      escapeHtml(g.id) + ' · ' +
+      g.approverCount + ' approver' + (g.approverCount === 1 ? '' : 's') + ' · ' +
+      g.pendingCount + ' pending request' + (g.pendingCount === 1 ? '' : 's') +
+      (g.approverCount === 0 ? ' · <span class="admin-warn">⚠ no approver chain — set one up before use</span>' : '') +
+    '</div>';
+
+  let actions = '';
+  let editor  = '';
+  if (editingChain) {
+    editor = renderAdminChainEditor(g);
+  } else {
+    actions =
+      '<div class="admin-group-actions">' +
+        '<button class="btn btn-secondary" onclick="adminEditChain(\'' + idAttr + '\')">Edit chain</button>' +
+        '<button class="btn btn-secondary" onclick="adminShowRename(\'' + idAttr + '\')">Rename</button>' +
+        '<button class="btn ' + (g.active ? 'btn-danger' : 'btn-primary') + '" onclick="adminToggleGroupActive(\'' + idAttr + '\')">' +
+          (g.active ? 'Deactivate' : 'Reactivate') +
+        '</button>' +
+      '</div>';
+  }
+
+  return '<div class="card admin-group-card">' + nameBlock + meta + actions + editor + '</div>';
+}
+
+/*
+  Function Name: renderAdminChainEditor
+  LAYMAN    : Yung editor ng approver chain: bawat active row ay step number +
+              email + designation + Up/Down/Remove. Ang tinanggal ay HINDI agad
+              nawawala — lumilitaw silang greyed sa ibaba na may "Undo" (#8), kaya
+              kung nagkamali ka, mababalik nang hindi binubura lahat (Cancel).
+              May "Add approver" (max 3) + Save/Cancel. Babala kung may pending.
+  TECHNICAL : Renders from _adminChainDraft.slots (active, ordered) + .removed[]
+              (soft-removed, with data for Undo). Text inputs write the draft
+              oninput (no re-render → focus preserved); structural buttons
+              re-render. Sequence numbering / add-disable / submit all key off
+              the active slots only. Values escaped.
+*/
+function renderAdminChainEditor(g) {
+  const slots   = _adminChainDraft.slots;
+  const removed = _adminChainDraft.removed || [];
+
+  const warn = g.pendingCount > 0
+    ? '<div class="admin-warn">⚠ ' + g.pendingCount + ' in-flight request' + (g.pendingCount === 1 ? '' : 's') +
+      ' — chain changes take effect immediately. The chain must keep at least ' +
+      (g.maxPendingStep || 1) + ' approver' + ((g.maxPendingStep || 1) === 1 ? '' : 's') + '.</div>'
+    : '';
+
+  const rows = slots.map(function (s, i) {
+    return '' +
+      '<div class="chain-slot-row">' +
+        '<span class="chain-slot-seq">' + (i + 1) + '</span>' +
+        '<input type="text" class="form-input" placeholder="approver email" value="' + escapeHtml(s.email) + '"' +
+          ' oninput="adminChainInput(' + i + ', \'email\', this.value)">' +
+        '<input type="text" class="form-input" placeholder="designation (optional)" value="' + escapeHtml(s.designation) + '"' +
+          ' oninput="adminChainInput(' + i + ', \'designation\', this.value)">' +
+        '<button class="btn btn-secondary" title="Move up"   ' + (i === 0 ? 'disabled' : '') + ' onclick="adminChainMove(' + i + ', -1)">↑</button>' +
+        '<button class="btn btn-secondary" title="Move down" ' + (i === slots.length - 1 ? 'disabled' : '') + ' onclick="adminChainMove(' + i + ', 1)">↓</button>' +
+        '<button class="btn btn-danger"    title="Remove"    onclick="adminChainRemove(' + i + ')">✕</button>' +
+      '</div>';
+  }).join('');
+
+  const removedRows = removed.map(function (s, j) {
+    const label = escapeHtml(s.email || '(blank)') + (s.designation ? ' — ' + escapeHtml(s.designation) : '');
+    return '' +
+      '<div class="chain-slot-row chain-slot-removed">' +
+        '<span class="chain-slot-removed-label">Removed: ' + label + '</span>' +
+        '<button class="btn btn-secondary" title="Undo remove" onclick="adminChainRestore(' + j + ')">Undo</button>' +
+      '</div>';
+  }).join('');
+  const removedBlock = removed.length
+    ? '<div class="chain-removed-list"><div class="chain-removed-head">Pending removal (saved only when you click Save chain):</div>' + removedRows + '</div>'
+    : '';
+
+  return '' +
+    '<div class="admin-chain-editor" id="admin-chain-editor">' +
+      warn +
+      rows +
+      removedBlock +
+      '<div class="admin-group-actions">' +
+        '<button class="btn btn-secondary" ' + (slots.length >= 3 ? 'disabled' : '') + ' onclick="adminChainAdd()">+ Add approver</button>' +
+        '<button class="btn btn-primary" onclick="adminSubmitChain()">Save chain</button>' +
+        '<button class="btn btn-secondary" onclick="adminCancelChain()">Cancel</button>' +
+      '</div>' +
+    '</div>';
+}
+
+
+// ─── Groups: data refresh ─────────────────────────────────
+
+/*
+  Function Name: adminRefreshGroups
+  LAYMAN    : I-reload ang groups cache mula sa server tapos i-re-render ang view.
+              Tinatawag pagkatapos ng bawat matagumpay na mutation.
+  TECHNICAL : await adminGetGroups → cache; adminRender(). Caller owns the
+              loading overlay.
+*/
+async function adminRefreshGroups() {
+  _adminGroupsCache = await callServer('adminGetGroups');
+  adminRender();
+}
+
+
+// ─── Groups: create / rename / toggle ─────────────────────
+
+function adminShowCreateGroup() {
+  _adminCreatingGroup = true;
+  adminRender();
+  const input = document.getElementById('admin-new-group-name');
+  if (input) input.focus();
+}
+
+function adminCancelCreate() {
+  _adminCreatingGroup = false;
+  adminRender();
+}
+
+/*
+  Function Name: adminSubmitCreateGroup
+  LAYMAN    : I-submit ang bagong group. Pag-success, sariwain ang listahan at
+              ipaalala na lagyan agad ng approver chain.
+  TECHNICAL : Reads #admin-new-group-name; callServer('adminCreateGroup');
+              server enforces uniqueness; hideLoading in all branches.
+*/
+async function adminSubmitCreateGroup() {
+  const input = document.getElementById('admin-new-group-name');
+  const name  = input ? input.value.trim() : '';
+  if (!name) { showToast('Group name is required.', 'error'); return; }
+
+  showLoading('Creating group…');
+  try {
+    const res = await callServer('adminCreateGroup', name);
+    if (!res || !res.success) {
+      hideLoading();
+      showToast((res && res.error) || 'Could not create the group.', 'error');
+      return;
+    }
+    _adminCreatingGroup = false;
+    await adminRefreshGroups();
+    hideLoading();
+    showToast('Group "' + name + '" created. Set up its approver chain next.', 'success');
+  } catch (err) {
+    hideLoading();
+    showToast((err && err.message) || 'Could not create the group.', 'error');
+  }
+}
+
+function adminShowRename(groupId) {
+  _adminRenamingId = groupId;
+  adminRender();
+  const input = document.getElementById('admin-rename-input');
+  if (input) { input.focus(); input.select(); }
+}
+
+function adminCancelRename() {
+  _adminRenamingId = null;
+  adminRender();
+}
+
+/*
+  Function Name: adminSubmitRename
+  LAYMAN    : I-save ang bagong pangalan ng group. Safe sa routing — group_id
+              ang susi, hindi ang pangalan.
+  TECHNICAL : callServer('adminRenameGroup'); also refreshes the requests cache
+              so the Group column shows the new name without a page reload.
+*/
+async function adminSubmitRename(groupId) {
+  const input = document.getElementById('admin-rename-input');
+  const name  = input ? input.value.trim() : '';
+  if (!name) { showToast('Group name is required.', 'error'); return; }
+
+  showLoading('Renaming group…');
+  try {
+    const res = await callServer('adminRenameGroup', groupId, name);
+    if (!res || !res.success) {
+      hideLoading();
+      showToast((res && res.error) || 'Could not rename the group.', 'error');
+      return;
+    }
+    _adminRenamingId = null;
+    // Group display names are baked into the requests DTO — refresh both caches.
+    _adminRequestsCache = await callServer('adminGetAllRequests');
+    await adminRefreshGroups();
+    hideLoading();
+    showToast('Group renamed.', 'success');
+  } catch (err) {
+    hideLoading();
+    showToast((err && err.message) || 'Could not rename the group.', 'error');
+  }
+}
+
+/*
+  Function Name: adminToggleGroupActive
+  LAYMAN    : I-deactivate (o i-reactivate) ang group, may confirm muna. Ang
+              deactivate ay nagtatago lang sa New Request dropdown — hindi
+              naaapektuhan ang mga in-flight requests.
+  TECHNICAL : showConfirm (danger when deactivating; message notes pendingCount);
+              callServer('adminSetGroupActive', groupId, !g.active).
+*/
+async function adminToggleGroupActive(groupId) {
+  const g = _adminGroupsCache.find(function (x) { return x.id === groupId; });
+  if (!g) return;
+
+  const deactivating = g.active;
+  const pendingNote = (deactivating && g.pendingCount > 0)
+    ? ' Its ' + g.pendingCount + ' pending request' + (g.pendingCount === 1 ? '' : 's') +
+      ' will continue through the existing chain — only the new-request dropdown is affected.'
+    : '';
+  const ok = await showConfirm({
+    title:        (deactivating ? 'Deactivate' : 'Reactivate') + ' "' + g.name + '"?',
+    message:      deactivating
+      ? 'The group disappears from the new-request form.' + pendingNote + ' You can reactivate it anytime.'
+      : 'The group becomes selectable on the new-request form again.',
+    confirmLabel: deactivating ? 'Deactivate' : 'Reactivate',
+    danger:       deactivating,
+  });
+  if (!ok) return;
+
+  showLoading(deactivating ? 'Deactivating…' : 'Reactivating…');
+  try {
+    const res = await callServer('adminSetGroupActive', groupId, !g.active);
+    if (!res || !res.success) {
+      hideLoading();
+      showToast((res && res.error) || 'Could not update the group.', 'error');
+      return;
+    }
+    await adminRefreshGroups();
+    hideLoading();
+    showToast('Group ' + (deactivating ? 'deactivated.' : 'reactivated.'), 'success');
+  } catch (err) {
+    hideLoading();
+    showToast((err && err.message) || 'Could not update the group.', 'error');
+  }
+}
+
+
+// ─── Chain editing ────────────────────────────────────────
+
+/*
+  Function Name: adminEditChain
+  LAYMAN    : Buksan ang chain editor ng group — i-load muna ang kasalukuyang
+              chain galing sa server papunta sa local draft.
+  TECHNICAL : callServer('adminGetGroupChain') → _adminChainDraft. slots are the
+              ACTIVE ordered rows; removed[] holds soft-removed slots (with their
+              data, for Undo) and is empty on load. Server reassigns sequence on save.
+*/
+async function adminEditChain(groupId) {
+  showLoading('Loading chain…');
+  try {
+    const chain = await callServer('adminGetGroupChain', groupId);
+    hideLoading();
+    _adminChainDraft = {
+      groupId: groupId,
+      slots: (chain || []).map(function (s) {
+        return { email: s.email || '', designation: s.designation || '' };
+      }),
+      removed: [],
+    };
+    if (_adminChainDraft.slots.length === 0) {
+      _adminChainDraft.slots.push({ email: '', designation: '' });
+    }
+    _adminRenamingId = null;
+    adminRender();
+  } catch (err) {
+    hideLoading();
+    showToast((err && err.message) || 'Could not load the chain.', 'error');
+  }
+}
+
+function adminCancelChain() {
+  _adminChainDraft = null;
+  adminRender();
+}
+
+/*
+  adminChainInput — write a text field into the draft WITHOUT re-rendering.
+  LAYMAN    : Habang nagta-type, isinusulat agad sa draft — walang re-render
+              para hindi mawala ang cursor sa input.
+  TECHNICAL : Mutates _adminChainDraft.slots[i][field]; render catches up on
+              the next structural op or save.
+*/
+function adminChainInput(i, field, value) {
+  if (_adminChainDraft && _adminChainDraft.slots[i]) {
+    _adminChainDraft.slots[i][field] = value;
+  }
+}
+
+function adminChainAdd() {
+  if (!_adminChainDraft || _adminChainDraft.slots.length >= 3) return;
+  _adminChainDraft.slots.push({ email: '', designation: '' });
+  adminRender();
+}
+
+/*
+  adminChainRemove — soft-remove a slot (#8).
+  LAYMAN    : Hindi agad binubura — kung may laman (email/designation), ililipat
+              sa "pending removal" para may Undo. Kung blangko lang, tatanggalin agad.
+  TECHNICAL : Splice from slots; if it had data, push to .removed[] (recoverable
+              via adminChainRestore). Empty slot → dropped outright. Re-render.
+*/
+function adminChainRemove(i) {
+  if (!_adminChainDraft) return;
+  const slot = _adminChainDraft.slots.splice(i, 1)[0];
+  if (slot && (slot.email || slot.designation)) {
+    _adminChainDraft.removed.push(slot);
+  }
+  adminRender();
+}
+
+/*
+  adminChainRestore — undo a soft-removed slot (#8).
+  LAYMAN    : Ibalik ang tinanggal na approver sa dulo ng listahan — hindi mo na
+              kailangang i-Cancel ang buong edit. Bawal kung puno na (3).
+  TECHNICAL : Pop from .removed[j] back onto slots (append). Blocks at 3 active.
+*/
+function adminChainRestore(j) {
+  if (!_adminChainDraft) return;
+  if (_adminChainDraft.slots.length >= 3) {
+    showToast('Chain is already at the 3-approver limit — remove one first.', 'error');
+    return;
+  }
+  const slot = _adminChainDraft.removed.splice(j, 1)[0];
+  if (slot) _adminChainDraft.slots.push(slot);
+  adminRender();
+}
+
+function adminChainMove(i, dir) {
+  if (!_adminChainDraft) return;
+  const slots = _adminChainDraft.slots;
+  const j = i + dir;
+  if (j < 0 || j >= slots.length) return;
+  const tmp = slots[i]; slots[i] = slots[j]; slots[j] = tmp;
+  adminRender();
+}
+
+/*
+  Function Name: adminSubmitChain
+  LAYMAN    : I-save ang bagong chain. May client-side checks muna (may laman,
+              walang duplicate) para mabilis ang feedback, pero ang server pa
+              rin ang final na bantay (kasama ang in-flight shrink check).
+              Kapag may pending requests ang group, may confirm dialog na
+              nagpapaliwanag na agad ang epekto.
+  TECHNICAL : Trims the draft; quick local validation; showConfirm when
+              pendingCount > 0; callServer('adminSaveChain'); on success clears
+              the draft and refreshes the groups cache.
+*/
+async function adminSubmitChain() {
+  if (!_adminChainDraft) return;
+  const groupId = _adminChainDraft.groupId;
+  const g = _adminGroupsCache.find(function (x) { return x.id === groupId; });
+
+  const slots = _adminChainDraft.slots
+    .map(function (s) { return { email: s.email.trim(), designation: s.designation.trim() }; })
+    .filter(function (s) { return s.email || s.designation; });
+
+  if (slots.length === 0) {
+    showToast('Add at least one approver, or deactivate the group instead.', 'error');
+    return;
+  }
+  for (let i = 0; i < slots.length; i++) {
+    if (!slots[i].email) {
+      showToast('Approver ' + (i + 1) + ' needs an email address.', 'error');
+      return;
+    }
+  }
+  const seen = {};
+  for (const s of slots) {
+    const key = s.email.toLowerCase();
+    if (seen[key]) {
+      showToast('The same person cannot appear twice in one chain (' + s.email + ').', 'error');
+      return;
+    }
+    seen[key] = true;
+  }
+
+  if (g && g.pendingCount > 0) {
+    const ok = await showConfirm({
+      title:        'Apply chain changes now?',
+      message:      'This group has ' + g.pendingCount + ' in-flight request' + (g.pendingCount === 1 ? '' : 's') + '. ' +
+                    'Changes apply to their next steps immediately — a replaced approver hands their queue to the new person. ' +
+                    'Any newly-added approver is emailed right away with anything already awaiting them.',
+      confirmLabel: 'Save chain',
+      danger:       true,
+    });
+    if (!ok) return;
+  }
+
+  showLoading('Saving chain…');
+  try {
+    const res = await callServer('adminSaveChain', groupId, slots);
+    if (!res || !res.success) {
+      hideLoading();
+      showToast((res && res.error) || 'Could not save the chain.', 'error');
+      return;
+    }
+    _adminChainDraft = null;
+    await adminRefreshGroups();
+    hideLoading();
+    showToast('Approver chain saved.', 'success');
+  } catch (err) {
+    hideLoading();
+    showToast((err && err.message) || 'Could not save the chain.', 'error');
+  }
+}
+</script>

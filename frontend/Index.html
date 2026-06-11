@@ -16,7 +16,7 @@
        1. Stylesheet.html              — global CSS
        2. Components (StatusBadge, EmptyState, MigaWidget)
        3. Pages (Login, Dashboard, NewRequest, RequestDetail,
-                  ApproverDashboard, ReviewDetail)
+                  ApproverDashboard, ReviewDetail, Admin)
        4. window.__INITIAL_ROUTE scriptlet
        5. JavaScript.html             — router + bootstrap (last, needs all render fns)
 
@@ -69,6 +69,7 @@
   <?!= include('frontend/pages/RequestDetail'); ?>
   <?!= include('frontend/pages/ApproverDashboard'); ?>
   <?!= include('frontend/pages/ReviewDetail'); ?>
+  <?!= include('frontend/pages/Admin'); ?>
 
   <!-- Deep-link target forwarded by doGet() via query params (?page=&id=).
        bootstrap() reads this before falling back to hash/role-home. -->

@@ -267,7 +267,7 @@ function extractDriveId(link) {
               na private ang mga sensitive documents (e.g. NDAs).
   TECHNICAL : Identity-gated file serving. Scans Request_Attachments for the
               attachmentId, resolves the parent request, applies the SAME gate as
-              getRequestDetail (requestor OR isChainApprover), then returns the
+              getRequestDetail (requestor OR isChainApprover OR isAdmin), then returns the
               file as base64 + mimeType + display filename. The 5 MB upload cap
               keeps the base64 payload within google.script.run limits.
   PARAMS    : attachmentId — the ATTACHMENT_ID value (e.g. "A3F-ATT").
@@ -279,8 +279,8 @@ function extractDriveId(link) {
       Layman    : Hanapin ang attachment sa sheet gamit ang ID.
       Technical : getAllData(REQUEST_ATTACHMENTS) loop matching ATTACHMENT_ID.
     Step 2 — Authorize via parent request
-      Layman    : Requestor ka ba o approver ng request? Kung hindi → Unauthorized.
-      Technical : getRequestRowData(REQUEST_ID); sameEmail(REQUESTOR) || isChainApprover.
+      Layman    : Requestor ka ba, approver ng request, o admin? Kung hindi → Unauthorized.
+      Technical : getRequestRowData(REQUEST_ID); sameEmail(REQUESTOR) || isChainApprover || isAdmin.
     Step 3 — Return the file bytes
       Layman    : Kunin ang file sa Drive, ibalik bilang base64.
       Technical : extractDriveId(FILE_LINK) → DriveApp.getFileById().getBlob().
@@ -299,10 +299,10 @@ function downloadAttachment(attachmentId) {
     if (allData[i][RA.ATTACHMENT_ID - 1] === attachmentId) {
       const requestId = allData[i][RA.REQUEST_ID - 1];
 
-      // Same gate as getRequestDetail: requestor or any chain approver only.
+      // Same gate as getRequestDetail: requestor, any chain approver, or admin.
       const parentRow = getRequestRowData(requestId);
       if (!parentRow) return { success: false, error: "Request not found." };
-      if (!sameEmail(parentRow[CR.REQUESTOR - 1], caller) && !isChainApprover(parentRow, caller)) {
+      if (!sameEmail(parentRow[CR.REQUESTOR - 1], caller) && !isChainApprover(parentRow, caller) && !isAdmin(caller)) {
         return { success: false, error: "Unauthorized" };
       }
 
