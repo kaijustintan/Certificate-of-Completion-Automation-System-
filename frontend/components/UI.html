@@ -1,0 +1,324 @@
+<!-- UI.html -->
+<!--
+  ════════════════════════════════════════════════════════════
+  FILE: UI.html  (component — shared SaaS UI primitives)
+  ════════════════════════════════════════════════════════════
+
+  LAYMAN (Tropang Ex):
+  Ito ang "lego blocks" ng bagong enterprise look ng portal. Isang lugar
+  para sa mga inuulit-ulit na piraso: mga icon (inline SVG, walang download),
+  ang hero card sa taas ng bawat dashboard, ang stat cards na may icon at
+  delta ("↑ 1 this month"), ang search bar, at ang pagination. Para iisa
+  ang itsura sa Dashboard, My Approvals, at Admin — at para hindi na
+  kopya-kopya ang code sa bawat page.
+
+  TECHNICAL:
+  Pure render helpers in the global Apps Script scope (loaded BEFORE pages
+  in Index.html so page renderers can call them). No state, no server calls.
+  Icons are inline Lucide SVGs (MIT) using currentColor — zero network
+  requests (important in the sandboxed iframe), crisp at any size, themeable.
+
+  OUTLINE
+    ICONS
+      - renderIcon(name, size)         inline SVG by name (stroke, currentColor)
+    HERO
+      - renderHeroCard(opts)           gradient hero w/ mascot + insight chips
+      - friendlyName(email)            email prefix → "Kyle"
+    STAT CARDS
+      - renderStatCard(opts)           icon-tile stat w/ value + label + delta
+      - renderStatGrid(cards)          wraps stat cards in .stat-grid
+    CONTROLS
+      - renderSearchBar(opts)          search input w/ leading icon
+      - renderPagination(opts)         client-side pager (prev / pages / next)
+      - paginate(items, page, perPage) slice helper
+
+  ⚠️ Callbacks are passed as GLOBAL function-name strings (e.g.
+     onInput:'dashboardSearch', onPage:'dashboardGoPage') because the markup
+     is injected via innerHTML — closures can't survive the string boundary.
+-->
+<script>
+
+// ─── ICONS ──────────────────────────────────────────────────
+
+// Lucide icon path data (MIT). Stroke-based; inherits color via currentColor.
+const UI_ICONS = {
+  'dashboard':   '<rect width="7" height="9" x="3" y="3" rx="1"/><rect width="7" height="5" x="14" y="3" rx="1"/><rect width="7" height="9" x="14" y="12" rx="1"/><rect width="7" height="5" x="3" y="16" rx="1"/>',
+  'file-text':   '<path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="M16 13H8"/><path d="M16 17H8"/><path d="M10 9H8"/>',
+  'file':        '<path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/>',
+  'check-circle':'<circle cx="12" cy="12" r="10"/><path d="m9 12 2 2 4-4"/>',
+  'x-circle':    '<circle cx="12" cy="12" r="10"/><path d="m15 9-6 6"/><path d="m9 9 6 6"/>',
+  'clock':       '<circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>',
+  'alert':       '<path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><path d="M12 9v4"/><path d="M12 17h.01"/>',
+  'inbox':       '<polyline points="22 12 16 12 14 15 10 15 8 12 2 12"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/>',
+  'return':      '<polyline points="9 14 4 9 9 4"/><path d="M20 20v-7a4 4 0 0 0-4-4H4"/>',
+  'settings':    '<path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/>',
+  'chevron-right':'<path d="m9 18 6-6-6-6"/>',
+  'chevron-left':'<path d="m15 18-6-6 6-6"/>',
+  'calendar':    '<path d="M8 2v4"/><path d="M16 2v4"/><rect width="18" height="18" x="3" y="4" rx="2"/><path d="M3 10h18"/>',
+  'search':      '<circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/>',
+  'plus':        '<path d="M5 12h14"/><path d="M12 5v14"/>',
+  'trending-up': '<polyline points="22 7 13.5 15.5 8.5 10.5 2 17"/><polyline points="16 7 22 7 22 13"/>',
+  'trending-down':'<polyline points="22 17 13.5 8.5 8.5 13.5 2 7"/><polyline points="16 17 22 17 22 11"/>',
+  'minus':       '<path d="M5 12h14"/>',
+  'users':       '<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>',
+};
+
+/*
+  Function Name: uiKeyActivate
+  LAYMAN    : Para sa mga clickable na div (stat cards, choice cards) — kapag
+              Enter o Space ang pinindot habang naka-focus, parang na-click.
+  TECHNICAL : Keyboard activation for role="button" divs. On Enter/Space,
+              prevents default scroll and fires the element's own click()
+              (which runs its existing onclick). Attach via onkeydown.
+  PARAMS    : e — the keydown event.
+*/
+function uiKeyActivate(e) {
+  if (e.key === 'Enter' || e.key === ' ' || e.key === 'Spacebar') {
+    e.preventDefault();
+    e.currentTarget.click();
+  }
+}
+
+/*
+  Function Name: renderIcon
+  LAYMAN    : Ibalik ang inline SVG ng isang icon (hal. "check-circle").
+              Kumukuha ng kulay galing sa CSS (currentColor) — kaya kahit
+              anong text color ang parent, susunod ang icon.
+  TECHNICAL : Looks up UI_ICONS[name]; wraps in a 24-viewBox <svg> sized to
+              `size` px (default 20), stroke=currentColor, fill=none, round
+              caps/joins. Unknown name → empty string (no throw).
+  PARAMS    : name — icon key; size — px (default 20).
+  RETURNS   : SVG HTML string, or '' for an unknown name.
+*/
+function renderIcon(name, size) {
+  const paths = UI_ICONS[name];
+  if (!paths) return '';
+  const s = size || 20;
+  return '<svg class="ui-icon" width="' + s + '" height="' + s + '" viewBox="0 0 24 24" ' +
+    'fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" ' +
+    'stroke-linejoin="round" aria-hidden="true">' + paths + '</svg>';
+}
+
+
+// ─── HERO ───────────────────────────────────────────────────
+
+/*
+  Function Name: friendlyName
+  LAYMAN    : Galing sa email (hal. "kyle.tan@...") → "Kyle". Pang-greeting lang.
+  TECHNICAL : Takes the local-part before '@', splits on . _ -, title-cases the
+              first token. Falls back to 'there' for a blank email.
+  PARAMS    : email — the user's email.
+  RETURNS   : a single capitalized first-name-ish string.
+*/
+function friendlyName(email) {
+  const local = String(email || '').split('@')[0];
+  const first = local.split(/[._-]/)[0] || 'there';
+  return first.charAt(0).toUpperCase() + first.slice(1);
+}
+
+// Decorative skyline used behind the hero mascot. Low-opacity white SVG —
+// purely ornamental (aria-hidden), echoes the Megaworld property theme.
+const HERO_SKYLINE =
+  '<svg class="hero-skyline" viewBox="0 0 320 120" fill="none" aria-hidden="true" preserveAspectRatio="xMaxYMax slice">' +
+    '<g fill="#ffffff" opacity="0.06">' +
+      '<rect x="10" y="60" width="26" height="60" rx="2"/>' +
+      '<rect x="44" y="38" width="30" height="82" rx="2"/>' +
+      '<rect x="82" y="70" width="22" height="50" rx="2"/>' +
+      '<rect x="112" y="20" width="34" height="100" rx="2"/>' +
+      '<rect x="154" y="52" width="26" height="68" rx="2"/>' +
+      '<rect x="188" y="34" width="30" height="86" rx="2"/>' +
+      '<rect x="226" y="64" width="24" height="56" rx="2"/>' +
+      '<rect x="258" y="28" width="32" height="92" rx="2"/>' +
+      '<rect x="298" y="56" width="20" height="64" rx="2"/>' +
+    '</g>' +
+  '</svg>';
+
+/*
+  Function Name: renderHeroCard
+  LAYMAN    : Ang premium na hero card sa taas ng dashboard — greeting,
+              maikling subtitle, ilang "insight" chips (hal. "1 awaiting
+              approval"), at si Miga na nakatayo sa kanan na may skyline.
+  TECHNICAL : Returns a .hero-card. Mascot src via migaImageFor(emotion)
+              (MigaWidget.html). Insights is an array of {icon, text} → chips.
+              All text escaped. Decorative skyline + mascot are aria-hidden.
+  PARAMS    : opts.greeting  — small lead line (e.g. "Good to see you again").
+              opts.title     — main line (e.g. "Welcome back, Kyle 👋").
+              opts.subtitle  — supporting line.
+              opts.insights  — [{icon, text}] chips (optional).
+              opts.emotion   — Miga variant for the mascot (default 'welcome').
+  RETURNS   : HTML string — the hero card.
+*/
+function renderHeroCard(opts) {
+  opts = opts || {};
+  const chips = (opts.insights || []).map(function (i) {
+    return '<span class="hero-chip">' +
+      (i.icon ? renderIcon(i.icon, 15) : '') +
+      escapeHtml(i.text) +
+    '</span>';
+  }).join('');
+
+  return '<div class="hero-card">' +
+    '<div class="hero-content">' +
+      (opts.greeting ? '<div class="hero-greeting">' + escapeHtml(opts.greeting) + '</div>' : '') +
+      '<div class="hero-title">' + escapeHtml(opts.title || '') + '</div>' +
+      (opts.subtitle ? '<div class="hero-subtitle">' + escapeHtml(opts.subtitle) + '</div>' : '') +
+      (chips ? '<div class="hero-insights">' + chips + '</div>' : '') +
+    '</div>' +
+    '<div class="hero-art" aria-hidden="true">' +
+      HERO_SKYLINE +
+      '<img class="hero-mascot" src="' + migaImageFor(opts.emotion || 'welcome') + '" alt="">' +
+    '</div>' +
+  '</div>';
+}
+
+
+// ─── STAT CARDS ─────────────────────────────────────────────
+
+/*
+  Function Name: renderStatCard
+  LAYMAN    : Isang modern stat card — may kulay na icon tile sa kaliwa, malaki
+              na numero, label, at maliit na "delta" line sa ibaba (hal.
+              "↑ 1 this month"). Clickable bilang filter kapag may clickFn.
+  TECHNICAL : Returns a .stat-card. Preserves the existing filter hooks:
+              opts.filterKey → data-filter, opts.statKey → data-statkey,
+              opts.clickFn → onclick (and .clickable). Tone drives the icon
+              tile color (.stat-icon-<tone>). Delta direction sets the sub color.
+  PARAMS    : opts.icon     — icon name; opts.tone — blue|green|red|amber|navy.
+              opts.value    — the big number; opts.label — caption.
+              opts.sub      — delta/sub text (optional);
+              opts.subDir   — 'up'|'down'|'flat' (delta arrow + color, optional).
+              opts.filterKey/statKey — data-* hook (optional, one of them).
+              opts.clickFn  — global onclick expression string (optional).
+  RETURNS   : HTML string — one .stat-card.
+*/
+function renderStatCard(opts) {
+  opts = opts || {};
+  const tone = opts.tone || 'navy';
+  const hookAttr = opts.filterKey ? ' data-filter="' + escapeHtml(opts.filterKey) + '"'
+                 : opts.statKey   ? ' data-statkey="' + escapeHtml(opts.statKey) + '"'
+                 : '';
+  const clickable = opts.clickFn ? ' clickable' : '';
+  // Clickable stat cards are keyboard-focusable + activatable (Enter/Space).
+  const clickAttr = opts.clickFn
+    ? ' onclick="' + opts.clickFn + '" onkeydown="uiKeyActivate(event)" tabindex="0" role="button"'
+    : '';
+
+  let sub = '';
+  if (opts.sub) {
+    const dir = opts.subDir || 'flat';
+    const dirIcon = dir === 'up' ? renderIcon('trending-up', 14)
+                  : dir === 'down' ? renderIcon('trending-down', 14)
+                  : renderIcon('minus', 14);
+    sub = '<div class="stat-delta stat-delta-' + dir + '">' + dirIcon +
+          '<span>' + escapeHtml(opts.sub) + '</span></div>';
+  }
+
+  return '<div class="stat-card' + clickable + '"' + hookAttr + clickAttr + '>' +
+    '<div class="stat-icon stat-icon-' + tone + '">' + renderIcon(opts.icon, 22) + '</div>' +
+    '<div class="stat-body">' +
+      '<div class="stat-label">' + escapeHtml(opts.label || '') + '</div>' +
+      '<div class="stat-number">' + escapeHtml(String(opts.value)) + '</div>' +
+      sub +
+    '</div>' +
+  '</div>';
+}
+
+/*
+  Function Name: renderStatGrid
+  LAYMAN    : Balutin ang listahan ng stat cards sa grid container.
+  TECHNICAL : Joins renderStatCard outputs inside .stat-grid.
+  PARAMS    : cards — array of renderStatCard opts.
+  RETURNS   : HTML string — the .stat-grid.
+*/
+function renderStatGrid(cards) {
+  return '<div class="stat-grid">' + (cards || []).map(renderStatCard).join('') + '</div>';
+}
+
+
+// ─── CONTROLS: SEARCH + PAGINATION ──────────────────────────
+
+/*
+  Function Name: renderSearchBar
+  LAYMAN    : Search box na may magnifying-glass icon sa loob. Tumatawag ng
+              isang global function tuwing nagta-type (live filter).
+  TECHNICAL : Returns a .search-bar wrapping an <input> that calls
+              onInput(this.value) on `input`. The id lets a re-render preserve
+              focus/value if needed. Value is attribute-escaped.
+  PARAMS    : opts.id — input id; opts.onInput — global fn name; opts.value —
+              current text; opts.placeholder — placeholder text.
+  RETURNS   : HTML string — the search bar.
+*/
+function renderSearchBar(opts) {
+  opts = opts || {};
+  return '<div class="search-bar">' +
+    renderIcon('search', 16) +
+    '<input type="search" class="search-input" id="' + escapeHtml(opts.id || 'search') + '" ' +
+      'placeholder="' + escapeHtml(opts.placeholder || 'Search…') + '" ' +
+      'value="' + escapeHtml(opts.value || '') + '" ' +
+      'oninput="' + escapeHtml(opts.onInput || '') + '(this.value)" ' +
+      'aria-label="' + escapeHtml(opts.placeholder || 'Search') + '">' +
+  '</div>';
+}
+
+/*
+  Function Name: paginate
+  LAYMAN    : Kunin lang ang tamang "page" na hiwa ng listahan.
+  TECHNICAL : Pure slice — items.slice((page-1)*perPage, page*perPage). Clamps
+              nothing (callers compute valid page via renderPagination math).
+  PARAMS    : items — array; page — 1-based; perPage — page size.
+  RETURNS   : the page's slice.
+*/
+function paginate(items, page, perPage) {
+  const start = (page - 1) * perPage;
+  return items.slice(start, start + perPage);
+}
+
+/*
+  Function Name: renderPagination
+  LAYMAN    : "Showing X to Y of Z" + prev/next + page numbers. Tumatawag ng
+              global function na may page number kapag pinindot.
+  TECHNICAL : Returns a .pagination row. Hidden entirely if totalItems <= perPage
+              (single page). Numbered buttons call onPage(n). Prev/next disabled
+              at the ends. Windowed to ~5 page buttons around the current page.
+  PARAMS    : opts.total — item count; opts.page — current 1-based page;
+              opts.perPage — page size; opts.onPage — global fn name.
+  RETURNS   : HTML string — the pager (or '' for a single page).
+*/
+function renderPagination(opts) {
+  opts = opts || {};
+  const total   = opts.total || 0;
+  const perPage = opts.perPage || 10;
+  const pages   = Math.ceil(total / perPage);
+  if (pages <= 1) return '';
+
+  const page = Math.min(Math.max(1, opts.page || 1), pages);
+  const onPage = opts.onPage;
+  const from = (page - 1) * perPage + 1;
+  const to   = Math.min(page * perPage, total);
+
+  // Windowed page numbers (max 5), always including first/last context.
+  let start = Math.max(1, page - 2);
+  let end   = Math.min(pages, start + 4);
+  start = Math.max(1, end - 4);
+
+  let nums = '';
+  for (let p = start; p <= end; p++) {
+    nums += '<button class="page-btn' + (p === page ? ' active' : '') + '" ' +
+      'onclick="' + onPage + '(' + p + ')">' + p + '</button>';
+  }
+
+  return '<div class="pagination">' +
+    '<div class="page-info">Showing ' + from + '–' + to + ' of ' + total + '</div>' +
+    '<div class="page-controls">' +
+      '<button class="page-btn page-nav" ' + (page === 1 ? 'disabled' : '') +
+        ' onclick="' + onPage + '(' + (page - 1) + ')" aria-label="Previous page">' +
+        renderIcon('chevron-left', 16) + '</button>' +
+      nums +
+      '<button class="page-btn page-nav" ' + (page === pages ? 'disabled' : '') +
+        ' onclick="' + onPage + '(' + (page + 1) + ')" aria-label="Next page">' +
+        renderIcon('chevron-right', 16) + '</button>' +
+    '</div>' +
+  '</div>';
+}
+
+</script>

@@ -84,7 +84,7 @@ onNewRequestSubmit → validateNewRequest → showLoading('Submitting…') → c
 **File:** `Emails.js:234 → sendApprovalRequest(requestId)`
 **Layman:** Looks up *who* the current approver is, builds the email (request info + attachments list + a portal deep-link), and sends it.
 ```
-sendApprovalRequest ⤷ getCurrentApprover + buildInfoBlock + buildAttachmentList + getPortalUrl → GmailApp.sendEmail
+sendApprovalRequest ⤷ getCurrentApprover + buildInfoBlock + buildAttachmentList + getPortalUrl + emailLayout (HTML twin) → sendBrandedEmail (text fallback + htmlBody)
 ```
 
 ### Step 4 — Land on the new request (Frontend)

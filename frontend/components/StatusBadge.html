@@ -22,13 +22,16 @@
   LAYMAN    : Gumawa ng HTML na kulay na "pill" para sa status na ito.
               Ginagamit sa mga table rows at page headers.
   TECHNICAL : Composes <span class="badge <class>"> using badgeClassFor(status).
+              Includes a leading .badge-dot (currentColor) — the Linear-style
+              status indicator. The expired chip is rendered separately by
+              callers and deliberately has NO dot (it's a modifier, not a status).
   PARAMS    : status — a STATUS string (or any fallback string).
   RETURNS   : HTML string — a .badge <span>.
   EXAMPLE   : renderStatusBadge("Pending Approver 1")
-              → '<span class="badge badge-pending">Pending Approver 1</span>'
+              → '<span class="badge badge-pending"><span class="badge-dot"></span>Pending Approver 1</span>'
 */
 function renderStatusBadge(status) {
   const cls = badgeClassFor(status);
-  return '<span class="badge ' + cls + '">' + escapeHtml(status) + '</span>';
+  return '<span class="badge ' + cls + '"><span class="badge-dot"></span>' + escapeHtml(status) + '</span>';
 }
 </script>

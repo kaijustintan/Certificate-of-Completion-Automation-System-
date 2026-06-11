@@ -37,8 +37,9 @@
     - adminSortChange / adminStatusChange(el)  dropdown handlers
     - adminStatClick(status)            stat card → records filter
     - syncAdminStatCards()              highlights active stat card
-    - renderAdminRequestList(rows)      table or empty state
+    - buildAdminListHtml()              records body: filter+search+sort+paginate
     - renderAdminRequestTable(rows)     <table>; row click → request detail
+    - adminSearch / adminGoPage / adminApplyList()  records search + pagination
     - renderAdminGroupsList()           group cards + create form
     - renderAdminGroupCard(g)           one group card (or its edit states)
     - renderAdminChainEditor(g)         the draft-driven chain editor (+ soft-remove)
@@ -60,6 +61,9 @@ let _adminGroupsCache   = [];
 let _adminSection       = null;        // null = landing (two tiles) | 'records' | 'groups'
 let _adminCurrentSort   = 'newest';
 let _adminStatusFilter  = 'all';       // 'all' | 'pending' | 'approved' | 'declined' | 'returned' | 'expired'
+let _adminSearch        = '';
+let _adminPage          = 1;
+const ADMIN_PER_PAGE    = 10;
 let _adminChainDraft    = null;        // { groupId, slots:[{email,designation}], removed:[{email,designation}] }
 let _adminRenamingId    = null;        // groupId whose name is being edited inline
 let _adminCreatingGroup = false;       // create-group form visible?
@@ -91,9 +95,13 @@ async function renderAdminPage() {
   _adminSection       = null;   // start on the two-tile landing
   _adminCurrentSort   = 'newest';
   _adminStatusFilter  = 'all';
+  _adminSearch        = '';
+  _adminPage          = 1;
   _adminChainDraft    = null;
   _adminRenamingId    = null;
   _adminCreatingGroup = false;
+
+  const counts = computeAdminRequestCounts();
 
   return `
     <div class="page-header">
@@ -103,8 +111,16 @@ async function renderAdminPage() {
       </div>
     </div>
 
-    ${renderMiga('default',
-        'Oversight mode: you can open any request read-only. Chain edits apply to in-flight requests immediately.')}
+    ${renderHeroCard({
+      greeting: 'Oversight mode,',
+      title:    'Admin console',
+      subtitle: 'Open any request read-only, and manage groups and approver chains. Chain edits apply to in-flight requests immediately.',
+      insights: [
+        { icon: 'file-text', text: counts.all + ' total requests' },
+        { icon: 'users',     text: _adminGroupsCache.length + ' groups' },
+      ],
+      emotion: 'default',
+    })}
 
     <div id="admin-body">${renderAdminBody()}</div>
   `;
@@ -136,14 +152,22 @@ function renderAdminBody() {
 function renderAdminLanding() {
   const counts = computeAdminRequestCounts();
   return `
-    <div class="stat-grid admin-landing">
-      <div class="stat-card clickable" onclick="adminGoSection('records')">
-        <div class="stat-number blue">${counts.all}</div>
-        <div class="stat-label">View Records — all requests in the system</div>
+    <div class="choice-grid">
+      <div class="choice-card" onclick="adminGoSection('records')" role="button" tabindex="0" onkeydown="uiKeyActivate(event)">
+        <div class="choice-icon choice-icon-blue">${renderIcon('file-text', 24)}</div>
+        <div class="choice-body">
+          <div class="choice-title">View Records</div>
+          <div class="choice-desc">All ${counts.all} request${counts.all === 1 ? '' : 's'} in the system, read-only.</div>
+        </div>
+        <div class="choice-arrow">${renderIcon('chevron-right', 20)}</div>
       </div>
-      <div class="stat-card clickable" onclick="adminGoSection('groups')">
-        <div class="stat-number">${_adminGroupsCache.length}</div>
-        <div class="stat-label">View Groups — manage groups &amp; approver chains</div>
+      <div class="choice-card" onclick="adminGoSection('groups')" role="button" tabindex="0" onkeydown="uiKeyActivate(event)">
+        <div class="choice-icon choice-icon-navy">${renderIcon('users', 24)}</div>
+        <div class="choice-body">
+          <div class="choice-title">View Groups</div>
+          <div class="choice-desc">Manage ${_adminGroupsCache.length} group${_adminGroupsCache.length === 1 ? '' : 's'} &amp; their approver chains.</div>
+        </div>
+        <div class="choice-arrow">${renderIcon('chevron-right', 20)}</div>
       </div>
     </div>
   `;
@@ -158,38 +182,27 @@ function renderAdminLanding() {
 */
 function renderAdminRecordsSection() {
   const counts = computeAdminRequestCounts();
+  const statCards = renderStatGrid([
+    { icon: 'file-text',    tone: 'blue',  value: counts.all,      label: 'Total Requests',
+      statKey: 'all',       clickFn: "adminStatClick('all')",      sub: 'In the system',  subDir: 'flat' },
+    { icon: 'clock',        tone: 'amber', value: counts.pending,  label: 'Pending',
+      statKey: 'pending',   clickFn: "adminStatClick('pending')",  sub: 'In progress',    subDir: 'flat' },
+    { icon: 'check-circle', tone: 'green', value: counts.approved, label: 'Fully Approved',
+      statKey: 'approved',  clickFn: "adminStatClick('approved')", sub: 'Completed',      subDir: 'flat' },
+    { icon: 'x-circle',     tone: 'red',   value: counts.declined, label: 'Declined',
+      statKey: 'declined',  clickFn: "adminStatClick('declined')", sub: 'Closed out',     subDir: 'flat' },
+    { icon: 'return',       tone: 'amber', value: counts.returned, label: 'Returned',
+      statKey: 'returned',  clickFn: "adminStatClick('returned')", sub: 'Sent back',      subDir: 'flat' },
+    { icon: 'alert',        tone: 'amber', value: counts.expired,  label: 'Expired',
+      statKey: 'expired',   clickFn: "adminStatClick('expired')",  sub: counts.expired ? 'Contracts lapsed' : 'None expired', subDir: counts.expired ? 'down' : 'flat' },
+  ]);
   return `
     ${renderAdminBackLink()}
-    <div class="stat-grid">
-      <div class="stat-card clickable" data-statkey="all" onclick="adminStatClick('all')">
-        <div class="stat-number blue">${counts.all}</div>
-        <div class="stat-label">Total requests</div>
-      </div>
-      <div class="stat-card clickable" data-statkey="pending" onclick="adminStatClick('pending')">
-        <div class="stat-number">${counts.pending}</div>
-        <div class="stat-label">Pending</div>
-      </div>
-      <div class="stat-card clickable" data-statkey="approved" onclick="adminStatClick('approved')">
-        <div class="stat-number green">${counts.approved}</div>
-        <div class="stat-label">Fully approved</div>
-      </div>
-      <div class="stat-card clickable" data-statkey="declined" onclick="adminStatClick('declined')">
-        <div class="stat-number red">${counts.declined}</div>
-        <div class="stat-label">Declined</div>
-      </div>
-      <div class="stat-card clickable" data-statkey="returned" onclick="adminStatClick('returned')">
-        <div class="stat-number">${counts.returned}</div>
-        <div class="stat-label">Returned</div>
-      </div>
-      <div class="stat-card clickable" data-statkey="expired" onclick="adminStatClick('expired')">
-        <div class="stat-number red">${counts.expired}</div>
-        <div class="stat-label">Expired</div>
-      </div>
-    </div>
-
+    ${statCards}
     <div class="card">
+      <div class="card-header"><div class="card-title">All requests</div></div>
       <div id="admin-controls">${renderAdminControls()}</div>
-      <div id="admin-list">${renderAdminRequestList(sortRequests(adminFilteredRequests(), _adminCurrentSort))}</div>
+      <div id="admin-list">${buildAdminListHtml()}</div>
     </div>
   `;
 }
@@ -275,14 +288,22 @@ function renderAdminControls() {
       (o.value === _adminCurrentSort ? ' selected' : '') + '>' + o.label + '</option>';
   }).join('');
 
-  return '<div class="filter-bar">' +
-    '<div class="filter-group">' +
-      '<label class="filter-label">Status</label>' +
-      '<select class="filter-select" onchange="adminStatusChange(this)">' + statusHtml + '</select>' +
-    '</div>' +
-    '<div class="filter-group">' +
-      '<label class="filter-label">Sort by</label>' +
-      '<select class="filter-select" onchange="adminSortChange(this)">' + sortHtml + '</select>' +
+  return '<div class="controls-bar">' +
+    renderSearchBar({
+      id:          'admin-search',
+      onInput:     'adminSearch',
+      value:       _adminSearch,
+      placeholder: 'Search by control no., project, requestor…',
+    }) +
+    '<div class="filter-bar">' +
+      '<div class="filter-group">' +
+        '<label class="filter-label">Status</label>' +
+        '<select class="filter-select" onchange="adminStatusChange(this)">' + statusHtml + '</select>' +
+      '</div>' +
+      '<div class="filter-group">' +
+        '<label class="filter-label">Sort by</label>' +
+        '<select class="filter-select" onchange="adminSortChange(this)">' + sortHtml + '</select>' +
+      '</div>' +
     '</div>' +
   '</div>';
 }
@@ -307,12 +328,64 @@ function computeAdminRequestCounts() {
 
 function adminSortChange(el) {
   _adminCurrentSort = el.value;
+  _adminPage = 1;
   adminRender();
 }
 
 function adminStatusChange(el) {
   _adminStatusFilter = el.value;
+  _adminPage = 1;
   adminRender();
+}
+
+/*
+  Function Name: adminSearch
+  LAYMAN    : Live search sa records table. Hindi nire-render ang controls kaya
+              hindi nawawala ang focus sa search box.
+  TECHNICAL : Sets _adminSearch, resets page, re-renders ONLY #admin-list.
+  PARAMS    : value — raw input string.
+*/
+function adminSearch(value) {
+  _adminSearch = value;
+  _adminPage = 1;
+  adminApplyList();
+}
+
+/* adminGoPage — pagination jump (records table only). */
+function adminGoPage(n) {
+  _adminPage = n;
+  adminApplyList();
+}
+
+/* adminApplyList — re-render ONLY the records table+pager (search/pagination). */
+function adminApplyList() {
+  const listEl = document.getElementById('admin-list');
+  if (listEl) listEl.innerHTML = buildAdminListHtml();
+}
+
+/*
+  Function Name: buildAdminListHtml
+  LAYMAN    : Buuin ang records list — i-filter (status), i-search, i-sort,
+              i-page, gawing table + pagination. Empty state kapag wala.
+  TECHNICAL : Single source of truth for #admin-list. adminFilteredRequests
+              (status) → search → sort → paginate. Returns a string.
+  RETURNS   : HTML string.
+*/
+function buildAdminListHtml() {
+  const searched = filterBySearch(adminFilteredRequests(), _adminSearch);
+  const sorted   = sortRequests(searched, _adminCurrentSort);
+  if (sorted.length === 0) {
+    return renderEmptyState({
+      title:   _adminSearch ? 'No matches' : 'No requests',
+      message: _adminSearch ? 'No requests match “' + escapeHtml(_adminSearch) + '”.' : 'No requests match this filter.',
+      emotion: 'default',
+    });
+  }
+  const pages = Math.max(1, Math.ceil(sorted.length / ADMIN_PER_PAGE));
+  if (_adminPage > pages) _adminPage = pages;
+  const slice = paginate(sorted, _adminPage, ADMIN_PER_PAGE);
+  return renderAdminRequestTable(slice) +
+    renderPagination({ total: sorted.length, page: _adminPage, perPage: ADMIN_PER_PAGE, onPage: 'adminGoPage' });
 }
 
 /*
@@ -334,6 +407,7 @@ function afterRender_admin() {
 */
 function adminStatClick(status) {
   _adminStatusFilter = status || 'all';
+  _adminPage = 1;
   adminRender();
 }
 
@@ -357,55 +431,48 @@ function syncAdminStatCards() {
 // ─── All-requests view ────────────────────────────────────
 
 /*
-  Function Name: renderAdminRequestList
-  LAYMAN    : Listahan ng requests, o empty state kapag wala.
-  TECHNICAL : renderAdminRequestTable(rows) or renderEmptyState.
-*/
-function renderAdminRequestList(rows) {
-  if (rows.length === 0) {
-    return renderEmptyState({
-      title:   'No requests',
-      message: 'No requests match this filter.',
-      emotion: 'default',
-    });
-  }
-  return renderAdminRequestTable(rows);
-}
-
-/*
   Function Name: renderAdminRequestTable
-  LAYMAN    : Table ng lahat ng requests. Bawat row clickable papunta sa
-              READ-ONLY detail page (yung 'request' route — hindi 'review',
-              kasi hindi naman ikaw ang aaprove; tingin lang).
-  TECHNICAL : Clone of renderApproverTable with the row click retargeted to
-              navigateTo('request', {id}). The detail page hides the resubmit
-              panel for non-owners, so admin lands read-only naturally.
+  LAYMAN    : Table ng requests (kasalukuyang page lang). Bawat row clickable
+              papunta sa READ-ONLY detail page (yung 'request' route — hindi
+              'review', kasi hindi naman ikaw ang aaprove; tingin lang).
+  TECHNICAL : Same row shape as renderApproverTable (request-icon cell + chevron)
+              but the click goes to navigateTo('request', {id}). The detail page
+              hides the resubmit panel for non-owners, so admin lands read-only.
 */
 function renderAdminRequestTable(rows) {
   const tableRows = rows.map(function (r) {
     const idAttr = escapeHtml(r.requestId);
     return '' +
       '<tr onclick="navigateTo(\'request\', {id: \'' + idAttr + '\'})">' +
-        '<td>' + escapeHtml(r.controlNumber) + '</td>' +
-        '<td>' + escapeHtml(r.projectTitle)  + '</td>' +
-        '<td>' + escapeHtml(r.requestor)     + '</td>' +
-        '<td>' + escapeHtml(r.group)         + '</td>' +
+        '<td>' +
+          '<div class="cell-request">' +
+            '<div class="cell-request-icon">' + renderIcon('file', 16) + '</div>' +
+            '<div class="cell-request-text">' +
+              '<div class="cell-primary">' + escapeHtml(r.controlNumber) + '</div>' +
+            '</div>' +
+          '</div>' +
+        '</td>' +
+        '<td class="cell-clip" title="' + escapeHtml(r.projectTitle) + '">' + escapeHtml(r.projectTitle) + '</td>' +
+        '<td class="cell-clip" title="' + escapeHtml(r.requestor) + '">' + escapeHtml(r.requestor) + '</td>' +
+        '<td class="cell-clip" title="' + escapeHtml(r.group) + '">' + escapeHtml(r.group) + '</td>' +
         '<td>' + renderStatusBadge(r.status) +
           (r.isExpired ? ' <span class="badge badge-expired" title="Contract end date has passed">Expired</span>' : '') +
         '</td>' +
-        '<td>' + escapeHtml(r.dateFiled)     + '</td>' +
+        '<td><span class="cell-date">' + renderIcon('calendar', 14) + escapeHtml(r.dateFiled) + '</span></td>' +
+        '<td class="cell-chevron">' + renderIcon('chevron-right', 18) + '</td>' +
       '</tr>';
   }).join('');
 
   return '' +
     '<table class="data-table">' +
       '<thead><tr>' +
-        '<th>Control no.</th>' +
+        '<th>Request</th>' +
         '<th>Project</th>' +
         '<th>Requestor</th>' +
         '<th>Group</th>' +
         '<th>Status</th>' +
         '<th>Filed</th>' +
+        '<th></th>' +
       '</tr></thead>' +
       '<tbody>' + tableRows + '</tbody>' +
     '</table>';

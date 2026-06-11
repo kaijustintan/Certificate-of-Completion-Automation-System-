@@ -120,8 +120,13 @@
     --text-muted:     var(--gray-400);
     --primary:        var(--navy-900);
     --accent:         var(--blue-text);  /* links + active states */
+    --blue-accent:    #2563eb;           /* brighter interactive accent (buttons, active rings) */
+    --blue-accent-700:#1d4ed8;           /* its hover/darker step */
     --radius:         var(--radius-md);
     --focus-ring:     0 0 0 3px rgba(24, 95, 165, 0.25);
+
+    /* Motion */
+    --ease-out: cubic-bezier(0.2, 0.6, 0.2, 1);
   }
 
 
@@ -292,57 +297,81 @@
 
 
   /* ─── STAT CARDS (dashboard summary) ────────────────────── */
+  /* Icon-tile layout: colored tile (left) + value/label/delta (right).
+     Color now lives in the tile, not a left border. The data-filter /
+     data-statkey hooks + .active / .clickable behavior are unchanged. */
   .stat-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-    gap: 12px;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 16px;
     margin-bottom: 24px;
   }
   .stat-card {
-    background: var(--white);
-    border: 1px solid var(--gray-200);
-    border-left: 3px solid var(--gray-200); /* colored per variant below */
-    border-radius: var(--radius-md);
+    display: flex;
+    align-items: flex-start;
+    gap: 14px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
     box-shadow: var(--shadow-sm);
-    padding: 16px 18px;
+    padding: 18px;
+    transition: box-shadow 0.15s ease, transform 0.15s ease, border-color 0.15s ease;
   }
-  /* Colored left border keyed to the number variant (:has() — safe in Chrome/Edge) */
-  .stat-card:has(.stat-number.blue)  { border-left-color: var(--blue-text); }
-  .stat-card:has(.stat-number.green) { border-left-color: var(--green-text); }
-  .stat-card:has(.stat-number.red)   { border-left-color: var(--red-text); }
-  .stat-card:has(.stat-number.amber) { border-left-color: var(--amber-text); }
-  .stat-card.clickable {
-    cursor: pointer;
-    transition: box-shadow 0.15s ease, transform 0.15s ease;
-  }
+  .stat-card.clickable { cursor: pointer; }
   .stat-card.clickable:hover {
     box-shadow: var(--shadow-md);
-    transform: translateY(-1px);
+    transform: translateY(-2px);
+    border-color: var(--gray-400);
   }
+  .stat-card.clickable:focus-visible { outline: none; box-shadow: var(--focus-ring); }
   .stat-card.active {
-    box-shadow: inset 0 0 0 2px var(--navy-700);
+    border-color: var(--blue-accent);
+    box-shadow: inset 0 0 0 1px var(--blue-accent);
   }
-  .stat-number {
-    font-size: 28px;
-    font-weight: 700;
-    line-height: 1.2;
-    color: var(--gray-900);
-    font-variant-numeric: tabular-nums; /* counts don't jitter when filters change */
+  /* Colored icon tile — tinted bg + matching icon color per tone */
+  .stat-icon {
+    flex-shrink: 0;
+    width: 42px;
+    height: 42px;
+    border-radius: var(--radius-md);
+    display: flex;
+    align-items: center;
+    justify-content: center;
   }
-  .stat-number.blue   { color: var(--blue-text); }
-  .stat-number.amber  { color: var(--amber-text); }
-  .stat-number.green  { color: var(--green-text); }
-  .stat-number.red    { color: var(--red-text); }
+  .stat-icon-blue  { background: var(--blue-bg);   color: var(--blue-text); }
+  .stat-icon-green { background: var(--green-bg);  color: var(--green-text); }
+  .stat-icon-red   { background: var(--red-bg);    color: var(--red-text); }
+  .stat-icon-amber { background: var(--amber-bg);  color: var(--amber-text); }
+  .stat-icon-navy  { background: var(--navy-100);  color: var(--navy-700); }
+  .stat-body { min-width: 0; flex: 1; }
   .stat-label {
-    /* Overline tier — 11/600/uppercase/0.06em (shared with .form-section-title,
-       .filter-label, .data-table th) */
+    /* Overline tier */
     font-size: 11px;
     font-weight: 600;
     color: var(--text-secondary);
-    margin-top: 4px;
     text-transform: uppercase;
     letter-spacing: 0.06em;
   }
+  .stat-number {
+    font-size: 26px;
+    font-weight: 700;
+    line-height: 1.15;
+    color: var(--text-primary);
+    margin-top: 2px;
+    font-variant-numeric: tabular-nums; /* counts don't jitter when filters change */
+  }
+  /* Delta line — direction sets the color (up=green, down=red, flat=muted) */
+  .stat-delta {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    margin-top: 6px;
+    font-size: 12px;
+    font-weight: 500;
+  }
+  .stat-delta-up   { color: var(--green-text); }
+  .stat-delta-down { color: var(--red-text); }
+  .stat-delta-flat { color: var(--text-muted); }
 
 
   /* ─── BUTTONS ───────────────────────────────────────────── */
@@ -351,7 +380,8 @@
     align-items: center;
     justify-content: center;
     gap: 6px;
-    padding: 8px 16px;
+    height: 34px;        /* uniform control height across all variants */
+    padding: 0 14px;
     border-radius: var(--radius-md);
     font-size: 13px;
     font-weight: 500;
@@ -369,12 +399,14 @@
   /* Subtle physical press on click */
   .btn:active:not(:disabled) { transform: translateY(0.5px); }
 
+  /* Primary = the blue interactive accent (the SaaS call-to-action color;
+     navy stays the chrome/brand color on the sidebar + headers). */
   .btn-primary {
-    background: var(--navy-900);
+    background: var(--blue-accent);
     color: var(--white);
-    border-color: var(--navy-900);
+    border-color: var(--blue-accent);
   }
-  .btn-primary:hover:not(:disabled) { background: var(--navy-800); }
+  .btn-primary:hover:not(:disabled) { background: var(--blue-accent-700); border-color: var(--blue-accent-700); }
 
   .btn-secondary {
     background: var(--white);
@@ -383,12 +415,14 @@
   }
   .btn-secondary:hover:not(:disabled) { background: var(--gray-100); }
 
+  /* Solid green — Approve must read semantically distinct from generic
+     navy primary actions. Hover darkens via brightness (no new hex). */
   .btn-success {
-    background: var(--navy-900);
+    background: var(--green-text);
     color: var(--white);
-    border-color: var(--navy-900);
+    border-color: var(--green-text);
   }
-  .btn-success:hover:not(:disabled) { background: var(--navy-800); }
+  .btn-success:hover:not(:disabled) { filter: brightness(0.92); }
 
   .btn-warning {
     background: var(--white);
@@ -407,23 +441,37 @@
 
   /* ─── BADGES (status pills) ─────────────────────────────── */
   .badge {
-    display: inline-block;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
     font-size: 11px;
-    font-weight: 500;
+    font-weight: 600;
     padding: 4px 12px;
-    border-radius: 12px;
+    border-radius: 999px;
     line-height: 1;
     white-space: nowrap;
+    border: 1px solid transparent; /* outline variants override; keeps heights equal */
+  }
+  /* Leading status dot — inherits the pill's text color via currentColor */
+  .badge-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: currentColor;
+    flex-shrink: 0;
   }
   .badge-pending  { background: var(--blue-bg);   color: var(--blue-text); }
   .badge-approved { background: var(--green-bg);  color: var(--green-text); }
   .badge-declined { background: var(--red-bg);    color: var(--red-text); }
   .badge-returned { background: var(--amber-bg);  color: var(--amber-text); }
-  .badge-syncing  { background: var(--purple-bg); color: var(--purple-text); }
-  /* #10 — contract end date lapsed. Red = urgent; rendered NEXT TO the status
-     badge, never instead of it (so a Declined+expired row shows two red pills —
-     acceptable; the labels read differently). */
-  .badge-expired  { background: var(--red-bg);    color: var(--red-text); }
+  /* #10 — contract end date lapsed. Outline style (not the solid red tint) so it
+     reads as a MODIFIER chip next to the status badge, never as a status itself —
+     and no longer visually collides with the solid Declined pill. */
+  .badge-expired {
+    background: transparent;
+    color: var(--red-text);
+    border-color: var(--red-text);
+  }
 
 
   /* ─── TABLES ────────────────────────────────────────────── */
@@ -449,8 +497,24 @@
     border-bottom: 1px solid var(--gray-200);
     color: var(--gray-900);
   }
+  .data-table tbody tr { transition: background 0.1s ease; }
   .data-table tbody tr:hover { background: var(--gray-50); cursor: pointer; }
   .data-table tbody tr:last-child td { border-bottom: none; }
+  /* Last column is always the Filed date on every request table —
+     right-align + tabular figures so dates read as a column of numbers */
+  .data-table th:last-child,
+  .data-table td:last-child {
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+  }
+  /* Long free-text cells (project titles, requestor emails) — clip with
+     ellipsis; the full value lives in the cell's title attribute */
+  .data-table td.cell-clip {
+    max-width: 220px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
 
 
   /* ─── FORMS ─────────────────────────────────────────────── */
@@ -502,7 +566,7 @@
   .form-textarea:focus {
     outline: none;
     border-color: var(--navy-700);
-    box-shadow: 0 0 0 3px rgba(19, 69, 120, 0.1);
+    box-shadow: var(--focus-ring);
   }
   .form-textarea { min-height: 80px; resize: vertical; }
   .form-actions {
@@ -687,6 +751,26 @@
     min-width: 0; /* flex child must declare this to allow shrinking */
   }
 
+  /* Field grid inside .detail-main cards — cells are stacked label-over-value
+     (reads like Vercel's settings panels); two columns on desktop so the
+     12-row info card doesn't waste half the card width. */
+  .detail-grid .detail-row {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 2px;
+  }
+  .detail-grid .detail-key   { min-width: 0; }
+  .detail-grid .detail-value { text-align: left; }
+  @media (min-width: 1024px) {
+    .detail-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      column-gap: 24px;
+    }
+    .detail-grid .detail-row { min-width: 0; } /* grid child overflow guard */
+    .detail-grid .detail-row--full { grid-column: 1 / -1; }
+  }
+
 
   /* ─── PROGRESS STEPS (approval workflow indicator) ──────── */
   .progress-steps {
@@ -718,6 +802,7 @@
     background: var(--blue-bg);
     border-color: var(--blue-text);
     color: var(--blue-text);
+    animation: stepPulse 2s ease-in-out 2; /* breathes twice, then settles */
   }
   .step-dot.declined {
     background: var(--red-bg);
@@ -728,6 +813,7 @@
     flex: 1;
     height: 2px;
     background: var(--gray-200);
+    transition: background 240ms var(--ease-out);
   }
   .step-line.done { background: var(--navy-900); }
 
@@ -815,18 +901,23 @@
     color: var(--text-secondary);
   }
   .filter-select {
-    padding: 6px 10px;
+    height: 32px;
+    padding: 0 10px;
     border: 1px solid var(--border);
     border-radius: var(--radius);
     background: var(--white);
     color: var(--text-primary);
     font-size: 13px;
+    font-family: inherit;
     cursor: pointer;
     min-width: 140px;
+    transition: border-color 0.15s ease, box-shadow 0.15s ease;
   }
+  .filter-select:hover { border-color: var(--gray-400); }
   .filter-select:focus {
     outline: none;
     border-color: var(--primary);
+    box-shadow: var(--focus-ring);
   }
 
 
@@ -868,6 +959,41 @@
   }
   @keyframes spin {
     to { transform: rotate(360deg); }
+  }
+
+  /* ─── MOTION (shared keyframes) ─────────────────────────── */
+  /* Page/list enter — subtle rise + fade. Re-triggered by navigateTo()
+     via the .page-in class (remove → reflow → add). */
+  @keyframes pageIn {
+    from { opacity: 0; transform: translateY(4px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+  #app.page-in { animation: pageIn 180ms var(--ease-out); }
+  /* Same rise+fade for in-page list swaps (e.g. #approver-list re-render) */
+  .fade-in { animation: pageIn 150ms var(--ease-out); }
+
+  @keyframes modalIn {
+    from { opacity: 0; transform: scale(0.98); }
+    to   { opacity: 1; transform: scale(1); }
+  }
+  @keyframes overlayIn {
+    from { opacity: 0; }
+    to   { opacity: 1; }
+  }
+  /* Breathing ring on the active approval step — 2 iterations then settles,
+     enough to draw the eye without being a perpetual distraction. */
+  @keyframes stepPulse {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(24, 95, 165, 0.25); }
+    50%      { box-shadow: 0 0 0 6px rgba(24, 95, 165, 0); }
+  }
+
+  /* Accessibility — kill all motion for users who asked for it */
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+    }
   }
 
 
@@ -948,13 +1074,19 @@
     position: fixed;
     inset: 0;
     background: rgba(15, 23, 42, 0.45);
-    display: none;
+    display: flex;
     align-items: center;
     justify-content: center;
     z-index: 2500; /* above the confirm modal (2000) so it can cover one */
+    /* visibility+opacity instead of display toggle so show/hide can fade —
+       visibility:hidden still blocks pointer events from a hidden overlay */
+    visibility: hidden;
+    opacity: 0;
+    transition: opacity 120ms ease-out, visibility 120ms ease-out;
   }
   .loading-overlay.show {
-    display: flex;
+    visibility: visible;
+    opacity: 1;
   }
   .loading-box {
     background: var(--white);
@@ -985,10 +1117,10 @@
     padding: 12px 20px;
     border-radius: var(--radius-md);
     font-size: 13px;
-    box-shadow: var(--shadow-md);
+    box-shadow: var(--shadow-lg);
     z-index: 1000;
     opacity: 0;
-    transform: translateY(20px);
+    transform: translateY(8px);
     transition: opacity 0.2s ease, transform 0.2s ease;
   }
   .toast.show {
@@ -1009,14 +1141,16 @@
     justify-content: center;
     padding: 24px;
     z-index: 2000;
+    animation: overlayIn 120ms ease-out; /* fires on append (showConfirm) */
   }
   .modal {
     background: var(--white);
     border-radius: var(--radius-lg);
-    box-shadow: var(--shadow-md);
+    box-shadow: var(--shadow-lg);
     max-width: 440px;
     width: 100%;
     padding: 24px;
+    animation: modalIn 150ms var(--ease-out);
   }
   .modal-title {
     font-size: 16px;
@@ -1038,13 +1172,15 @@
 
 
   /* ─── MIGA MASCOT WIDGET ────────────────────────────────── */
+  /* Soft tinted "companion aside" — deliberately NOT a white data card,
+     so it reads as the mascot's voice and not another content block. */
   .miga-widget {
     display: flex;
     align-items: center;
     gap: 16px;
     padding: 16px;
-    background: var(--white);
-    border: 1px solid var(--gray-200);
+    background: var(--gray-100);
+    border: none;
     border-radius: var(--radius-lg);
     margin-bottom: 20px;
   }
@@ -1054,12 +1190,18 @@
     flex-shrink: 0;
     object-fit: contain;
     border-radius: var(--radius-md);
+    /* TODO (Phase 12): interim Miga images have a dark background, so the navy
+       fill doubles as a deliberate frame. When the licensed TRANSPARENT assets
+       land, remove this background line — nothing else needs to change. */
     background: var(--navy-900);
   }
   .miga-bubble-name {
-    font-size: 12px;
-    font-weight: 500;
-    color: var(--navy-900);
+    /* Overline tier */
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--navy-700);
     margin-bottom: 2px;
   }
   .miga-bubble-text {
@@ -1145,11 +1287,48 @@
     justify-content: center;
     flex-shrink: 0;
   }
-  /* Two-tile admin landing (View Records / View Groups) — wider cards. */
-  .admin-landing {
-    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
-    max-width: 640px;
+  /* Two-tile admin landing — distinct "choice cards" (icon + title + desc +
+     arrow), not repurposed stat cards. */
+  .choice-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: 16px;
+    max-width: 720px;
   }
+  .choice-card {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding: 22px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-sm);
+    cursor: pointer;
+    transition: box-shadow 0.15s ease, transform 0.15s ease, border-color 0.15s ease;
+  }
+  .choice-card:hover {
+    box-shadow: var(--shadow-md);
+    transform: translateY(-2px);
+    border-color: var(--blue-accent);
+  }
+  .choice-card:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+  .choice-icon {
+    flex-shrink: 0;
+    width: 48px;
+    height: 48px;
+    border-radius: var(--radius-md);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .choice-icon-blue { background: var(--blue-bg);  color: var(--blue-text); }
+  .choice-icon-navy { background: var(--navy-100); color: var(--navy-700); }
+  .choice-body { flex: 1; min-width: 0; }
+  .choice-title { font-size: 16px; font-weight: 600; color: var(--text-primary); }
+  .choice-desc  { font-size: 13px; color: var(--text-secondary); margin-top: 2px; }
+  .choice-arrow { flex-shrink: 0; color: var(--text-muted); transition: transform 0.15s ease; }
+  .choice-card:hover .choice-arrow { color: var(--blue-accent); transform: translateX(2px); }
   /* "← Admin home" back link above each section. */
   .admin-back {
     display: inline-block;
@@ -1180,6 +1359,257 @@
     text-decoration: line-through;
     overflow-wrap: anywhere;
   }
+
+
+  /* ─── ICONS (inline SVG primitive) ──────────────────────── */
+  .ui-icon { display: inline-block; vertical-align: middle; flex-shrink: 0; }
+
+
+  /* ─── HERO CARD (dashboard greeting band) ───────────────── */
+  .hero-card {
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 24px;
+    overflow: hidden;
+    border-radius: var(--radius-lg);
+    margin-bottom: 24px;
+    padding: 28px 32px;
+    /* Navy brand gradient — chrome color, not the blue CTA accent */
+    background: linear-gradient(120deg, var(--navy-900) 0%, var(--navy-700) 100%);
+    color: var(--white);
+    box-shadow: var(--shadow-md);
+  }
+  .hero-content { position: relative; z-index: 1; min-width: 0; max-width: 560px; }
+  .hero-greeting {
+    font-size: 13px;
+    color: #c5d4e3;
+    margin-bottom: 4px;
+  }
+  .hero-title {
+    font-size: 26px;
+    font-weight: 700;
+    letter-spacing: -0.015em;
+    line-height: 1.2;
+  }
+  .hero-subtitle {
+    font-size: 14px;
+    color: #d6e2ef;
+    margin-top: 6px;
+    line-height: 1.5;
+  }
+  .hero-insights {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 16px;
+  }
+  .hero-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 5px 12px;
+    border-radius: 999px;
+    font-size: 12.5px;
+    font-weight: 500;
+    color: var(--white);
+    background: rgba(255, 255, 255, 0.12);
+    border: 1px solid rgba(255, 255, 255, 0.18);
+  }
+  .hero-chip .ui-icon { color: #bcd3ea; } /* legible icon tint on the navy hero */
+  /* Mascot + decorative skyline pinned to the right */
+  .hero-art {
+    position: relative;
+    flex-shrink: 0;
+    width: 200px;
+    height: 130px;
+    align-self: stretch;
+  }
+  /* Soft halo framing the mascot (matches the mockup's light backdrop, and
+     keeps the interim dark-bg Miga art from reading as a hard rectangle). */
+  .hero-art::before {
+    content: '';
+    position: absolute;
+    right: -6px;
+    bottom: -28px;
+    width: 168px;
+    height: 168px;
+    border-radius: 50%;
+    background: radial-gradient(circle, rgba(255,255,255,0.18) 0%, rgba(255,255,255,0) 68%);
+  }
+  .hero-skyline {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+  }
+  .hero-mascot {
+    position: absolute;
+    right: 8px;
+    bottom: -28px;          /* sits the mascot into the card's bottom edge */
+    height: 150px;
+    width: auto;
+    object-fit: contain;
+    /* interim Miga art has a dark bg; on the navy hero it blends naturally.
+       TODO (Phase 12): with transparent assets this just works as-is. */
+    animation: heroFloat 4s ease-in-out infinite;
+  }
+  @keyframes heroFloat {
+    0%, 100% { transform: translateY(0); }
+    50%      { transform: translateY(-6px); }
+  }
+
+
+  /* ─── SEARCH BAR ────────────────────────────────────────── */
+  .search-bar {
+    position: relative;
+    display: flex;
+    align-items: center;
+    flex: 1;
+    min-width: 200px;
+    max-width: 360px;
+  }
+  .search-bar .ui-icon {
+    position: absolute;
+    left: 12px;
+    color: var(--text-muted);
+    pointer-events: none;
+  }
+  .search-input {
+    width: 100%;
+    height: 38px;
+    padding: 0 12px 0 36px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--surface);
+    color: var(--text-primary);
+    font-size: 13px;
+    font-family: inherit;
+    transition: border-color 0.15s ease, box-shadow 0.15s ease;
+  }
+  .search-input::placeholder { color: var(--text-muted); }
+  .search-input:hover { border-color: var(--gray-400); }
+  .search-input:focus {
+    outline: none;
+    border-color: var(--blue-accent);
+    box-shadow: var(--focus-ring);
+  }
+  /* Controls row: search on the left, filter/sort pushed right */
+  .controls-bar {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+    margin-bottom: 16px;
+  }
+  .controls-bar .filter-bar { padding-bottom: 0; margin-left: auto; }
+
+
+  /* ─── PAGINATION ────────────────────────────────────────── */
+  .pagination {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 12px;
+    padding-top: 16px;
+    margin-top: 4px;
+    border-top: 1px solid var(--border);
+  }
+  .page-info { font-size: 13px; color: var(--text-secondary); }
+  .page-controls { display: flex; align-items: center; gap: 4px; }
+  .page-btn {
+    min-width: 34px;
+    height: 34px;
+    padding: 0 8px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--surface);
+    color: var(--text-secondary);
+    font-size: 13px;
+    font-weight: 500;
+    font-family: inherit;
+    cursor: pointer;
+    transition: all 0.12s ease;
+  }
+  .page-btn:hover:not(:disabled):not(.active) { background: var(--gray-100); color: var(--text-primary); }
+  .page-btn:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+  .page-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+  .page-btn.active {
+    background: var(--blue-accent);
+    border-color: var(--blue-accent);
+    color: var(--white);
+  }
+  .page-nav { color: var(--text-secondary); }
+
+
+  /* ─── SIDEBAR NAV ICONS ─────────────────────────────────── */
+  .navbar-link { gap: 10px; }            /* icon + label spacing */
+  .navbar-link .ui-icon { color: inherit; opacity: 0.85; }
+  .navbar-link.active .ui-icon { opacity: 1; }
+  /* Brand logo mark (square) next to the wordmark */
+  .navbar-brand-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .navbar-logo {
+    flex-shrink: 0;
+    width: 30px;
+    height: 30px;
+    border-radius: var(--radius-sm);
+    background: var(--white);
+    color: var(--navy-900);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 700;
+    font-size: 15px;
+    letter-spacing: -0.02em;
+  }
+  .navbar-brand-text { line-height: 1.3; }
+
+
+  /* ─── TABLE ENHANCEMENTS (request rows) ─────────────────── */
+  /* Leading "request" cell: file icon tile + control no. (primary) +
+     optional secondary line. */
+  .cell-request { display: flex; align-items: center; gap: 10px; }
+  .cell-request-icon {
+    flex-shrink: 0;
+    width: 32px;
+    height: 32px;
+    border-radius: var(--radius-sm);
+    background: var(--blue-bg);
+    color: var(--blue-text);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .cell-request-text { min-width: 0; }
+  .cell-primary {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-primary);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .cell-secondary {
+    font-size: 12px;
+    color: var(--text-muted);
+  }
+  /* Date cell with a calendar glyph */
+  .cell-date { display: inline-flex; align-items: center; gap: 6px; color: var(--text-secondary); }
+  .cell-date .ui-icon { color: var(--text-muted); }
+  /* Right-side chevron — slides on row hover */
+  .cell-chevron { width: 24px; text-align: right; color: var(--text-muted); }
+  .data-table tbody tr:hover .cell-chevron { color: var(--blue-accent); }
+  .cell-chevron .ui-icon { transition: transform 0.15s ease; }
+  .data-table tbody tr:hover .cell-chevron .ui-icon { transform: translateX(2px); }
 
 
   /* ─── UTILITIES ─────────────────────────────────────────── */
@@ -1246,11 +1676,29 @@
     }
     .navbar-user-row { gap: 6px; }
     .navbar-signout { padding-left: 0; }
+    /* Horizontal-bar mode: hide the logo mark, keep wordmark compact */
+    .navbar-logo { display: none; }
+    .navbar-brand-row { gap: 0; }
+  }
+
+  /* Tablet/large-phone: hero mascot gets in the way — trim it down */
+  @media (max-width: 880px) {
+    .hero-art { width: 130px; }
+    .hero-mascot { height: 118px; bottom: -22px; }
   }
 
   @media (max-width: 640px) {
     .app-main { padding: 16px; }
     .form-grid { grid-template-columns: 1fr; }
     .page-header { flex-direction: column; }
+    /* Hero: drop the mascot, let the message use the full width */
+    .hero-card { padding: 22px; }
+    .hero-art { display: none; }
+    .hero-title { font-size: 22px; }
+    /* Controls stack; search goes full width */
+    .controls-bar { flex-direction: column; align-items: stretch; }
+    .controls-bar .filter-bar { margin-left: 0; }
+    .search-bar { max-width: none; }
+    .pagination { justify-content: center; }
   }
 </style>

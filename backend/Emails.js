@@ -9,13 +9,21 @@
   "approved na!", kasama ang bawat decline, return, resubmit at progress
   update — narito. Kapalit ito ng AppSheet's 5 notification bots. Ang bawat
   email function ay inaalam ang detalye ng request galing sa sheet, nagtatayo
-  ng body + subject, at nagpapadala gamit ang GmailApp.
+  ng plain-text body (fallback) + branded HTML body (EmailHtml.js helpers) +
+  subject, at nagpapadala via sendBrandedEmail().
 
   TECHNICAL:
-  12 send* functions (one per notification event) + 7 shared helpers. All
-  called by the handle* functions in WebApp.js immediately after a successful
-  state change. Identity for actioner-confirmation emails comes from
-  Session.getActiveUser(); caller-independent data comes from getRequestData().
+  15 send* functions (one per notification event) + 7 shared helpers. All
+  event emails are called by the handle* functions in WebApp.js immediately
+  after a successful state change; two are trigger-fired (Triggers.js sweeps);
+  one is admin-fired (adminSaveChain). Identity for actioner-confirmation
+  emails comes from Session.getActiveUser(); caller-independent data comes
+  from getRequestData(). Every send goes through sendBrandedEmail(recipient,
+  subject, textBody, htmlBody, extraOptions) (EmailHtml.js): the plain-text
+  body remains the fallback (3rd positional arg), the HTML twin rides in
+  options.htmlBody. The HTML layer (emailLayout/emailButton/emailInfoTable/
+  emailRemarkBox/etc.) lives in EmailHtml.js — table-based, inline styles,
+  per-status accent band, all user values escaped by the helpers themselves.
 
   ⚠️ PRODUCTION FLAG:
     EMAIL_DEV_TAG = true in dev (adds [FOR APPROVER]/[FOR REQUESTOR] prefix).
@@ -35,7 +43,7 @@
   ────────────────────────────────────────────────────────────
   EMAIL FUNCTIONS (event-fired, via handle* in WebApp.js)
   #   Function                          To              Fires when
-  1   sendApprovalRequest               next approver   submit + resubmit (SYNCING→PENDING)
+  1   sendApprovalRequest               next approver   submit + intermediate approval
   2   sendDeclineToApprover             decliner        declined
   3   sendDeclineToRequestor            requestor       declined
   4   sendFullyApprovedToApprover       last approver   fully approved
@@ -51,6 +59,9 @@
   EMAIL FUNCTIONS (trigger-fired, via the daily sweeps in Triggers.js)
   13  sendExpiryReminderToRequestor     requestor       daily expiry sweep (#10)
   14  sendPendingApprovalReminder       current approver daily approver-reminder sweep (digest)
+
+  EMAIL FUNCTIONS (admin-fired, via adminSaveChain in Admin.js)
+  15  sendNewApproverNotice             new/changed approver  chain add / reorder
 */
 
 
@@ -274,7 +285,21 @@ ${approvalLog}
 Please review and act on this request (approve, decline, or return).
 Open this request: ${getPortalUrl(requestId, "review")}`;
 
-  GmailApp.sendEmail(currentApprover, subject, body);
+  // HTML twin — same content blocks, branded layout. Plain `body` stays the fallback.
+  const html = emailLayout({
+    accent:   "navy", // action needed
+    bodyHtml:
+      emailP("Good day!") +
+      emailP("You have a new e-certificate request that requires your <strong>review and action</strong>.") +
+      emailInfoTable(rowData) +
+      emailSection("Supporting Documents", emailAttachmentList(requestId)) +
+      emailSection("Approval Progress", emailApprovalLog(rowData, approvers)) +
+      emailP("Please review and act on this request (approve, decline, or return)."),
+    buttonUrl:   getPortalUrl(requestId, "review"),
+    buttonLabel: "Review this request",
+  });
+
+  sendBrandedEmail(currentApprover, subject, body, html);
   Logger.log(`sendApprovalRequest(): Emailed ${currentApprover} for ${requestId}`);
 }
 
@@ -311,7 +336,21 @@ Date of Action: ${nowFormatted()}
 The requestor has been notified that this request is now closed and cannot be resubmitted.
 Open this request: ${getPortalUrl(requestId, "review")}`;
 
-  GmailApp.sendEmail(actioner, subject, body);
+  // HTML twin — red accent (decline receipt).
+  const html = emailLayout({
+    accent:   "red",
+    bodyHtml:
+      emailP("Good day!") +
+      emailP("This confirms that you, as <strong>" + escapeHtml(approverLabel) +
+             "</strong>, have <strong>declined</strong> the following request.") +
+      emailInfoTable(rowData) +
+      emailKeyValueRows([["Date of Action", nowFormatted()]]) +
+      emailP("The requestor has been notified that this request is now closed and cannot be resubmitted."),
+    buttonUrl:   getPortalUrl(requestId, "review"),
+    buttonLabel: "Open this request",
+  });
+
+  sendBrandedEmail(actioner, subject, body, html);
   Logger.log(`sendDeclineToApprover(): Confirmation sent to ${actioner}`);
 }
 
@@ -354,7 +393,24 @@ Date: ${nowFormatted()}
 Note: If you would like to try again, you must create a brand new request.
 Open this request: ${getPortalUrl(requestId, "request")}`;
 
-  GmailApp.sendEmail(requestor, subject, body);
+  // HTML twin — red accent; decline reason in a red callout box.
+  const html = emailLayout({
+    accent:   "red",
+    bodyHtml:
+      emailP("Good day!") +
+      emailP("We regret to inform you that your request has been <strong>declined</strong>.") +
+      emailInfoTable(rowData) +
+      emailRemarkBox("Reason for Decline", reason, "red") +
+      emailKeyValueRows([
+        ["Declined by", approverLabel + " (" + actioner + ")"],
+        ["Date",        nowFormatted()],
+      ]) +
+      emailP("Note: If you would like to try again, you must create a brand new request."),
+    buttonUrl:   getPortalUrl(requestId, "request"),
+    buttonLabel: "Open this request",
+  });
+
+  sendBrandedEmail(requestor, subject, body, html);
   Logger.log(`sendDeclineToRequestor(): Decline email sent to ${requestor}`);
 }
 
@@ -402,7 +458,20 @@ Final Approval Date: ${formatPHTime(new Date(lastDate))}
 The request is now fully approved and the requestor has been notified. Thank you!
 Open this request: ${getPortalUrl(requestId, "review")}`;
 
-  GmailApp.sendEmail(recipient, subject, body);
+  // HTML twin — green accent (final approval receipt).
+  const html = emailLayout({
+    accent:   "green",
+    bodyHtml:
+      emailP("Good day!") +
+      emailP("This confirms that you provided the <strong>final approval</strong> for the following request.") +
+      emailInfoTable(rowData) +
+      emailKeyValueRows([["Final Approval Date", formatPHTime(new Date(lastDate))]]) +
+      emailP("The request is now fully approved and the requestor has been notified. Thank you!"),
+    buttonUrl:   getPortalUrl(requestId, "review"),
+    buttonLabel: "Open this request",
+  });
+
+  sendBrandedEmail(recipient, subject, body, html);
   Logger.log(`sendFullyApprovedToApprover(): Confirmation sent to ${recipient}`);
 }
 
@@ -434,9 +503,10 @@ Open this request: ${getPortalUrl(requestId, "review")}`;
       Layman    : Gawin ang COC PDF. Kung pumalpak, huwag i-block ang email.
       Technical : try/catch generateCOC; keep pdfBlob on success, else log + null.
     Step 3 — Compose + send (attach if available)
-      Layman    : Buuin ang email; ikabit ang PDF kung meron; ipadala.
-      Technical : conditional body line + 4-arg GmailApp.sendEmail with
-                  { attachments:[cocBlob] } when present.
+      Layman    : Buuin ang email (text + branded HTML); ikabit ang PDF kung
+                  meron; ipadala.
+      Technical : conditional body line + sendBrandedEmail(...) passing
+                  { attachments:[cocBlob] } as extraOptions when present.
 */
 function sendFullyApprovedToRequestor(requestId) {
   const data = getRequestData(requestId);
@@ -475,8 +545,22 @@ ${approvalLog}
 ${cocLine} Thank you for using the E-Certificate portal!
 Open this request: ${getPortalUrl(requestId, "request")}`;
 
-  const options = cocBlob ? { attachments: [cocBlob] } : {};
-  GmailApp.sendEmail(requestor, subject, body, options);
+  // HTML twin — green accent (the good-news email); COC note in a green box.
+  const html = emailLayout({
+    accent:   "green",
+    bodyHtml:
+      emailP("Good day!") +
+      emailP("Great news &mdash; your request has been <strong>fully approved</strong>.") +
+      emailInfoTable(rowData) +
+      emailSection("Final Signatory Log", emailApprovalLog(rowData, approvers)) +
+      emailRemarkBox(null, cocLine, "green") +
+      emailP("Thank you for using the E-Certificate portal!"),
+    buttonUrl:   getPortalUrl(requestId, "request"),
+    buttonLabel: "Open this request",
+  });
+
+  // PDF attachment rides in extraOptions — same single-send, same blob.
+  sendBrandedEmail(requestor, subject, body, html, cocBlob ? { attachments: [cocBlob] } : null);
   Logger.log(`sendFullyApprovedToRequestor(): Approval email sent to ${requestor}${cocBlob ? " (COC attached)" : " (no COC)"}`);
 }
 
@@ -548,7 +632,21 @@ Contract End Date: ${endStr}
 
 Open this request: ${getPortalUrl(requestId, "request")}`;
 
-  GmailApp.sendEmail(requestor, subject, body);
+  // HTML twin — amber accent for all 3 stages (warning class); the stage-
+  // specific lead line goes in an amber box so the deadline can't be missed.
+  const html = emailLayout({
+    accent:   "amber",
+    bodyHtml:
+      emailP("Good day!") +
+      emailRemarkBox(label, lead, "amber") +
+      emailP("If this contract is being renewed, please file a new e-certificate request for the renewed term.") +
+      emailInfoTable(rowData) +
+      emailKeyValueRows([["Contract End Date", endStr]]),
+    buttonUrl:   getPortalUrl(requestId, "request"),
+    buttonLabel: "Open this request",
+  });
+
+  sendBrandedEmail(requestor, subject, body, html);
   Logger.log(`sendExpiryReminderToRequestor(): ${label} reminder sent to ${requestor} for ${controlNumber} (daysUntil=${daysUntil}).`);
 }
 
@@ -594,7 +692,7 @@ Open this request: ${getPortalUrl(requestId, "request")}`;
     Step 2 — Subject + intro, then send
       Layman    : Bilangin ilan, gawing pang-isahan/maramihan, ipadala.
       Technical : emailSubject("Reminder", "N Pending Approval(s)", "APPROVER");
-                  GmailApp.sendEmail; log the count.
+                  sendBrandedEmail (text + HTML digest); log the count.
 
   EXAMPLE
     sendPendingApprovalReminder("boss@corp.com", [rowA, rowB])
@@ -630,7 +728,30 @@ ${blocks}
 
 Please review and act on ${n > 1 ? "each" : "the"} request in the portal. Thank you!`;
 
-  GmailApp.sendEmail(approverEmail, subject, body);
+  // HTML twin — one emailRequestBlock-style section per pending request,
+  // joined by dividers. ~2-3KB per block keeps even 20+ requests well under
+  // Gmail's 102KB clipping threshold.
+  const htmlBlocks = requestRows.map(function (row) {
+    const requestId = row[CR.REQUEST_ID - 1];
+    const approvers = getApprovers(row[CR.GROUP - 1]);
+    return emailInfoTable(row) +
+      emailSection("Supporting Documents", emailAttachmentList(requestId)) +
+      emailSection("Approval Progress", emailApprovalLog(row, approvers)) +
+      emailButton(getPortalUrl(requestId, "review"), "Review this request");
+  }).join(emailDivider());
+
+  const html = emailLayout({
+    accent:   "navy", // action needed
+    bodyHtml:
+      emailP("Good day!") +
+      emailP("This is a daily reminder that the following e-certificate request" +
+             (n > 1 ? "s are" : " is") + " <strong>awaiting your review and action</strong>:") +
+      htmlBlocks +
+      emailP("Please review and act on " + (n > 1 ? "each" : "the") + " request in the portal. Thank you!"),
+    // No layout-level button — each block carries its own review button.
+  });
+
+  sendBrandedEmail(approverEmail, subject, body, html);
   Logger.log("sendPendingApprovalReminder(): " + n + " request(s) -> " + approverEmail);
 }
 
@@ -682,7 +803,7 @@ Please review and act on ${n > 1 ? "each" : "the"} request in the portal. Thank 
       Layman    : Bago → "You have been added… Approver N." Reorder → "You were
                   Approver M, now Approver N." Idugtong ang listahan kung meron.
       Technical : branch on previousStep; emailSubject suffix "Added as Approver"
-                  vs "Approver Role Changed"; GmailApp.sendEmail.
+                  vs "Approver Role Changed"; sendBrandedEmail (text + HTML).
 
   EXAMPLE
     sendNewApproverNotice("boss@corp.com", "Engineering", 1, null, [rowA])
@@ -747,7 +868,47 @@ ${lead}${pendingSection}
 
 Thank you!`;
 
-  GmailApp.sendEmail(approverEmail, subject, body);
+  // HTML twin — navy accent (assignment/role notice). Lead is rebuilt as HTML
+  // (the text `lead` embeds \n breaks); pending requests render as full blocks.
+  let leadHtml;
+  if (!previousStep) {
+    leadHtml = emailP("You have been <strong>added as an approver</strong> for the group: <strong>" +
+                 escapeHtml(groupName) + "</strong>.") +
+               (approverStep ? emailP("Your role: <strong>Approver " + escapeHtml(approverStep) + "</strong> in this group.") : "");
+  } else if (previousStep !== approverStep) {
+    leadHtml = emailP("Your approver role for the group &quot;" + escapeHtml(groupName) + "&quot; has <strong>changed</strong>.") +
+               emailP("You were Approver " + escapeHtml(previousStep) +
+                      "; you are now <strong>Approver " + escapeHtml(approverStep) + "</strong>.");
+  } else {
+    leadHtml = emailP("You are now the <strong>current approver</strong> for the group &quot;" +
+                 escapeHtml(groupName) + "&quot; (Approver " + escapeHtml(approverStep) + ").");
+  }
+
+  let pendingHtml;
+  if (rows.length) {
+    const n = rows.length;
+    pendingHtml =
+      emailP("The following request" + (n > 1 ? "s are" : " is") +
+             " <strong>already awaiting your review and action</strong>:") +
+      rows.map(function (row) {
+        const requestId = row[CR.REQUEST_ID - 1];
+        const approvers = getApprovers(row[CR.GROUP - 1]);
+        return emailInfoTable(row) +
+          emailSection("Supporting Documents", emailAttachmentList(requestId)) +
+          emailSection("Approval Progress", emailApprovalLog(row, approvers)) +
+          emailButton(getPortalUrl(requestId, "review"), "Review this request");
+      }).join(emailDivider()) +
+      emailP("Please review and act on " + (n > 1 ? "each" : "the") + " request in the portal.");
+  } else {
+    pendingHtml = emailP("You'll be notified as requests are routed to you for approval.");
+  }
+
+  const html = emailLayout({
+    accent:   "navy",
+    bodyHtml: emailP("Good day!") + leadHtml + pendingHtml + emailP("Thank you!"),
+  });
+
+  sendBrandedEmail(approverEmail, subject, body, html);
   Logger.log("sendNewApproverNotice(): " + groupName + " -> " + approverEmail +
              " (step " + (previousStep || "-") + "→" + (approverStep || "?") + ", " + rows.length + " pending)");
 }
@@ -792,7 +953,24 @@ Reason for Return: ${reason}
 Please review the comments, make the necessary changes, and resubmit your request.
 Open this request: ${getPortalUrl(requestId, "request")}`;
 
-  GmailApp.sendEmail(requestor, subject, body);
+  // HTML twin — amber accent; return reason in an amber callout box.
+  const html = emailLayout({
+    accent:   "amber",
+    bodyHtml:
+      emailP("Good day!") +
+      emailP("Your request has been <strong>sent back to you for updates</strong>.") +
+      emailInfoTable(rowData) +
+      emailKeyValueRows([
+        ["Returned by", returnerLine],
+        ["Return Date", nowFormatted()],
+      ]) +
+      emailRemarkBox("Reason for Return", reason, "amber") +
+      emailP("Please review the comments, make the necessary changes, and resubmit your request."),
+    buttonUrl:   getPortalUrl(requestId, "request"),
+    buttonLabel: "Update and resubmit",
+  });
+
+  sendBrandedEmail(requestor, subject, body, html);
   Logger.log(`sendReturnToRequestor(): Return email sent to ${requestor}`);
 }
 
@@ -833,7 +1011,24 @@ Date of Action: ${nowFormatted()}
 The requestor has been notified to review your comments and take the necessary next steps.
 Open this request: ${getPortalUrl(requestId, "review")}`;
 
-  GmailApp.sendEmail(actioner, subject, body);
+  // HTML twin — amber accent (return receipt).
+  const html = emailLayout({
+    accent:   "amber",
+    bodyHtml:
+      emailP("Good day!") +
+      emailP("This confirms that you have <strong>returned</strong> the following request" +
+             escapeHtml(roleNote) + " for further updates.") +
+      emailInfoTable(rowData) +
+      emailKeyValueRows([
+        ["Returned to",    requestor],
+        ["Date of Action", nowFormatted()],
+      ]) +
+      emailP("The requestor has been notified to review your comments and take the necessary next steps."),
+    buttonUrl:   getPortalUrl(requestId, "review"),
+    buttonLabel: "Open this request",
+  });
+
+  sendBrandedEmail(actioner, subject, body, html);
   Logger.log(`sendReturnConfirmToApprover(): Confirmation sent to ${actioner}`);
 }
 
@@ -875,7 +1070,20 @@ Date of Action: ${nowFormatted()}
 The request has been forwarded to the next approver. You will be notified once the full process is complete.
 Open this request: ${getPortalUrl(requestId, "review")}`;
 
-  GmailApp.sendEmail(actioner, subject, body);
+  // HTML twin — green accent (approval receipt).
+  const html = emailLayout({
+    accent:   "green",
+    bodyHtml:
+      emailP("Good day!") +
+      emailP("This confirms that you have <strong>approved</strong> the following request.") +
+      emailInfoTable(rowData) +
+      emailKeyValueRows([["Date of Action", nowFormatted()]]) +
+      emailP("The request has been forwarded to the next approver. You will be notified once the full process is complete."),
+    buttonUrl:   getPortalUrl(requestId, "review"),
+    buttonLabel: "Open this request",
+  });
+
+  sendBrandedEmail(actioner, subject, body, html);
   Logger.log(`sendApproveConfirmToApprover(): Confirmation sent to ${actioner}`);
 }
 
@@ -925,7 +1133,22 @@ You will be notified once the remaining steps are complete. Thank you for your p
 ${REQUESTOR_PORTAL_NOTE}
 Open this request: ${getPortalUrl(requestId, "request")}`;
 
-  GmailApp.sendEmail(requestor, subject, body);
+  // HTML twin — navy accent (informational progress, no action needed).
+  const html = emailLayout({
+    accent:   "navy",
+    bodyHtml:
+      emailP("Good day!") +
+      emailP("Good news &mdash; your request has cleared <strong>" + completed + " of " + total +
+             "</strong> approval steps and is now awaiting the next approver.") +
+      emailInfoTable(rowData) +
+      emailSection("Approval Progress So Far", emailApprovalLog(rowData, approvers)) +
+      emailP("You will be notified once the remaining steps are complete. Thank you for your patience.") +
+      emailRemarkBox(null, REQUESTOR_PORTAL_NOTE, "blue"),
+    buttonUrl:   getPortalUrl(requestId, "request"),
+    buttonLabel: "Open this request",
+  });
+
+  sendBrandedEmail(requestor, subject, body, html);
   Logger.log(`sendProgressUpdateToRequestor(): Progress email sent to ${requestor} (${completed}/${total})`);
 }
 
@@ -977,9 +1200,26 @@ Date: ${nowFormatted()}
 When the requestor resubmits, the request will route through the full approval chain again and will require your approval once more. You will receive a new action request at that time.
 Open this request: ${getPortalUrl(requestId, "review")}`;
 
+  // HTML twin — built ONCE before the loop (same body for every prior approver).
+  const html = emailLayout({
+    accent:   "amber",
+    bodyHtml:
+      emailP("Good day!") +
+      emailP("A request you had previously approved has been <strong>returned to the requestor</strong> for further updates.") +
+      emailInfoTable(rowData) +
+      emailKeyValueRows([
+        ["Returned by", returnerLine],
+        ["Date",        nowFormatted()],
+      ]) +
+      emailRemarkBox("Reason for Return", reason || "No reason provided.", "amber") +
+      emailP("When the requestor resubmits, the request will route through the full approval chain again and will require your approval once more. You will receive a new action request at that time."),
+    buttonUrl:   getPortalUrl(requestId, "review"),
+    buttonLabel: "Open this request",
+  });
+
   previousApprovals.forEach(function (entry) {
     if (!entry.email) return;
-    GmailApp.sendEmail(entry.email, subject, body);
+    sendBrandedEmail(entry.email, subject, body, html);
     Logger.log(`sendReturnedChainNotification(): Notified prior approver ${entry.email} for ${requestId}`);
   });
 }
@@ -1027,7 +1267,23 @@ You will be notified as the request progresses through the approval chain.
 ${REQUESTOR_PORTAL_NOTE}
 Open this request: ${getPortalUrl(requestId, "request")}`;
 
-  GmailApp.sendEmail(requestor, subject, body);
+  // HTML twin — navy accent (receipt/informational).
+  const html = emailLayout({
+    accent:   "navy",
+    bodyHtml:
+      emailP("Good day!") +
+      emailP("Your request has been successfully <strong>resubmitted" + escapeHtml(countNote) +
+             "</strong> and is now awaiting Approver 1.") +
+      emailInfoTable(rowData) +
+      emailKeyValueRows([["Resubmitted on", nowFormatted()]]) +
+      emailRemarkBox("Previous Return Reason", returnReason || "No reason provided.", "amber") +
+      emailP("You will be notified as the request progresses through the approval chain.") +
+      emailRemarkBox(null, REQUESTOR_PORTAL_NOTE, "blue"),
+    buttonUrl:   getPortalUrl(requestId, "request"),
+    buttonLabel: "Open this request",
+  });
+
+  sendBrandedEmail(requestor, subject, body, html);
   Logger.log(`sendResubmitConfirmToRequestor(): Confirmation sent to ${requestor}`);
 }
 
@@ -1082,6 +1338,21 @@ ${attachmentList}
 Please review the updates made by the requestor and act on this request (approve, decline, or return).
 Open this request: ${getPortalUrl(requestId, "review")}`;
 
-  GmailApp.sendEmail(currentApprover, subject, body);
+  // HTML twin — resubmission context up top, prior return reason in an amber box.
+  const html = emailLayout({
+    accent:   "navy", // action needed
+    bodyHtml:
+      emailP("Good day!") +
+      emailP("A previously returned request has been <strong>resubmitted" + escapeHtml(countNote) +
+             "</strong> and requires your review.") +
+      emailInfoTable(rowData) +
+      emailRemarkBox("Previous Return Reason", returnReason || "No reason provided.", "amber") +
+      emailSection("Supporting Documents", emailAttachmentList(requestId)) +
+      emailP("Please review the updates made by the requestor and act on this request (approve, decline, or return)."),
+    buttonUrl:   getPortalUrl(requestId, "review"),
+    buttonLabel: "Review this resubmission",
+  });
+
+  sendBrandedEmail(currentApprover, subject, body, html);
   Logger.log(`sendResubmitApprovalRequest(): Emailed ${currentApprover} for resubmission of ${requestId}`);
 }

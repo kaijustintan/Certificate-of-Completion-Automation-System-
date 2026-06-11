@@ -192,8 +192,6 @@ function renderLockedNotice(detail, userEmail) {
     reason = 'This request has been declined.';
   } else if (detail.status === 'Returned to Requestor') {
     reason = 'This request was returned to the requestor and is awaiting their update.';
-  } else if (detail.status === 'Syncing Files') {
-    reason = 'This request is still waiting on supporting documents.';
   } else {
     reason = 'You are not the current approver for this step.';
   }

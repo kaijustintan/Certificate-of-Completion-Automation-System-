@@ -128,15 +128,20 @@ function renderProgressSteps(detail) {
 // Renders one key/value pair as a .detail-row.
 /*
   Function Name: renderDetailRow
-  LAYMAN    : Isang row ng key-value pair sa request info card.
+  LAYMAN    : Isang row ng key-value pair sa request info card. Pwedeng
+              i-full-width ang row sa loob ng two-column grid (para sa
+              mahahabang values tulad ng project title).
   TECHNICAL : Returns a .detail-row div with .detail-key and .detail-value.
+              full=true adds .detail-row--full (spans both .detail-grid columns).
+  PARAMS    : key — label; value — display value (— when empty);
+              full — optional bool, span both grid columns.
 */
-function renderDetailRow(key, value) {
+function renderDetailRow(key, value, full) {
   const v = (value === null || value === undefined || value === '')
     ? '<span class="text-muted">—</span>'
     : escapeHtml(value);
   return '' +
-    '<div class="detail-row">' +
+    '<div class="detail-row' + (full ? ' detail-row--full' : '') + '">' +
       '<div class="detail-key">'   + escapeHtml(key) + '</div>' +
       '<div class="detail-value">' + v               + '</div>' +
     '</div>';
@@ -150,39 +155,48 @@ function renderDetailRow(key, value) {
               Contract, at Purpose/Remark. Ginagamit sa requestor view AT
               approver review view.
   TECHNICAL : Returns 4 .card HTML blocks using renderDetailRow per field.
-              Reused by ReviewDetail.html (shared global scope).
+              Field rows sit inside a .detail-grid (2-col on desktop ≥1024px,
+              stacked label-over-value cells). Long values span both columns
+              via renderDetailRow(..., true). Reused by ReviewDetail.html
+              (shared global scope).
 */
 function renderRequestSummaryCards(detail) {
   return '' +
     '<div class="card">' +
       '<div class="card-header"><div class="card-title">Request information</div></div>' +
-      renderDetailRow('Project title',         detail.projectTitle) +
-      renderDetailRow('Requestor',             detail.requestor) +
-      renderDetailRow('Requestor designation', detail.requestorDesig) +
-      renderDetailRow('Group',                 detail.group) +
-      renderDetailRow('Accountable person',    detail.accountablePerson) +
-      renderDetailRow('Department',            detail.department) +
-      renderDetailRow('Location',              detail.location) +
-      renderDetailRow('PC name',               detail.pcName) +
-      renderDetailRow('PRISM',                 detail.prism) +
-      renderDetailRow('Purchase Order',        detail.purchaseOrder) +
-      renderDetailRow('IHelp number',          detail.ihelpNumber) +
-      renderDetailRow('Date of filing',        detail.dateFiled) +
+      '<div class="detail-grid">' +
+        renderDetailRow('Project title',         detail.projectTitle, true) +
+        renderDetailRow('Requestor',             detail.requestor) +
+        renderDetailRow('Requestor designation', detail.requestorDesig) +
+        renderDetailRow('Group',                 detail.group) +
+        renderDetailRow('Accountable person',    detail.accountablePerson) +
+        renderDetailRow('Department',            detail.department) +
+        renderDetailRow('Location',              detail.location) +
+        renderDetailRow('PC name',               detail.pcName) +
+        renderDetailRow('PRISM',                 detail.prism) +
+        renderDetailRow('Purchase Order',        detail.purchaseOrder) +
+        renderDetailRow('IHelp number',          detail.ihelpNumber) +
+        renderDetailRow('Date of filing',        detail.dateFiled) +
+      '</div>' +
     '</div>' +
 
     '<div class="card">' +
       '<div class="card-header"><div class="card-title">Product details</div></div>' +
-      renderDetailRow('Product type',          detail.productType) +
-      renderDetailRow('Product name',          detail.productName) +
-      renderDetailRow('Type of purchase',      detail.typeOfPurchase) +
-      renderDetailRow('Type of license',       detail.typeOfLicense) +
+      '<div class="detail-grid">' +
+        renderDetailRow('Product type',          detail.productType) +
+        renderDetailRow('Product name',          detail.productName) +
+        renderDetailRow('Type of purchase',      detail.typeOfPurchase) +
+        renderDetailRow('Type of license',       detail.typeOfLicense) +
+      '</div>' +
     '</div>' +
 
     '<div class="card">' +
       '<div class="card-header"><div class="card-title">Contract</div></div>' +
-      renderDetailRow('Supplier',              detail.supplierName) +
-      renderDetailRow('Contract start',        detail.contractStart) +
-      renderDetailRow('Contract end',          detail.contractEnd) +
+      '<div class="detail-grid">' +
+        renderDetailRow('Supplier',              detail.supplierName) +
+        renderDetailRow('Contract start',        detail.contractStart) +
+        renderDetailRow('Contract end',          detail.contractEnd) +
+      '</div>' +
     '</div>' +
 
     '<div class="card">' +

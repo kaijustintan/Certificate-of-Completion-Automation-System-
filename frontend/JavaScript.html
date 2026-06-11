@@ -287,7 +287,6 @@ function showConfirm(opts) {
               Consumers use badgeClassFor() and emotionFor() — not this directly.
 */
 const STATUS_LABELS = {
-  'Syncing Files':         { badge: 'badge-syncing',  emotion: 'pending'  },
   'Pending Approver 1':    { badge: 'badge-pending',  emotion: 'pending'  },
   'Pending Approver 2':    { badge: 'badge-pending',  emotion: 'pending'  },
   'Pending Approver 3':    { badge: 'badge-pending',  emotion: 'pending'  },
@@ -472,6 +471,13 @@ async function navigateTo(page, params) {
 
   app.innerHTML = html;
 
+  // Re-trigger the page-enter animation (CSS @keyframes pageIn). Removing the
+  // class, forcing a reflow, then re-adding restarts the animation on every
+  // navigation. Guarded by prefers-reduced-motion in the stylesheet.
+  app.classList.remove('page-in');
+  void app.offsetWidth; // force reflow so the animation restarts
+  app.classList.add('page-in');
+
   // Keep the URL in sync for back/forward and link-sharing.
   const desiredHash = buildHash(page, params);
   if (location.hash !== desiredHash && !(desiredHash === '#' && !location.hash)) {
@@ -537,15 +543,21 @@ function refreshNavbar() {
 
   const linksEl = document.getElementById('navbar-links');
   if (linksEl) {
-    let html = '<span class="navbar-link" data-page="approverDashboard" onclick="navigateTo(\'approverDashboard\')">My Approvals</span>';
-    if (state.user.role === 'approver') {
-      html += '<span class="navbar-link" data-page="dashboard" onclick="navigateTo(\'dashboard\')">My Requests</span>';
-    } else {
-      html = '<span class="navbar-link" data-page="dashboard" onclick="navigateTo(\'dashboard\')">My Requests</span>';
-    }
+    // One nav link: icon + label. renderIcon (UI.html) is loaded before this runs.
+    const navLink = function (page, label, icon) {
+      return '<span class="navbar-link" data-page="' + page + '" onclick="navigateTo(\'' + page + '\')">' +
+        renderIcon(icon, 18) + '<span>' + label + '</span></span>';
+    };
+    const myRequests  = navLink('dashboard', 'My Requests', 'file-text');
+    const myApprovals = navLink('approverDashboard', 'My Approvals', 'check-circle');
+
+    // Approvers see both queues (approvals first); requestors see only My Requests.
+    let html = state.user.role === 'approver'
+      ? myApprovals + myRequests
+      : myRequests;
     // Additive admin flag — shown alongside the role links, never instead of them.
     if (state.user.isAdmin) {
-      html += '<span class="navbar-link" data-page="admin" onclick="navigateTo(\'admin\')">Admin</span>';
+      html += navLink('admin', 'Admin', 'settings');
     }
     linksEl.innerHTML = html;
   }

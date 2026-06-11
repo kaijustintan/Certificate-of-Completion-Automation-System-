@@ -21,14 +21,16 @@
     - renderApproverControls()              view + sort + conditional status dropdowns
     - computeApproverActionedCounts()       {all,approved,declined,returned,expired} for status dropdown
     - afterRender_approverDashboard()       hook: sync active stat card
-    - approverViewChange(el)               view dropdown change
+    - approverTabClick(view)               Awaiting/Actioned tab switch
     - approverSortChange(el)               sort dropdown change
     - approverActionedStatusChange(el)     status sub-filter change
     - approverStatClick(view, status)      stat card click handler
+    - approverSearch / approverGoPage      list search + pagination (list-only)
     - syncApproverStatCards()              highlights active stat card
-    - applyApproverView()                  re-render #approver-list + controls
-    - renderApproverAwaitingList(rows)     awaiting list or empty state
-    - renderApproverActionedList(rows)     actioned list or empty state
+    - applyApproverView()                  re-render controls + list
+    - applyApproverList()                  re-render ONLY the list (search/paging)
+    - buildApproverListHtml()              list body: view+search+sort+paginate
+    - renderApproverListBody()             initial-render entry for the list
     - renderApproverTable(rows)            shared <table> HTML renderer
 -->
 
@@ -39,6 +41,9 @@ let _approverActionedCache  = [];
 let _approverCurrentView    = 'awaiting';
 let _approverCurrentSort    = 'newest';
 let _approverActionedStatus = 'all'; // 'all' | 'approved' | 'declined' | 'returned' (actioned view only)
+let _approverSearch         = '';
+let _approverPage           = 1;
+const APPROVER_PER_PAGE     = 8;
 
 /*
   Function Name: renderApproverDashboardPage
@@ -58,6 +63,8 @@ async function renderApproverDashboardPage() {
   _approverCurrentView    = 'awaiting';
   _approverCurrentSort    = 'newest';
   _approverActionedStatus = 'all';
+  _approverSearch         = '';
+  _approverPage           = 1;
 
   const awaitingCount = _approverPendingCache.length;
   const approvedCount = _approverActionedCache.filter(function (r) { return r.status === 'Fully Approved'; }).length;
@@ -68,6 +75,24 @@ async function renderApproverDashboardPage() {
   // expired still shows its red chip in the list; it's just not counted here.
   const expiredCount  = _approverActionedCache.filter(function (r) { return r.isExpired; }).length;
 
+  const statCards = renderStatGrid([
+    { icon: 'inbox',        tone: 'blue',  value: awaitingCount, label: 'Awaiting Your Approval',
+      statKey: 'awaiting',  clickFn: "approverStatClick('awaiting','all')",
+      sub: awaitingCount ? 'Needs your action' : 'Inbox zero', subDir: awaitingCount ? 'flat' : 'up' },
+    { icon: 'check-circle', tone: 'green', value: approvedCount, label: 'Approved by You',
+      statKey: 'approved',  clickFn: "approverStatClick('actioned','approved')",
+      sub: 'Signed off', subDir: 'flat' },
+    { icon: 'x-circle',     tone: 'red',   value: declinedCount, label: 'Declined by You',
+      statKey: 'declined',  clickFn: "approverStatClick('actioned','declined')",
+      sub: 'Closed out', subDir: 'flat' },
+    { icon: 'return',       tone: 'amber', value: returnedCount, label: 'Returned by You',
+      statKey: 'returned',  clickFn: "approverStatClick('actioned','returned')",
+      sub: 'Sent back', subDir: 'flat' },
+    { icon: 'alert',        tone: 'amber', value: expiredCount,  label: 'Expired',
+      statKey: 'expired',   clickFn: "approverStatClick('actioned','expired')",
+      sub: expiredCount ? 'Contracts lapsed' : 'None expired', subDir: expiredCount ? 'down' : 'flat' },
+  ]);
+
   return `
     <div class="page-header">
       <div>
@@ -76,40 +101,30 @@ async function renderApproverDashboardPage() {
       </div>
     </div>
 
-    ${renderMiga('pending',
-        awaitingCount === 0
-          ? 'Inbox zero! Nothing needs you right now.'
-          : 'You have ' + awaitingCount + ' request' + (awaitingCount === 1 ? '' : 's') + ' waiting on you. Click any row to review.')}
+    ${renderHeroCard({
+      greeting: 'Your approval desk,',
+      title:    awaitingCount === 0
+        ? 'Inbox zero, ' + friendlyName(state.user && state.user.email) + ' \u{1F389}'
+        : friendlyName(state.user && state.user.email) + ', you have ' + awaitingCount + ' to review',
+      subtitle: awaitingCount === 0
+        ? 'Nothing is waiting on you right now. Nicely done.'
+        : 'Approve, decline, or return each request from its review page.',
+      insights: [
+        { icon: 'inbox',        text: awaitingCount + ' awaiting' },
+        { icon: 'check-circle', text: approvedCount + ' approved' },
+      ],
+      emotion: 'pending',
+    })}
 
-    <div class="stat-grid">
-      <div class="stat-card clickable" data-statkey="awaiting" onclick="approverStatClick('awaiting','all')">
-        <div class="stat-number blue">${awaitingCount}</div>
-        <div class="stat-label">Awaiting your approval</div>
-      </div>
-      <div class="stat-card clickable" data-statkey="approved" onclick="approverStatClick('actioned','approved')">
-        <div class="stat-number green">${approvedCount}</div>
-        <div class="stat-label">Approved by you</div>
-      </div>
-      <div class="stat-card clickable" data-statkey="declined" onclick="approverStatClick('actioned','declined')">
-        <div class="stat-number red">${declinedCount}</div>
-        <div class="stat-label">Declined by you</div>
-      </div>
-      <div class="stat-card clickable" data-statkey="returned" onclick="approverStatClick('actioned','returned')">
-        <div class="stat-number">${returnedCount}</div>
-        <div class="stat-label">Returned by you</div>
-      </div>
-      <div class="stat-card clickable" data-statkey="expired" onclick="approverStatClick('actioned','expired')">
-        <div class="stat-number red">${expiredCount}</div>
-        <div class="stat-label">Expired</div>
-      </div>
-    </div>
+    ${statCards}
 
     <div class="card">
+      <div class="card-header"><div class="card-title">Requests</div></div>
       <div id="approver-controls">
         ${renderApproverControls()}
       </div>
       <div id="approver-list">
-        ${renderApproverAwaitingList(sortRequests(_approverPendingCache, 'newest'))}
+        ${renderApproverListBody()}
       </div>
     </div>
   `;
@@ -120,17 +135,17 @@ async function renderApproverDashboardPage() {
 
 /*
   Function Name: renderApproverControls
-  LAYMAN    : Gumawa ng filter bar: View dropdown (Awaiting/Actioned), at
-              kapag Actioned ang pinili, lalabas pa ang Status dropdown na
+  LAYMAN    : Gumawa ng controls: dalawang TAB sa taas (Awaiting / Actioned,
+              may bilang bawat isa), tapos filter bar sa ilalim. Kapag
+              "Actioned" ang aktibong tab, lalabas pa ang Status dropdown na
               may count bawat outcome (Approved/Declined/Returned/All).
-  TECHNICAL : Renders .filter-bar; conditionally adds status group when
-              _approverCurrentView === 'actioned'. Seeded from current state vars.
+  TECHNICAL : Renders .tab-row (view switch — was a <select>; same state var
+              _approverCurrentView, same applyApproverView flow) + .filter-bar;
+              conditionally adds status group when _approverCurrentView ===
+              'actioned'. Tab counts come from the two caches. Seeded from
+              current state vars.
 */
 function renderApproverControls() {
-  const viewOptions = [
-    { value: 'awaiting', label: 'Awaiting your action' },
-    { value: 'actioned', label: 'Actioned by you'      },
-  ];
   const sortOptions = [
     { value: 'newest',  label: 'Most Recent'  },
     { value: 'oldest',  label: 'Oldest First' },
@@ -138,10 +153,18 @@ function renderApproverControls() {
     { value: 'group',   label: 'Group A→Z'   },
   ];
 
-  const viewHtml = viewOptions.map(function (o) {
-    return '<option value="' + o.value + '"' +
-      (o.value === _approverCurrentView ? ' selected' : '') + '>' + o.label + '</option>';
-  }).join('');
+  // View switch as tabs with count badges (reuses the .tab/.tab-count CSS).
+  function tab(view, label, count) {
+    const active = (view === _approverCurrentView) ? ' active' : '';
+    return '<div class="tab' + active + '" onclick="approverTabClick(\'' + view + '\')">' +
+      label + '<span class="tab-count">' + count + '</span>' +
+    '</div>';
+  }
+  const tabRow =
+    '<div class="tab-row">' +
+      tab('awaiting', 'Awaiting your action', _approverPendingCache.length) +
+      tab('actioned', 'Actioned by you',      _approverActionedCache.length) +
+    '</div>';
 
   const sortHtml = sortOptions.map(function (o) {
     return '<option value="' + o.value + '"' +
@@ -171,17 +194,22 @@ function renderApproverControls() {
       '</div>';
   }
 
-  return '<div class="filter-bar">' +
-    '<div class="filter-group">' +
-      '<label class="filter-label">View</label>' +
-      '<select class="filter-select" onchange="approverViewChange(this)">' + viewHtml + '</select>' +
-    '</div>' +
-    statusGroup +
-    '<div class="filter-group">' +
-      '<label class="filter-label">Sort by</label>' +
-      '<select class="filter-select" onchange="approverSortChange(this)">' + sortHtml + '</select>' +
-    '</div>' +
-  '</div>';
+  return tabRow +
+    '<div class="controls-bar">' +
+      renderSearchBar({
+        id:          'approver-search',
+        onInput:     'approverSearch',
+        value:       _approverSearch,
+        placeholder: 'Search by control no., project, requestor…',
+      }) +
+      '<div class="filter-bar">' +
+        statusGroup +
+        '<div class="filter-group">' +
+          '<label class="filter-label">Sort by</label>' +
+          '<select class="filter-select" onchange="approverSortChange(this)">' + sortHtml + '</select>' +
+        '</div>' +
+      '</div>' +
+    '</div>';
 }
 
 /*
@@ -204,20 +232,56 @@ function computeApproverActionedCounts() {
   return counts;
 }
 
-function approverViewChange(el) {
-  _approverCurrentView = el.value;
+/*
+  Function Name: approverTabClick
+  LAYMAN    : Pinindot ang isa sa dalawang tab (Awaiting / Actioned) —
+              palitan ang view at i-refresh ang listahan.
+  TECHNICAL : Replaces the old approverViewChange(el) dropdown handler;
+              takes the view string directly from the tab's onclick.
+  PARAMS    : view — 'awaiting' | 'actioned'.
+*/
+function approverTabClick(view) {
+  _approverCurrentView = view;
   if (_approverCurrentView === 'awaiting') _approverActionedStatus = 'all';
+  _approverPage = 1;
   applyApproverView();
 }
 
 function approverSortChange(el) {
   _approverCurrentSort = el.value;
+  _approverPage = 1;
   applyApproverView();
 }
 
 function approverActionedStatusChange(el) {
   _approverActionedStatus = el.value;
+  _approverPage = 1;
   applyApproverView();
+}
+
+/*
+  Function Name: approverSearch
+  LAYMAN    : Live search sa kasalukuyang listahan (awaiting o actioned). Hindi
+              nire-render ang controls kaya hindi nawawala ang focus.
+  TECHNICAL : Sets _approverSearch, resets page, re-renders ONLY #approver-list
+              via applyApproverList (search input in #approver-controls untouched).
+  PARAMS    : value — raw input string.
+*/
+function approverSearch(value) {
+  _approverSearch = value;
+  _approverPage = 1;
+  applyApproverList();
+}
+
+/*
+  Function Name: approverGoPage
+  LAYMAN    : Lumipat ng page sa kasalukuyang listahan.
+  TECHNICAL : Sets _approverPage; re-renders only the list.
+  PARAMS    : n — 1-based page.
+*/
+function approverGoPage(n) {
+  _approverPage = n;
+  applyApproverList();
 }
 
 /*
@@ -240,6 +304,7 @@ function afterRender_approverDashboard() {
 function approverStatClick(view, status) {
   _approverCurrentView    = view;
   _approverActionedStatus = status || 'all';
+  _approverPage = 1;
   applyApproverView();
 }
 
@@ -269,12 +334,16 @@ function syncApproverStatCards() {
               syncs stat cards; builds the filtered + sorted rows from the correct cache;
               updates #approver-list innerHTML.
 */
-function applyApproverView() {
-  // Re-render the controls so the Status dropdown appears/disappears and stays in sync.
-  const controlsEl = document.getElementById('approver-controls');
-  if (controlsEl) controlsEl.innerHTML = renderApproverControls();
-  syncApproverStatCards();
-
+/*
+  Function Name: buildApproverListHtml
+  LAYMAN    : Buuin ang HTML ng kasalukuyang listahan — piliin ang tamang cache
+              (awaiting o actioned + status), i-search, i-sort, i-page, tapos
+              gawing table + pagination. Kung wala → empty state.
+  TECHNICAL : Single source of truth for the #approver-list body. View/status
+              filter → search → sort → paginate. Returns a string (no DOM write).
+  RETURNS   : HTML string.
+*/
+function buildApproverListHtml() {
   let rows;
   if (_approverCurrentView === 'awaiting') {
     rows = _approverPendingCache;
@@ -288,48 +357,61 @@ function applyApproverView() {
       return getDashboardFilter(r.status) === _approverActionedStatus;
     });
   }
-  const sorted = sortRequests(rows, _approverCurrentSort);
 
+  const searched = filterBySearch(rows, _approverSearch);
+  const sorted   = sortRequests(searched, _approverCurrentSort);
+
+  if (sorted.length === 0) {
+    if (_approverSearch) {
+      return renderEmptyState({
+        title:   'No matches',
+        message: 'No requests match “' + escapeHtml(_approverSearch) + '”.',
+        emotion: 'default',
+      });
+    }
+    return _approverCurrentView === 'awaiting'
+      ? renderEmptyState({ title: 'All caught up', message: 'Nothing is currently waiting for your approval.', emotion: 'approved' })
+      : renderEmptyState({ title: 'No history yet', message: 'Requests you have approved, declined, or returned will appear here.', emotion: 'default' });
+  }
+
+  const pages = Math.max(1, Math.ceil(sorted.length / APPROVER_PER_PAGE));
+  if (_approverPage > pages) _approverPage = pages;
+  const slice = paginate(sorted, _approverPage, APPROVER_PER_PAGE);
+  return renderApproverTable(slice) +
+    renderPagination({ total: sorted.length, page: _approverPage, perPage: APPROVER_PER_PAGE, onPage: 'approverGoPage' });
+}
+
+// Initial render entry (called by renderApproverDashboardPage).
+function renderApproverListBody() { return buildApproverListHtml(); }
+
+/*
+  Function Name: applyApproverList
+  LAYMAN    : I-update LANG ang listahan (hindi ang controls) — gamit sa search
+              at pagination para hindi mawala ang focus sa search box.
+  TECHNICAL : Re-renders #approver-list only (+ fade). No controls re-render.
+*/
+function applyApproverList() {
   const listEl = document.getElementById('approver-list');
   if (!listEl) return;
-  listEl.innerHTML = _approverCurrentView === 'awaiting'
-    ? renderApproverAwaitingList(sorted)
-    : renderApproverActionedList(sorted);
-}
-
-
-// ─── List renderers ───────────────────────────────────────
-
-/*
-  Function Name: renderApproverAwaitingList
-  LAYMAN    : Gumawa ng listahan ng mga naghihintay ng aksyon, o empty state kapag wala.
-  TECHNICAL : Returns renderApproverTable(pending) or empty-state HTML.
-*/
-function renderApproverAwaitingList(pending) {
-  if (pending.length === 0) {
-    return renderEmptyState({
-      title:   'All caught up',
-      message: 'Nothing is currently waiting for your approval.',
-      emotion: 'approved',
-    });
-  }
-  return renderApproverTable(pending);
+  listEl.innerHTML = buildApproverListHtml();
+  listEl.classList.remove('fade-in');
+  void listEl.offsetWidth;
+  listEl.classList.add('fade-in');
 }
 
 /*
-  Function Name: renderApproverActionedList
-  LAYMAN    : Gumawa ng listahan ng mga dati nang ginawa, o empty state kapag wala.
-  TECHNICAL : Returns renderApproverTable(actioned) or empty-state HTML.
+  Function Name: applyApproverView
+  LAYMAN    : I-re-render ang controls (para lumitaw/mawala ang Status dropdown)
+              at ang listahan. Tinatawag sa tab / sort / status / stat changes.
+  TECHNICAL : Re-renders #approver-controls + stat-card highlight, then delegates
+              the list to applyApproverList(). (Search/pagination skip the
+              controls re-render via applyApproverList directly.)
 */
-function renderApproverActionedList(actioned) {
-  if (actioned.length === 0) {
-    return renderEmptyState({
-      title:   'No history yet',
-      message: 'Requests you have approved, declined, or returned will appear here.',
-      emotion: 'default',
-    });
-  }
-  return renderApproverTable(actioned);
+function applyApproverView() {
+  const controlsEl = document.getElementById('approver-controls');
+  if (controlsEl) controlsEl.innerHTML = renderApproverControls();
+  syncApproverStatCards();
+  applyApproverList();
 }
 
 
@@ -350,26 +432,35 @@ function renderApproverTable(rows) {
     const idAttr = escapeHtml(r.requestId);
     return '' +
       '<tr onclick="navigateTo(\'review\', {id: \'' + idAttr + '\'})">' +
-        '<td>' + escapeHtml(r.controlNumber) + '</td>' +
-        '<td>' + escapeHtml(r.projectTitle)  + '</td>' +
-        '<td>' + escapeHtml(r.requestor)     + '</td>' +
-        '<td>' + escapeHtml(r.group)         + '</td>' +
+        '<td>' +
+          '<div class="cell-request">' +
+            '<div class="cell-request-icon">' + renderIcon('file', 16) + '</div>' +
+            '<div class="cell-request-text">' +
+              '<div class="cell-primary">' + escapeHtml(r.controlNumber) + '</div>' +
+            '</div>' +
+          '</div>' +
+        '</td>' +
+        '<td class="cell-clip" title="' + escapeHtml(r.projectTitle) + '">' + escapeHtml(r.projectTitle) + '</td>' +
+        '<td class="cell-clip" title="' + escapeHtml(r.requestor) + '">' + escapeHtml(r.requestor) + '</td>' +
+        '<td class="cell-clip" title="' + escapeHtml(r.group) + '">' + escapeHtml(r.group) + '</td>' +
         '<td>' + renderStatusBadge(r.status) +
           (r.isExpired ? ' <span class="badge badge-expired" title="Contract end date has passed">Expired</span>' : '') +
         '</td>' +
-        '<td>' + escapeHtml(r.dateFiled)     + '</td>' +
+        '<td><span class="cell-date">' + renderIcon('calendar', 14) + escapeHtml(r.dateFiled) + '</span></td>' +
+        '<td class="cell-chevron">' + renderIcon('chevron-right', 18) + '</td>' +
       '</tr>';
   }).join('');
 
   return '' +
     '<table class="data-table">' +
       '<thead><tr>' +
-        '<th>Control no.</th>' +
+        '<th>Request</th>' +
         '<th>Project</th>' +
         '<th>Requestor</th>' +
         '<th>Group</th>' +
         '<th>Status</th>' +
         '<th>Filed</th>' +
+        '<th></th>' +
       '</tr></thead>' +
       '<tbody>' + tableRows + '</tbody>' +
     '</table>';

@@ -68,6 +68,8 @@ Never use `===` to compare emails. Always use `sameEmail(a, b)` from `WebApp.js`
 
 ## Email conventions
 
+- **Dual-format sends** — every email goes through `sendBrandedEmail(recipient, subject, textBody, htmlBody, extraOptions)` (`backend/EmailHtml.js`), never `GmailApp.sendEmail` directly. The plain-text body stays the fallback (3rd arg, source of truth for copy); the branded HTML twin rides in `options.htmlBody`. PDF attachments go in `extraOptions`.
+- **HTML layer = `backend/EmailHtml.js`** — `emailLayout({accent, bodyHtml, buttonUrl, buttonLabel})` (table-based, inline styles, 600px centered, per-status accent band: navy=action-needed, green=approved, red=declined, amber=returned/expiry), `emailButton` (always navy — the band carries the status signal, never the CTA), plus `emailInfoTable`/`emailSection`/`emailKeyValueRows`/`emailAttachmentList`/`emailApprovalLog`/`emailRemarkBox`/`emailDivider`. **Every `email*` helper escapes its own inputs** via the server-side `escapeHtml()` (EmailHtml.js — distinct from the frontend one, different runtimes); any value interpolated directly into HTML must be escaped at the call site.
 - Subject via `emailSubject(controlNumber, statusLabel, audience)` → `[COC Request]: <ctrl> | <Status>`
 - Body: greeting → `buildInfoBlock(rowData)` → sections → `getPortalUrl(requestId, page)` deep-link
 - `EMAIL_DEV_TAG = true` in `Emails.js` — **flip to `false` before production go-live**
@@ -88,7 +90,9 @@ Who-last-acted = the latest `Activity_Log` row's `actor` (the old `LAST_ACTION_B
 
 ## Frontend patterns
 
-- Stat cards are **clickable filters** — `data-filter` / `data-statkey` attributes + `onclick` handlers.
+- **Shared SaaS primitives live in `frontend/components/UI.html`** (loaded after MigaWidget, before pages — it needs `migaImageFor`). Reuse these instead of hand-rolling per page: `renderIcon(name, size)` (inline Lucide SVG, `currentColor`, zero network), `renderHeroCard({greeting,title,subtitle,insights,emotion})` (the navy gradient hero atop each dashboard), `renderStatCard(opts)` / `renderStatGrid(cards)` (icon-tile stat cards — pass `filterKey`→`data-filter` or `statKey`→`data-statkey` to keep the clickable-filter hooks), `renderSearchBar({id,onInput,value,placeholder})`, `renderPagination({total,page,perPage,onPage})` + `paginate()`, `friendlyName(email)`, `uiKeyActivate(event)` (Enter/Space activation for `role="button"` divs).
+- **Client-side search + pagination pattern** (Dashboard/Approver/Admin): caches are fetched once; the search `onInput` handler must re-render **only the list region** (`#…-list`), never the controls region holding the `<input>` (else focus drops mid-type). Filter/sort/stat changes may re-render controls and must reset the page var to 1. `filterBySearch(rows, q)` (in `Dashboard.html`, global) matches control no./project/group/requestor.
+- Stat cards are **clickable filters** — `data-filter` / `data-statkey` attributes + `onclick` handlers (now produced by `renderStatCard`; color lives in the `.stat-icon-<tone>` tile, not the number).
 - Loading overlay: `showLoading('Verb…')` before every `callServer` action; `hideLoading()` in **every** branch (success, failure, catch).
 - Confirm dialogs: `await showConfirm({title, message, confirmLabel, danger})` — never `window.confirm()`.
 - Two-column detail layout: `.detail-layout` grid, `.detail-main` left, `.detail-rail` right (sticky).

@@ -457,14 +457,20 @@ The Fully Approved email attaches a COC file. Implementation plan:
 1. A Google Docs template with placeholders
 2. Apps Script copies the template, fills in values via `DocumentApp`
 3. Exports as PDF blob via `DriveApp.createFile().getAs("application/pdf")`
-4. Passes the blob to `GmailApp.sendEmail()` via the `attachments` option
+4. Passes the blob to `sendBrandedEmail()` (EmailHtml.js) via the `extraOptions` parameter
 
 ```js
-GmailApp.sendEmail(requestorEmail, subject, body, {
+sendBrandedEmail(requestorEmail, subject, body, html, {
   attachments: [pdfBlob],
-  name: "E-Certificate Automation"
 });
+// → GmailApp.sendEmail(requestorEmail, subject, body,
+//     { htmlBody: html, attachments: [pdfBlob] })
 ```
+
+> All portal emails are dual-format since the HTML email layer landed: the
+> plain-text body stays the fallback (3rd positional arg), the branded HTML
+> twin (`EmailHtml.js` — table-based layout, inline styles, per-status accent
+> band, server-side escaping) rides in `options.htmlBody`.
 
 ### 9.7 Type coercion gotcha
 

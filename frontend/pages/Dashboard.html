@@ -32,10 +32,13 @@
 
 
 <script>
-// Cached after each server fetch so filter/sort work without re-fetching.
+// Cached after each server fetch so filter/sort/search/paging work without re-fetching.
 let _dashboardRequests      = [];
 let _dashboardCurrentFilter = 'all';
 let _dashboardCurrentSort   = 'newest';
+let _dashboardSearch        = '';
+let _dashboardPage          = 1;
+const DASHBOARD_PER_PAGE    = 8;
 
 /*
   Function Name: renderDashboardPage
@@ -50,8 +53,12 @@ async function renderDashboardPage() {
   _dashboardRequests      = await callServer('getMyRequests');
   _dashboardCurrentFilter = 'all';
   _dashboardCurrentSort   = 'newest';
+  _dashboardSearch        = '';
+  _dashboardPage          = 1;
 
-  const stats = computeRequestorStats(_dashboardRequests);
+  const stats     = computeRequestorStats(_dashboardRequests);
+  const newThis    = countFiledThisMonth(_dashboardRequests);
+  const apprThis   = countFiledThisMonth(_dashboardRequests, function (r) { return r.status === 'Fully Approved'; });
 
   const initialList = _dashboardRequests.length === 0
     ? renderEmptyState({
@@ -59,7 +66,25 @@ async function renderDashboardPage() {
         message: 'Submit your first e-certificate request to see it here.',
         emotion: 'default',
       })
-    : renderRequestorTable(sortRequests(_dashboardRequests, 'newest'));
+    : renderDashboardListBody(sortRequests(_dashboardRequests, 'newest').length, sortRequests(_dashboardRequests, 'newest'));
+
+  const statCards = renderStatGrid([
+    { icon: 'file-text',    tone: 'blue',  value: stats.total,    label: 'Total Requests',
+      filterKey: 'all',      clickFn: "dashboardStatClick('all')",
+      sub: newThis ? newThis + ' this month' : 'No new this month', subDir: newThis ? 'up' : 'flat' },
+    { icon: 'clock',        tone: 'amber', value: stats.pending,  label: 'In Progress',
+      filterKey: 'pending',  clickFn: "dashboardStatClick('pending')",
+      sub: stats.pending ? stats.pending + ' awaiting action' : 'Nothing pending', subDir: 'flat' },
+    { icon: 'check-circle', tone: 'green', value: stats.approved, label: 'Approved',
+      filterKey: 'approved', clickFn: "dashboardStatClick('approved')",
+      sub: apprThis ? apprThis + ' this month' : 'No change', subDir: apprThis ? 'up' : 'flat' },
+    { icon: 'x-circle',     tone: 'red',   value: stats.declined, label: 'Declined',
+      filterKey: 'declined', clickFn: "dashboardStatClick('declined')",
+      sub: stats.declined ? 'Review feedback' : 'No change', subDir: 'flat' },
+    { icon: 'alert',        tone: 'amber', value: stats.expired,  label: 'Expired',
+      filterKey: 'expired',  clickFn: "dashboardStatClick('expired')",
+      sub: stats.expired ? 'Needs renewal' : 'None expired', subDir: stats.expired ? 'down' : 'flat' },
+  ]);
 
   return `
     <div class="page-header">
@@ -67,35 +92,24 @@ async function renderDashboardPage() {
         <div class="page-title">My requests</div>
         <div class="page-subtitle">Every e-certificate request you have submitted.</div>
       </div>
-      <button class="btn btn-primary" onclick="navigateTo('new')">+ New request</button>
+      <button class="btn btn-primary" onclick="navigateTo('new')">${renderIcon('plus', 16)} New request</button>
     </div>
 
-    ${renderMiga('welcome', 'Welcome back! Here\'s where your requests live. Click any row to see its full history.')}
+    ${renderHeroCard({
+      greeting: 'Good to see you again,',
+      title:    'Welcome back, ' + friendlyName(state.user && state.user.email) + ' \u{1F44B}',
+      subtitle: 'Track all your e-certificate requests in one place.',
+      insights: [
+        { icon: 'clock',        text: stats.pending + ' awaiting approval' },
+        { icon: 'check-circle', text: stats.approved + ' approved' },
+      ],
+      emotion: 'welcome',
+    })}
 
-    <div class="stat-grid">
-      <div class="stat-card clickable" data-filter="all" onclick="dashboardStatClick('all')">
-        <div class="stat-number">${stats.total}</div>
-        <div class="stat-label">Total</div>
-      </div>
-      <div class="stat-card clickable" data-filter="pending" onclick="dashboardStatClick('pending')">
-        <div class="stat-number blue">${stats.pending}</div>
-        <div class="stat-label">In progress</div>
-      </div>
-      <div class="stat-card clickable" data-filter="approved" onclick="dashboardStatClick('approved')">
-        <div class="stat-number green">${stats.approved}</div>
-        <div class="stat-label">Approved</div>
-      </div>
-      <div class="stat-card clickable" data-filter="declined" onclick="dashboardStatClick('declined')">
-        <div class="stat-number red">${stats.declined}</div>
-        <div class="stat-label">Declined</div>
-      </div>
-      <div class="stat-card clickable" data-filter="expired" onclick="dashboardStatClick('expired')">
-        <div class="stat-number red">${stats.expired}</div>
-        <div class="stat-label">Expired</div>
-      </div>
-    </div>
+    ${statCards}
 
     <div class="card">
+      <div class="card-header"><div class="card-title">Recent requests</div></div>
       <div id="dashboard-controls">
         ${renderDashboardControls(_dashboardRequests)}
       </div>
@@ -147,25 +161,63 @@ function renderDashboardControls(requests) {
       o.label + '</option>';
   }).join('');
 
-  return '<div class="filter-bar">' +
-    '<div class="filter-group">' +
-      '<label class="filter-label">Status</label>' +
-      '<select class="filter-select" onchange="dashboardFilterChange(this)">' + filterHtml + '</select>' +
-    '</div>' +
-    '<div class="filter-group">' +
-      '<label class="filter-label">Sort by</label>' +
-      '<select class="filter-select" onchange="dashboardSortChange(this)">' + sortHtml + '</select>' +
+  // Search on the left, status + sort pushed to the right (controls-bar).
+  return '<div class="controls-bar">' +
+    renderSearchBar({
+      id:          'dashboard-search',
+      onInput:     'dashboardSearch',
+      value:       _dashboardSearch,
+      placeholder: 'Search by control no., project, or group…',
+    }) +
+    '<div class="filter-bar">' +
+      '<div class="filter-group">' +
+        '<label class="filter-label">Status</label>' +
+        '<select class="filter-select" onchange="dashboardFilterChange(this)">' + filterHtml + '</select>' +
+      '</div>' +
+      '<div class="filter-group">' +
+        '<label class="filter-label">Sort by</label>' +
+        '<select class="filter-select" onchange="dashboardSortChange(this)">' + sortHtml + '</select>' +
+      '</div>' +
     '</div>' +
   '</div>';
 }
 
 function dashboardFilterChange(el) {
   _dashboardCurrentFilter = el.value;
+  _dashboardPage = 1;          // any filter change resets to the first page
   applyDashboardView();
 }
 
 function dashboardSortChange(el) {
   _dashboardCurrentSort = el.value;
+  _dashboardPage = 1;
+  applyDashboardView();
+}
+
+/*
+  Function Name: dashboardSearch
+  LAYMAN    : Tuwing nagta-type sa search box, i-filter ang listahan (control
+              no. / project / group). Hindi nire-render ang controls kaya hindi
+              nawawala ang focus sa input.
+  TECHNICAL : Sets _dashboardSearch, resets to page 1, re-renders ONLY
+              #dashboard-list via applyDashboardView (search input lives in
+              #dashboard-controls, untouched → focus preserved).
+  PARAMS    : value — the raw input string.
+*/
+function dashboardSearch(value) {
+  _dashboardSearch = value;
+  _dashboardPage = 1;
+  applyDashboardView();
+}
+
+/*
+  Function Name: dashboardGoPage
+  LAYMAN    : Lumipat sa ibang page ng listahan (pagination).
+  TECHNICAL : Sets _dashboardPage, re-renders #dashboard-list.
+  PARAMS    : n — 1-based page number.
+*/
+function dashboardGoPage(n) {
+  _dashboardPage = n;
   applyDashboardView();
 }
 
@@ -219,6 +271,8 @@ function syncDashboardStatCards() {
 */
 function applyDashboardView() {
   syncDashboardStatCards();
+
+  // 1. stat-card / dropdown filter
   const filtered = _dashboardCurrentFilter === 'all'
     ? _dashboardRequests
     : _dashboardCurrentFilter === 'expired'
@@ -227,7 +281,10 @@ function applyDashboardView() {
       : _dashboardRequests.filter(function (r) {
           return getDashboardFilter(r.status) === _dashboardCurrentFilter;
         });
-  const sorted = sortRequests(filtered, _dashboardCurrentSort);
+  // 2. free-text search  3. sort
+  const searched = filterBySearch(filtered, _dashboardSearch);
+  const sorted   = sortRequests(searched, _dashboardCurrentSort);
+
   const listEl = document.getElementById('dashboard-list');
   if (!listEl) return;
 
@@ -241,17 +298,81 @@ function applyDashboardView() {
       expired:  'No expired contracts',
     };
     listEl.innerHTML = renderEmptyState({
-      title:   emptyTitles[_dashboardCurrentFilter] || 'No requests',
-      message: _dashboardCurrentFilter === 'all'
-        ? 'Submit your first e-certificate request to see it here.'
-        : '',
+      title:   _dashboardSearch ? 'No matches' : (emptyTitles[_dashboardCurrentFilter] || 'No requests'),
+      message: _dashboardSearch
+        ? 'No requests match “' + escapeHtml(_dashboardSearch) + '”.'
+        : (_dashboardCurrentFilter === 'all'
+            ? 'Submit your first e-certificate request to see it here.'
+            : ''),
       emotion: _dashboardCurrentFilter === 'approved' ? 'approved'
              : _dashboardCurrentFilter === 'declined' ? 'declined'
              : 'default',
     });
   } else {
-    listEl.innerHTML = renderRequestorTable(sorted);
+    listEl.innerHTML = renderDashboardListBody(sorted.length, sorted);
   }
+}
+
+/*
+  Function Name: renderDashboardListBody
+  LAYMAN    : Ang loob ng listahan — ang table (ng kasalukuyang page lang) +
+              ang pagination sa ilalim.
+  TECHNICAL : Clamps _dashboardPage to the valid range, slices the page via
+              paginate(), renders the table for that slice + renderPagination()
+              for the full total. Single source of truth for the #dashboard-list
+              body (used by both first render and applyDashboardView).
+  PARAMS    : total — full (post-filter/search) count; sorted — the full sorted array.
+  RETURNS   : HTML string — table + pager.
+*/
+function renderDashboardListBody(total, sorted) {
+  const pages = Math.max(1, Math.ceil(total / DASHBOARD_PER_PAGE));
+  if (_dashboardPage > pages) _dashboardPage = pages;
+  const pageItems = paginate(sorted, _dashboardPage, DASHBOARD_PER_PAGE);
+  return renderRequestorTable(pageItems) +
+    renderPagination({ total: total, page: _dashboardPage, perPage: DASHBOARD_PER_PAGE, onPage: 'dashboardGoPage' });
+}
+
+/*
+  Function Name: filterBySearch
+  LAYMAN    : Hanapin ang mga request na tumutugma sa hinahanap (control no.,
+              project, group, o requestor) — case-insensitive. Shared sa
+              Dashboard, ApproverDashboard, at Admin (global scope).
+  TECHNICAL : Returns rows whose controlNumber/projectTitle/group/requestor
+              contains the lowercased query. requestor is absent on the
+              requestor dashboard's rows → that check is simply skipped (the
+              field is undefined). Blank query → the array unchanged.
+  PARAMS    : requests — array; query — search string.
+  RETURNS   : filtered array.
+*/
+function filterBySearch(requests, query) {
+  const q = String(query || '').trim().toLowerCase();
+  if (!q) return requests;
+  return requests.filter(function (r) {
+    return String(r.controlNumber || '').toLowerCase().indexOf(q) !== -1 ||
+           String(r.projectTitle  || '').toLowerCase().indexOf(q) !== -1 ||
+           String(r.group         || '').toLowerCase().indexOf(q) !== -1 ||
+           String(r.requestor     || '').toLowerCase().indexOf(q) !== -1;
+  });
+}
+
+/*
+  Function Name: countFiledThisMonth
+  LAYMAN    : Ilan ang na-file ngayong buwan (para sa "↑ N this month" deltas)?
+  TECHNICAL : Parses r.dateFiled (e.g. "Jun 11, 2026") and counts those in the
+              current calendar month/year, optionally pre-filtered by pred.
+  PARAMS    : requests — array; pred — optional row predicate.
+  RETURNS   : integer count.
+*/
+function countFiledThisMonth(requests, pred) {
+  const now = new Date();
+  const m = now.getMonth(), y = now.getFullYear();
+  let n = 0;
+  for (const r of requests) {
+    if (pred && !pred(r)) continue;
+    const d = new Date(r.dateFiled);
+    if (!isNaN(d.getTime()) && d.getMonth() === m && d.getFullYear() === y) n++;
+  }
+  return n;
 }
 
 
@@ -279,8 +400,8 @@ function computeDashboardTabCounts(requests) {
 /*
   Function Name: getDashboardFilter
   LAYMAN    : Anong bucket ang status na ito? Ginagamit sa pag-filter at sa
-              pagbibilang ng tabs. Lahat ng "Pending Approver N" + "Syncing Files"
-              ay mapupunta sa 'pending' para walang mawala.
+              pagbibilang ng tabs. Lahat ng "Pending Approver N" ay mapupunta
+              sa 'pending' para walang mawala.
   TECHNICAL : Maps status string → 'approved' | 'declined' | 'returned' | 'pending'.
               Shared with ApproverDashboard.html and JavaScript.html.
 */
@@ -289,7 +410,7 @@ function getDashboardFilter(status) {
   if (status === 'Fully Approved')        return 'approved';
   if (status === 'Declined')              return 'declined';
   if (status === 'Returned to Requestor') return 'returned';
-  return 'pending'; // Pending Approver 1/2/3 + Syncing Files
+  return 'pending'; // Pending Approver 1/2/3 (catch-all)
 }
 
 
@@ -327,30 +448,51 @@ function computeRequestorStats(requests) {
               server-computed r.isExpired flag — no client date parsing.
 */
 function renderRequestorTable(requests) {
-  const rows = requests.map(function (r) {
-    const idAttr = escapeHtml(r.requestId);
-    return '' +
-      '<tr onclick="navigateTo(\'request\', {id: \'' + idAttr + '\'})">' +
-        '<td>' + escapeHtml(r.controlNumber) + '</td>' +
-        '<td>' + escapeHtml(r.projectTitle)  + '</td>' +
-        '<td>' + escapeHtml(r.group)         + '</td>' +
-        '<td>' + renderStatusBadge(r.status) +
-          (r.isExpired ? ' <span class="badge badge-expired" title="Contract end date has passed">Expired</span>' : '') +
-        '</td>' +
-        '<td>' + escapeHtml(r.dateFiled)     + '</td>' +
-      '</tr>';
-  }).join('');
-
   return '' +
     '<table class="data-table">' +
       '<thead><tr>' +
-        '<th>Control no.</th>' +
+        '<th>Request</th>' +
         '<th>Project</th>' +
         '<th>Group</th>' +
         '<th>Status</th>' +
         '<th>Filed</th>' +
+        '<th></th>' +
       '</tr></thead>' +
-      '<tbody>' + rows + '</tbody>' +
+      '<tbody>' + requests.map(renderRequestRow).join('') + '</tbody>' +
     '</table>';
+}
+
+/*
+  Function Name: renderRequestRow
+  LAYMAN    : Isang row sa table — may file-icon tile + control no., project,
+              group, status badge (+ "Expired" chip kung lapsed), petsa na may
+              kalendaryo, at chevron sa dulo na gumagalaw pag na-hover.
+  TECHNICAL : One <tr> with onclick navigateTo('request',{id}). Shared row
+              renderer (kept separate so other tables can reuse it later).
+              Long cells use .cell-clip; the leading cell uses the request-icon
+              composite. Expired chip from the server isExpired flag.
+  PARAMS    : r — a request DTO row.
+  RETURNS   : HTML string — one <tr>.
+*/
+function renderRequestRow(r) {
+  const idAttr = escapeHtml(r.requestId);
+  return '' +
+    '<tr onclick="navigateTo(\'request\', {id: \'' + idAttr + '\'})">' +
+      '<td>' +
+        '<div class="cell-request">' +
+          '<div class="cell-request-icon">' + renderIcon('file', 16) + '</div>' +
+          '<div class="cell-request-text">' +
+            '<div class="cell-primary">' + escapeHtml(r.controlNumber) + '</div>' +
+          '</div>' +
+        '</div>' +
+      '</td>' +
+      '<td class="cell-clip" title="' + escapeHtml(r.projectTitle) + '">' + escapeHtml(r.projectTitle) + '</td>' +
+      '<td class="cell-clip" title="' + escapeHtml(r.group) + '">' + escapeHtml(r.group) + '</td>' +
+      '<td>' + renderStatusBadge(r.status) +
+        (r.isExpired ? ' <span class="badge badge-expired" title="Contract end date has passed">Expired</span>' : '') +
+      '</td>' +
+      '<td><span class="cell-date">' + renderIcon('calendar', 14) + escapeHtml(r.dateFiled) + '</span></td>' +
+      '<td class="cell-chevron">' + renderIcon('chevron-right', 18) + '</td>' +
+    '</tr>';
 }
 </script>
