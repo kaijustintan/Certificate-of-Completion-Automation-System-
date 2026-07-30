@@ -263,15 +263,26 @@ function getGroupChain(groupId) {
   RETURNS   : { id, name } of the new group.
 */
 function createGroup(name) {
-  const sheet = getSheet(SHEET_NAMES.GROUPS);
-  const id    = generateGroupId();
-  const row   = new Array(4).fill("");
-  row[GRP.GROUP_ID - 1]   = id;
-  row[GRP.GROUP_NAME - 1] = name;
-  row[GRP.ACTIVE - 1]     = "TRUE";
-  row[GRP.CREATED_AT - 1] = new Date();
-  sheet.appendRow(row);
-  return { id: id, name: name };
+  // Direct-call guard: this mechanical writer is reachable via google.script.run,
+  // so it verifies admin identity itself rather than trusting the adminCreateGroup
+  // wrapper. The lock makes generateGroupId()'s max+1 scan collision-safe under
+  // concurrent creates.
+  if (!isAdmin(Session.getActiveUser().getEmail())) throw new Error("Unauthorized");
+  const lock = LockService.getScriptLock();
+  lock.waitLock(10000);
+  try {
+    const sheet = getSheet(SHEET_NAMES.GROUPS);
+    const id    = generateGroupId();
+    const row   = new Array(4).fill("");
+    row[GRP.GROUP_ID - 1]   = id;
+    row[GRP.GROUP_NAME - 1] = name;
+    row[GRP.ACTIVE - 1]     = "TRUE";
+    row[GRP.CREATED_AT - 1] = new Date();
+    sheet.appendRow(row);
+    return { id: id, name: name };
+  } finally {
+    lock.releaseLock();
+  }
 }
 
 /*
@@ -284,6 +295,8 @@ function createGroup(name) {
   RETURNS   : true if the row was found and updated, false otherwise.
 */
 function updateGroupFields(groupId, fields) {
+  // Direct-call guard (reachable via google.script.run — see createGroup).
+  if (!isAdmin(Session.getActiveUser().getEmail())) throw new Error("Unauthorized");
   const sheet  = getSheet(SHEET_NAMES.GROUPS);
   const rows   = getDataRows(SHEET_NAMES.GROUPS);
   const target = String(groupId);
@@ -350,6 +363,9 @@ function updateGroupFields(groupId, fields) {
     → rows 1–2 unchanged; ONE new row seq 3 (C).
 */
 function replaceGroupChain(groupId, slots) {
+  // Direct-call guard (reachable via google.script.run — see createGroup).
+  // Without this, any authenticated user could rewrite a group's approver chain.
+  if (!isAdmin(Session.getActiveUser().getEmail())) throw new Error("Unauthorized");
   const lock = LockService.getScriptLock();
   lock.waitLock(10000);
   try {
@@ -410,8 +426,11 @@ function replaceGroupChain(groupId, slots) {
   RETURNS   : (void).
 */
 function appendAdminLog(adminEmail, action, targetGroupId, details) {
-  const sheet = getSheet(SHEET_NAMES.ADMINS_LOG);
-  if (!sheet) return; // tab not created yet — never break the mutation over audit
+  // Self-heal the audit tab: create Admins_Log (with headers) if it is missing,
+  // so a forgotten go-live step cannot silently drop the admin audit trail.
+  let sheet;
+  try { sheet = ensureAdminsLogTab_(); }
+  catch (e) { Logger.log("appendAdminLog(): could not ensure Admins_Log tab — " + e); return; }
   const row = new Array(6).fill("");
   row[ADL.LOG_ID - 1]       = generateAdminLogId();
   row[ADL.ADMIN_EMAIL - 1]  = adminEmail || "";
@@ -420,6 +439,26 @@ function appendAdminLog(adminEmail, action, targetGroupId, details) {
   row[ADL.DETAILS - 1]      = details || "";
   row[ADL.TIMESTAMP - 1]    = new Date();
   sheet.appendRow(row);
+}
+
+/*
+  ensureAdminsLogTab_ — return the Admins_Log sheet, creating it with headers if
+  the tab does not exist yet.
+  LAYMAN    : Kung wala pang "Admins_Log" tab, gagawin ito kasama ang headers,
+              para hindi tahimik na mawala ang admin audit trail kung nakalimutang
+              gawin nang mano-mano sa go-live.
+  TECHNICAL : insertSheet + header row when missing; returns the existing sheet
+              otherwise. Called by appendAdminLog so the audit self-heals.
+  RETURNS   : the Admins_Log Sheet object.
+*/
+function ensureAdminsLogTab_() {
+  const ss = getSpreadsheet();
+  let sheet = ss.getSheetByName(SHEET_NAMES.ADMINS_LOG);
+  if (!sheet) {
+    sheet = ss.insertSheet(SHEET_NAMES.ADMINS_LOG);
+    sheet.appendRow(["log_id", "admin_email", "action", "target_group", "details", "timestamp"]);
+  }
+  return sheet;
 }
 
 

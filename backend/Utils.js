@@ -279,16 +279,19 @@ function daysUntilContractEnd(rawEnd) {
 
 /*
   Function Name: generateRequestId
-  LAYMAN    : Gumawa ng maikling natatanging ID (3 malalaking character).
-              Katumbas ng AppSheet na LEFT(UNIQUEID(), 3).
-  TECHNICAL : First 3 chars of a dash-stripped UUID, upper-cased.
+  LAYMAN    : Gumawa ng natatanging Request ID. Dating 3-char lang (4096 lang ang
+              posible, kaya nagbabanggaan pagdami ng request). Ngayon buong UUID
+              na, may "REQ-" prefix para hindi mabasang numero ng Sheets.
+  TECHNICAL : "REQ-" + a dash-stripped, upper-cased UUID (32 hex chars). The
+              prefix makes the value non-numeric so Sheets never coerces it
+              (e.g. "1E3" -> 1000). The full width removes the birthday-collision
+              risk that the old 3-char form had. submitNewRequest also
+              regenerate-until-unique as a final guard.
   PARAMS    : (none)
-  RETURNS   : 3-character ID string (e.g. "9B1").
-  NOTE      : Short → tiny collision risk; the control number adds a running
-              counter so the full identifier stays unique.
+  RETURNS   : Unique ID string (e.g. "REQ-A1B2C3D4E5F6...").
 */
 function generateRequestId() {
-  return Utilities.getUuid().replace(/-/g, "").substring(0, 3).toUpperCase();
+  return "REQ-" + Utilities.getUuid().replace(/-/g, "").toUpperCase();
 }
 
 /*
@@ -297,7 +300,8 @@ function generateRequestId() {
               EC-TAON-BILANG-XXX (hal. EC-2026-00001-9B1).
   TECHNICAL : Composes EC-<year>-<5-digit running count>-<requestId>, using the
               current row count as the sequence number.
-  PARAMS    : requestId — the short ID appended as the suffix.
+  PARAMS    : requestId — the request's unique ID; its last 3 chars become the
+              human-facing display suffix.
   RETURNS   : Control-number string.
 
   STEPS
@@ -308,16 +312,18 @@ function generateRequestId() {
       Layman    : Gawing 5-digit (00001, 00042 …).
       Technical : String(count + 1).padStart(5, "0").
     Step 3 — Assemble the parts
-      Layman    : Pagdugtungin: EC + taon + bilang + requestId.
-      Technical : `EC-${year}-${padded}-${requestId}`.
+      Layman    : Pagdugtungin: EC + taon + bilang + huling 3 char ng requestId.
+      Technical : `EC-${year}-${padded}-${suffix}`.
 
   EXAMPLE
-    // 41 requests already exist; new short ID is "9B1"
-    generateControlNumber("9B1")  →  "EC-2026-00042-9B1"
+    // 41 requests already exist; requestId ends in "9B1"
+    generateControlNumber("REQ-...9B1")  →  "EC-2026-00042-9B1"
 
-  ⚠️ NOTE: the sequence is derived from getLastRow() at call time. Two submits
-     in the same instant could compute the same count — acceptable at current
-     volume, but worth knowing if throughput grows.
+  NOTE: the running count is derived from getLastRow(), so two truly-simultaneous
+     submits could compute the same count. That is now cosmetic only: the suffix
+     comes from the UNIQUE requestId, so the full control number still differs
+     between the two. (A script lock on the count could remove even the cosmetic
+     repeat, but is not needed for correctness now that the suffix is unique.)
 */
 function generateControlNumber(requestId) {
   const sheet = getSheet(SHEET_NAMES.REQUESTS);
@@ -325,5 +331,6 @@ function generateControlNumber(requestId) {
   const count = lastRow > 1 ? lastRow - 1 : 0; // subtract header row
   const padded = String(count + 1).padStart(5, "0");
   const year = new Date().getFullYear();
-  return `EC-${year}-${padded}-${requestId}`;
+  const suffix = String(requestId).slice(-3).toUpperCase(); // human-facing display suffix
+  return `EC-${year}-${padded}-${suffix}`;
 }

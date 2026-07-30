@@ -470,5 +470,15 @@ function emailRemarkBox(label, text, tone) {
 */
 function sendBrandedEmail(recipient, subject, textBody, htmlBody, extraOptions) {
   const options = Object.assign({ htmlBody: htmlBody }, extraOptions || {});
-  GmailApp.sendEmail(recipient, subject, textBody, options);
+  // Non-fatal by design: a send failure (Gmail quota, transient error, bad
+  // address) is logged but never thrown. The workflow state is already committed
+  // by the time emails fire, so a mail error must not abort the action, roll back
+  // a saved request, or block the COC. Returns true/false for optional callers.
+  try {
+    GmailApp.sendEmail(recipient, subject, textBody, options);
+    return true;
+  } catch (e) {
+    Logger.log("sendBrandedEmail(): send to " + recipient + " failed — " + e);
+    return false;
+  }
 }

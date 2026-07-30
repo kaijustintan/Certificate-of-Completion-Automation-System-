@@ -627,8 +627,17 @@ function submitNewRequest(formData) {
   const v = validateAttachmentPayload(files);
   if (!v.ok) return { success: false, error: v.error };
 
-  // Step 2 — Generate identifiers
-  const requestId = generateRequestId();
+  // Step 2a — Reject a group with no active approver chain. Without this the
+  // request would route to nobody (getCurrentApprover -> null) and sit invisible
+  // on every pending list forever. Mirrors the getApproverGroups dropdown filter.
+  if (!getApprovers(formData.group)) {
+    return { success: false, error: "That approver group has no active approvers. Please choose another group." };
+  }
+
+  // Step 2b — Generate identifiers. Regenerate the requestId until it is unique
+  // (a final guard on top of the now-collision-resistant generator).
+  let requestId = generateRequestId();
+  while (getRowNumberByRequestId(requestId) !== -1) requestId = generateRequestId();
   const controlNo = generateControlNumber(requestId);
 
   // Step 3 — Upload ALL files to Drive first (rollback on any failure)
@@ -656,43 +665,58 @@ function submitNewRequest(formData) {
     return { success: false, error: "File upload failed. No request was created. Please try again." };
   }
 
-  // Step 4 — Write the request row (always PENDING_1). group is a group_id.
-  const sheet  = getSheet(SHEET_NAMES.REQUESTS);
-  const newRow = new Array(CR.RESUBMIT_COUNT).fill("");
-  newRow[CR.REQUEST_ID - 1]         = requestId;
-  newRow[CR.CONTROL_NUMBER - 1]     = controlNo;
-  newRow[CR.STATUS - 1]             = STATUS.PENDING_1;   // cache
-  newRow[CR.STEP - 1]               = 1;                  // cache
-  newRow[CR.DATE_OF_FILING - 1]     = new Date();
-  newRow[CR.PROJECT_TITLE - 1]      = formData.projectTitle;
-  newRow[CR.REQUESTOR - 1]          = caller;
-  newRow[CR.REQUESTOR_DESIG - 1]    = formData.requestorDesig;
-  newRow[CR.GROUP - 1]              = formData.group;     // group_id (from the dropdown)
-  newRow[CR.ACCOUNTABLE_PERSON - 1] = formData.accountablePerson;
-  newRow[CR.DEPARTMENT - 1]         = formData.department;
-  newRow[CR.LOCATION - 1]           = formData.location;
-  newRow[CR.PC_NAME - 1]            = formData.pcName;
-  newRow[CR.PRISM - 1]              = formData.prism;
-  newRow[CR.PURCHASE_ORDER - 1]     = formData.purchaseOrder;
-  newRow[CR.IHELP_NUMBER - 1]       = formData.ihelpNumber;
-  newRow[CR.PRODUCT_TYPE - 1]       = formData.productType;
-  newRow[CR.PRODUCT_NAME - 1]       = formData.productName;
-  newRow[CR.TYPE_OF_PURCHASE - 1]   = formData.typeOfPurchase;
-  newRow[CR.TYPE_OF_LICENSE - 1]    = formData.typeOfLicense;
-  newRow[CR.CONTRACT_START - 1]     = formData.contractStart;
-  newRow[CR.CONTRACT_END - 1]       = formData.contractEnd;
-  newRow[CR.SUPPLIER_NAME - 1]      = formData.supplierName;
-  newRow[CR.REQUESTOR_REMARK - 1]   = formData.requestorRemark;
-  newRow[CR.RESUBMIT_COUNT - 1]     = 0;                  // cache
-  sheet.appendRow(newRow);
+  // Steps 4-5 — Write the request row + timeline + attachment rows. If any write
+  // fails after the files were uploaded, roll back: trash the files AND remove the
+  // request row, so no half-written request (visible to an approver with no
+  // supporting documents) and no orphaned Drive files survive.
+  const sheet = getSheet(SHEET_NAMES.REQUESTS);
+  let appendedRowNum = null;
+  try {
+    const newRow = new Array(CR.RESUBMIT_COUNT).fill("");
+    newRow[CR.REQUEST_ID - 1]         = requestId;
+    newRow[CR.CONTROL_NUMBER - 1]     = controlNo;
+    newRow[CR.STATUS - 1]             = STATUS.PENDING_1;   // cache
+    newRow[CR.STEP - 1]               = 1;                  // cache
+    newRow[CR.DATE_OF_FILING - 1]     = new Date();
+    newRow[CR.PROJECT_TITLE - 1]      = formData.projectTitle;
+    newRow[CR.REQUESTOR - 1]          = caller;
+    newRow[CR.REQUESTOR_DESIG - 1]    = formData.requestorDesig;
+    newRow[CR.GROUP - 1]              = formData.group;     // group_id (from the dropdown)
+    newRow[CR.ACCOUNTABLE_PERSON - 1] = formData.accountablePerson;
+    newRow[CR.DEPARTMENT - 1]         = formData.department;
+    newRow[CR.LOCATION - 1]           = formData.location;
+    newRow[CR.PC_NAME - 1]            = formData.pcName;
+    newRow[CR.PRISM - 1]              = formData.prism;
+    newRow[CR.PURCHASE_ORDER - 1]     = formData.purchaseOrder;
+    newRow[CR.IHELP_NUMBER - 1]       = formData.ihelpNumber;
+    newRow[CR.PRODUCT_TYPE - 1]       = formData.productType;
+    newRow[CR.PRODUCT_NAME - 1]       = formData.productName;
+    newRow[CR.TYPE_OF_PURCHASE - 1]   = formData.typeOfPurchase;
+    newRow[CR.TYPE_OF_LICENSE - 1]    = formData.typeOfLicense;
+    newRow[CR.CONTRACT_START - 1]     = formData.contractStart;
+    newRow[CR.CONTRACT_END - 1]       = formData.contractEnd;
+    newRow[CR.SUPPLIER_NAME - 1]      = formData.supplierName;
+    newRow[CR.REQUESTOR_REMARK - 1]   = formData.requestorRemark;
+    newRow[CR.RESUBMIT_COUNT - 1]     = 0;                  // cache
+    sheet.appendRow(newRow);
+    appendedRowNum = sheet.getLastRow();
 
-  // Log the submit on the append-only timeline (cycle 0, no step).
-  appendAction(requestId, formData.group, 0, null, caller, ACTION.SUBMITTED, "");
+    // Log the submit on the append-only timeline (cycle 0, no step).
+    appendAction(requestId, formData.group, 0, null, caller, ACTION.SUBMITTED, "");
 
-  // Step 5 — Write attachment child rows (one batched write; cycle 0 = first submit)
-  writeAttachmentRows(requestId, uploaded, 0);
+    // Write attachment child rows (one batched write; cycle 0 = first submit).
+    writeAttachmentRows(requestId, uploaded, 0);
+  } catch (err) {
+    uploaded.forEach(function (u) {
+      try { DriveApp.getFileById(u.fileId).setTrashed(true); } catch (e) {}
+    });
+    if (appendedRowNum) { try { sheet.deleteRow(appendedRowNum); } catch (e) {} }
+    Logger.log("submitNewRequest(): Sheet write failed — " + err + ". Rolled back files + row.");
+    return { success: false, error: "Submission failed. No request was created. Please try again." };
+  }
 
-  // Step 6 — Send approval email LAST (all files are live in Drive at this point)
+  // Step 6 — Send approval email LAST. A mail failure must NOT roll back the
+  // committed request; sendBrandedEmail swallows send errors so this never throws.
   sendApprovalRequest(requestId);
 
   return { success: true, requestId, controlNumber: controlNo };

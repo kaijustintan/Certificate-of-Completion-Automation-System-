@@ -159,7 +159,13 @@ function notifyChainChanges_(groupId, oldSeqByEmail, oldCurrentByReq) {
     const email       = recipients[key];
     const newStep     = seqByEmail[key] || null;
     const prevStep    = (oldSeqByEmail[key] === undefined) ? null : oldSeqByEmail[key];
-    sendNewApproverNotice(email, groupName, newStep, prevStep, rowsByRecipient[key] || []);
+    // Per-recipient isolation: one failed notice (bad address, transient error)
+    // must not suppress the notices to the other new approvers.
+    try {
+      sendNewApproverNotice(email, groupName, newStep, prevStep, rowsByRecipient[key] || []);
+    } catch (e) {
+      Logger.log("notifyChainChanges_(): notice to " + email + " failed — " + e);
+    }
   });
 }
 

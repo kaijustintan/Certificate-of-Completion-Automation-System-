@@ -227,6 +227,17 @@ function handleAttachmentChange(e, sheet) {
               email; the INSTALLABLE trigger registered here can.
 */
 function registerTrigger() {
+  // ⚠️ INTENTIONALLY DISABLED — do NOT run this in production. Registering
+  // onSheetChange makes it fire on every status write and send a SECOND copy of
+  // every workflow email (the handle* paths already send them); worse, inside an
+  // installable trigger Session.getActiveUser() resolves to the trigger OWNER,
+  // not the acting approver, so receipts go to the wrong person. It sits next to
+  // registerExpiryTrigger()/registerApproverReminderTrigger() (which you DO run),
+  // so this guard prevents an accidental "run all three." If you ever truly need
+  // the legacy sheet-change email path, remove this throw deliberately AND first
+  // neutralize the email sends in handleCertificateRequestChange.
+  throw new Error("registerTrigger() is intentionally disabled: it would double-send every workflow email. See the comment above this line.");
+
   // Remove any existing triggers first to avoid duplicates
   const triggers = ScriptApp.getProjectTriggers();
   triggers.forEach(trigger => {

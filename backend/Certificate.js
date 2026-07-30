@@ -136,6 +136,17 @@ function generateCOC(requestId) {
   const row = getRequestRowData(requestId);
   if (!row) return { success: false, error: "Request not found: " + requestId };
 
+  // Guard: only a chain approver of this request or an admin may generate or
+  // re-issue its certificate, and only once it is fully approved. In the normal
+  // flow the final approver triggers this via sendFullyApprovedToRequestor.
+  const cocCaller = Session.getActiveUser().getEmail();
+  if (!(isChainApprover(row, cocCaller) || isAdmin(cocCaller))) {
+    return { success: false, error: "Unauthorized" };
+  }
+  if (row[CR.STATUS - 1] !== STATUS.APPROVED) {
+    return { success: false, error: "Certificate can only be generated for a fully approved request." };
+  }
+
   const group         = row[CR.GROUP - 1];           // group_id
   const groupName     = getGroupNameById(group);     // display name for the COC
   const approvers     = getApprovers(group) || {};
@@ -147,10 +158,13 @@ function generateCOC(requestId) {
   const _view   = getApprovalView(requestId);
   const appDate = function (n) { return (_view.byStep[n] && _view.byStep[n].date) || ""; };
 
-  // Step 3 — Copy the template Doc
-  const copyId = DriveApp.getFileById(COC.TEMPLATE_DOC_ID).makeCopy(copyName).getId();
+  // Step 3 — Copy the template Doc (inside the try so a bad or inaccessible
+  // template ID returns { success:false } instead of throwing, honoring the
+  // never-throws contract the callers rely on).
+  let copyId = null;
 
   try {
+    copyId = DriveApp.getFileById(COC.TEMPLATE_DOC_ID).makeCopy(copyName).getId();
     const doc  = DocumentApp.openById(copyId);
     const body = doc.getBody();
 
@@ -289,7 +303,7 @@ function generateCOC(requestId) {
     };
   } catch (err) {
     // Best-effort cleanup of the temp copy so failures don't orphan Docs
-    try { DriveApp.getFileById(copyId).setTrashed(true); } catch (e) {}
+    if (copyId) { try { DriveApp.getFileById(copyId).setTrashed(true); } catch (e) {} }
     return { success: false, error: String(err) };
   }
 }
