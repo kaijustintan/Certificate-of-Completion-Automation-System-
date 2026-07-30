@@ -20,11 +20,16 @@
   Function Name: renderEmptyState
   LAYMAN    : Gumawa ng "walang laman" na display — Miga + headline + optional
               supporting text. Para sa empty lists at unrecoverable errors.
-  TECHNICAL : Uses migaImageFor(emotion) for the image. title is escaped;
-              message is inserted as-is (caller is responsible for escaping).
+  TECHNICAL : Uses migaImageFor(emotion) for the image. title is escaped here.
+              message is inserted as RAW HTML and is NOT escaped, so the caller
+              MUST escape any user-supplied text before passing it (pass only
+              trusted markup or pre-escaped strings). Escaping at this sink would
+              double-escape the safe HTML that current callers pass, so it stays
+              the caller's responsibility.
   PARAMS    : opts — { title, message, emotion }.
-              title   — headline (default 'Nothing here yet.').
-              message — optional HTML or text (default '').
+              title   — headline (default 'Nothing here yet.'), escaped here.
+              message — optional PRE-ESCAPED/trusted HTML string (default '').
+                        The caller MUST escape any user data before passing it.
               emotion — Miga variant (default 'default').
   RETURNS   : HTML string — .empty-state div.
 */

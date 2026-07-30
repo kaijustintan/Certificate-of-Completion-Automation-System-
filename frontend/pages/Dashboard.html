@@ -97,7 +97,7 @@ async function renderDashboardPage() {
 
     ${renderHeroCard({
       greeting: 'Good to see you again,',
-      title:    'Welcome back, ' + friendlyName(state.user && state.user.email) + ' \u{1F44B}',
+      title:    'Welcome back, ' + friendlyName(state.user && state.user.email),
       subtitle: 'Track all your e-certificate requests in one place.',
       insights: [
         { icon: 'clock',        text: stats.pending + ' awaiting approval' },
@@ -171,8 +171,8 @@ function renderDashboardControls(requests) {
     }) +
     '<div class="filter-bar">' +
       '<div class="filter-group">' +
-        '<label class="filter-label">Status</label>' +
-        '<select class="filter-select" onchange="dashboardFilterChange(this)">' + filterHtml + '</select>' +
+        '<label class="filter-label" for="dashboard-status-filter">Status</label>' +
+        '<select class="filter-select" id="dashboard-status-filter" onchange="dashboardFilterChange(this)">' + filterHtml + '</select>' +
       '</div>' +
       '<div class="filter-group">' +
         '<label class="filter-label">Sort by</label>' +
@@ -240,6 +240,7 @@ function afterRender_dashboard() {
 */
 function dashboardStatClick(filter) {
   _dashboardCurrentFilter = filter;
+  _dashboardPage = 1;          // a stat-card filter change resets to the first page
   const sel = document.querySelector('#dashboard-controls .filter-select');
   if (sel) sel.value = filter;
   applyDashboardView();
@@ -449,6 +450,7 @@ function computeRequestorStats(requests) {
 */
 function renderRequestorTable(requests) {
   return '' +
+    '<div class="table-scroll">' +
     '<table class="data-table">' +
       '<thead><tr>' +
         '<th>Request</th>' +
@@ -459,7 +461,8 @@ function renderRequestorTable(requests) {
         '<th></th>' +
       '</tr></thead>' +
       '<tbody>' + requests.map(renderRequestRow).join('') + '</tbody>' +
-    '</table>';
+    '</table>' +
+    '</div>';
 }
 
 /*
@@ -477,7 +480,7 @@ function renderRequestorTable(requests) {
 function renderRequestRow(r) {
   const idAttr = escapeHtml(r.requestId);
   return '' +
-    '<tr onclick="navigateTo(\'request\', {id: \'' + idAttr + '\'})">' +
+    '<tr role="button" tabindex="0" onclick="navigateTo(\'request\', {id: \'' + idAttr + '\'})" onkeydown="uiKeyActivate(event)">' +
       '<td>' +
         '<div class="cell-request">' +
           '<div class="cell-request-icon">' + renderIcon('file', 16) + '</div>' +

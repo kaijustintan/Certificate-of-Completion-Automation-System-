@@ -21,10 +21,10 @@
 <aside class="sidebar">
 
   <!-- Brand — top of sidebar (logo mark + wordmark) -->
-  <div class="navbar-brand" onclick="navigateTo('dashboard')">
+  <div class="navbar-brand" role="button" tabindex="0" onclick="navigateTo('dashboard')" onkeydown="uiKeyActivate(event)">
     <div class="navbar-brand-row">
       <div class="navbar-logo">M</div>
-      <div class="navbar-brand-text">Megaworld<br>E-Certificate Portal</div>
+      <div class="navbar-brand-text">Megaworld<span class="navbar-brand-sub"><br>E-Certificate Portal</span></div>
     </div>
   </div>
 

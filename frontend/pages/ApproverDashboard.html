@@ -104,7 +104,7 @@ async function renderApproverDashboardPage() {
     ${renderHeroCard({
       greeting: 'Your approval desk,',
       title:    awaitingCount === 0
-        ? 'Inbox zero, ' + friendlyName(state.user && state.user.email) + ' \u{1F389}'
+        ? 'Inbox zero, ' + friendlyName(state.user && state.user.email)
         : friendlyName(state.user && state.user.email) + ', you have ' + awaitingCount + ' to review',
       subtitle: awaitingCount === 0
         ? 'Nothing is waiting on you right now. Nicely done.'
@@ -156,7 +156,8 @@ function renderApproverControls() {
   // View switch as tabs with count badges (reuses the .tab/.tab-count CSS).
   function tab(view, label, count) {
     const active = (view === _approverCurrentView) ? ' active' : '';
-    return '<div class="tab' + active + '" onclick="approverTabClick(\'' + view + '\')">' +
+    return '<div class="tab' + active + '" role="button" tabindex="0"' +
+      ' onclick="approverTabClick(\'' + view + '\')" onkeydown="uiKeyActivate(event)">' +
       label + '<span class="tab-count">' + count + '</span>' +
     '</div>';
   }
@@ -189,8 +190,8 @@ function renderApproverControls() {
     }).join('');
     statusGroup =
       '<div class="filter-group">' +
-        '<label class="filter-label">Status</label>' +
-        '<select class="filter-select" onchange="approverActionedStatusChange(this)">' + statusHtml + '</select>' +
+        '<label class="filter-label" for="approver-status-filter">Status</label>' +
+        '<select class="filter-select" id="approver-status-filter" onchange="approverActionedStatusChange(this)">' + statusHtml + '</select>' +
       '</div>';
   }
 
@@ -431,7 +432,7 @@ function renderApproverTable(rows) {
   const tableRows = rows.map(function (r) {
     const idAttr = escapeHtml(r.requestId);
     return '' +
-      '<tr onclick="navigateTo(\'review\', {id: \'' + idAttr + '\'})">' +
+      '<tr role="button" tabindex="0" onclick="navigateTo(\'review\', {id: \'' + idAttr + '\'})" onkeydown="uiKeyActivate(event)">' +
         '<td>' +
           '<div class="cell-request">' +
             '<div class="cell-request-icon">' + renderIcon('file', 16) + '</div>' +
@@ -452,6 +453,7 @@ function renderApproverTable(rows) {
   }).join('');
 
   return '' +
+    '<div class="table-scroll">' +
     '<table class="data-table">' +
       '<thead><tr>' +
         '<th>Request</th>' +
@@ -463,6 +465,7 @@ function renderApproverTable(rows) {
         '<th></th>' +
       '</tr></thead>' +
       '<tbody>' + tableRows + '</tbody>' +
-    '</table>';
+    '</table>' +
+    '</div>';
 }
 </script>

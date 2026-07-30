@@ -140,6 +140,23 @@ function escapeHtml(value) {
 }
 
 
+/*
+  Function Name: sameEmail
+  LAYMAN    : Pareho ba ang dalawang email? Case-insensitive at hindi
+              pinapansin ang extra spaces, para hindi masira ang UI gating
+              kapag iba-iba ang casing ng Google account across sessions.
+  TECHNICAL : Frontend twin of the server-side sameEmail() (WebApp.js).
+              Lowercases + trims both sides; a blank normalized value never
+              matches (two empty cells must NOT read as the same approver).
+  PARAMS    : a, b — the two email values to compare.
+  RETURNS   : Boolean — true only when both are non-blank and equal.
+*/
+function sameEmail(a, b) {
+  var na = String(a || '').trim().toLowerCase();
+  return na !== '' && na === String(b || '').trim().toLowerCase();
+}
+
+
 // ============================================================
 // TOAST NOTIFICATIONS
 // Auto-dismiss after 3 seconds. Types: 'success' | 'error' | ''.
@@ -478,7 +495,10 @@ async function navigateTo(page, params) {
   void app.offsetWidth; // force reflow so the animation restarts
   app.classList.add('page-in');
 
-  // Keep the URL in sync for back/forward and link-sharing.
+  // Keep the URL in sync for link-sharing (deep-links). This uses replaceState,
+  // NOT pushState, so navigation does NOT push in-app browser history entries:
+  // that is intentional. The app provides its own Back buttons per page instead
+  // of relying on the browser's back/forward stack.
   const desiredHash = buildHash(page, params);
   if (location.hash !== desiredHash && !(desiredHash === '#' && !location.hash)) {
     history.replaceState(null, '', desiredHash);
@@ -545,7 +565,8 @@ function refreshNavbar() {
   if (linksEl) {
     // One nav link: icon + label. renderIcon (UI.html) is loaded before this runs.
     const navLink = function (page, label, icon) {
-      return '<span class="navbar-link" data-page="' + page + '" onclick="navigateTo(\'' + page + '\')">' +
+      return '<span class="navbar-link" data-page="' + page + '" role="button" tabindex="0"' +
+        ' onclick="navigateTo(\'' + page + '\')" onkeydown="uiKeyActivate(event)">' +
         renderIcon(icon, 18) + '<span>' + label + '</span></span>';
     };
     const myRequests  = navLink('dashboard', 'My Requests', 'file-text');

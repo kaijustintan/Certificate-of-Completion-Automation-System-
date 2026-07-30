@@ -212,12 +212,12 @@ function renderRequestSummaryCards(detail) {
 // group with a status indicator. Replaces the old "Approval log" (which only
 // listed approvers who had acted). Shared with ReviewDetail.html.
 //
-// State precedence per slot:
-//   1. slot.date set                                  → Acted    ✓ navy
-//   2. status "Declined" & step === n                 → Declined ✕ red
-//   3. status "Returned to Requestor" & slot.remark   → Returned ↩ amber
-//   4. step === n & status includes "Pending"         → Current  ⏳ amber
-//   5. otherwise                                       → Awaiting ○ gray
+// State precedence per slot (icon = Lucide via renderIcon, colored by wrapper):
+//   1. slot.date set                                  → Acted    check  navy
+//   2. status "Declined" & step === n                 → Declined x      red
+//   3. status "Returned to Requestor" & slot.remark   → Returned return amber
+//   4. step === n & status includes "Pending"         → Current  clock  amber
+//   5. otherwise                                       → Awaiting circle gray
 //
 // blurFutureEmails — when true (requestor view), an Awaiting approver's email
 // is hidden (shown as "—") until it's their turn; designation always shows.
@@ -227,7 +227,7 @@ function renderRequestSummaryCards(detail) {
   LAYMAN    : I-render ang "Approvers" card sa right rail — sino ang approver,
               approved na ba, may remark ba, at kailan. Ang mga approver na hindi
               pa kailangan ay maaaring itago ang email (para sa requestor view).
-  TECHNICAL : Maps configured slots to rows with status icons (✓/✕/↩/⏳/○);
+  TECHNICAL : Maps configured slots to rows with status icons (check/x/return/clock/circle);
               blurFutureEmails=true hides emails for awaiting slots (requestor view).
               blurFutureEmails=false shows all (approver view).
   PARAMS    : detail — DTO; blurFutureEmails — bool.
@@ -243,21 +243,21 @@ function renderApproversChain(detail, blurFutureEmails) {
   const rows = slots.map(function (s) {
     let icon, color, label, revealEmail = true;
     if (s.date) {
-      icon = '✓'; color = 'var(--navy-900)';  label = escapeHtml(s.date);
+      icon = renderIcon('check', 14);  color = 'var(--navy-900)';  label = escapeHtml(s.date);
     } else if (status === 'Declined' && step === s.n) {
-      icon = '✕'; color = 'var(--red-text)';   label = 'Declined';
+      icon = renderIcon('x', 14);      color = 'var(--red-text)';   label = 'Declined';
     } else if (status === 'Returned to Requestor' && s.remark) {
-      icon = '↩'; color = 'var(--amber-text)'; label = 'Returned for revision';
+      icon = renderIcon('return', 14); color = 'var(--amber-text)'; label = 'Returned for revision';
     } else if (status.indexOf('Pending') !== -1 && step === s.n) {
-      icon = '⏳'; color = 'var(--amber-text)'; label = 'Pending review';
+      icon = renderIcon('clock', 14);  color = 'var(--amber-text)'; label = 'Pending review';
     } else if (status.indexOf('Pending') !== -1) {
       // Request is still active and this is a later step → genuinely awaiting.
-      icon = '○'; color = 'var(--gray-400)';   label = 'Awaiting';
+      icon = renderIcon('circle', 14); color = 'var(--gray-400)';   label = 'Awaiting';
       if (blurFutureEmails) revealEmail = false;
     } else {
       // Terminal (Declined / Returned / etc.) and this slot never acted → it was
       // never reached. Don't show "Awaiting" — nothing is waiting on them.
-      icon = '○'; color = 'var(--gray-400)';   label = '—';
+      icon = renderIcon('circle', 14); color = 'var(--gray-400)';   label = '—';
       if (blurFutureEmails) revealEmail = false;
     }
 
@@ -332,7 +332,7 @@ function renderResubmitBanner(detail) {
     const body = lines.map(escapeHtml).join('<br>');
     blockA = '' +
       '<div class="resubmit-banner">' +
-        '<div class="mb-sm"><strong>⚠ This request has been returned for revision.</strong></div>' +
+        '<div class="mb-sm"><strong>' + renderIcon('alert', 14) + ' This request has been returned for revision.</strong></div>' +
         '<div class="text-small">' + body + '</div>' +
       '</div>';
   }
@@ -350,7 +350,7 @@ function renderResubmitBanner(detail) {
         '<a href="javascript:void(0)" onclick="toggleResubmitHistory()" ' +
            'style="color: var(--gray-600); cursor: pointer; font-size: 12px;">' +
           'Previous return history (' + n + ' cycle' + (n === 1 ? '' : 's') + ') ' +
-          '<span id="resubmit-arrow">▾</span>' +
+          '<span id="resubmit-arrow">' + renderIcon('chevron-down', 14) + '</span>' +
         '</a>' +
         '<div id="resubmit-history" class="hidden text-small mt-sm" ' +
              'style="border-left: 2px solid var(--gray-200); padding-left: 12px;">' +
@@ -367,14 +367,14 @@ function renderResubmitBanner(detail) {
 /*
   Function Name: toggleResubmitHistory
   LAYMAN    : Expand/collapse ang old resubmit history sa banner.
-  TECHNICAL : Toggles .hidden on #resubmit-history-block; rotates arrow indicator.
+  TECHNICAL : Toggles .hidden on #resubmit-history-block; swaps the chevron icon.
 */
 function toggleResubmitHistory() {
   const block = document.getElementById('resubmit-history');
   const arrow = document.getElementById('resubmit-arrow');
   if (!block) return;
   const nowHidden = block.classList.toggle('hidden');
-  if (arrow) arrow.textContent = nowHidden ? '▾' : '▴';
+  if (arrow) arrow.innerHTML = nowHidden ? renderIcon('chevron-down', 14) : renderIcon('chevron-up', 14);
 }
 
 
@@ -576,6 +576,11 @@ async function viewAttachmentFile(attachmentId) {
         delete window._attachmentBlobCache[attachmentId];
       }, 55 * 60 * 1000);
     } else {
+      // Previewable file but the popup was blocked → fall back to a download,
+      // and tell the user why they didn't get the inline preview.
+      if (previewable && !previewWin) {
+        showToast('Allow pop-ups to preview inline; downloading instead.', '');
+      }
       if (previewWin) previewWin.close();
       const link = document.createElement('a');
       link.href = url;
@@ -628,7 +633,7 @@ async function renderRequestDetailPage(params) {
     });
   }
 
-  const isOwner       = state.user && detail.requestor && state.user.email === detail.requestor;
+  const isOwner       = state.user && detail.requestor && sameEmail(state.user.email, detail.requestor);
   const canResubmit   = isOwner && detail.status === 'Returned to Requestor';
 
   // Resubmit panel (main column): lets the requestor add/replace corrected or

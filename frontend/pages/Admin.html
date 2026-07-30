@@ -218,7 +218,7 @@ function renderAdminGroupsSection() {
 
 /* renderAdminBackLink — "← Admin home" link back to the two-tile landing. */
 function renderAdminBackLink() {
-  return '<div class="admin-back" onclick="adminGoSection(null)">← Admin home</div>';
+  return '<div class="admin-back" role="button" tabindex="0" onclick="adminGoSection(null)" onkeydown="uiKeyActivate(event)">← Admin home</div>';
 }
 
 /*
@@ -297,8 +297,8 @@ function renderAdminControls() {
     }) +
     '<div class="filter-bar">' +
       '<div class="filter-group">' +
-        '<label class="filter-label">Status</label>' +
-        '<select class="filter-select" onchange="adminStatusChange(this)">' + statusHtml + '</select>' +
+        '<label class="filter-label" for="admin-status-filter">Status</label>' +
+        '<select class="filter-select" id="admin-status-filter" onchange="adminStatusChange(this)">' + statusHtml + '</select>' +
       '</div>' +
       '<div class="filter-group">' +
         '<label class="filter-label">Sort by</label>' +
@@ -443,7 +443,7 @@ function renderAdminRequestTable(rows) {
   const tableRows = rows.map(function (r) {
     const idAttr = escapeHtml(r.requestId);
     return '' +
-      '<tr onclick="navigateTo(\'request\', {id: \'' + idAttr + '\'})">' +
+      '<tr role="button" tabindex="0" onclick="navigateTo(\'request\', {id: \'' + idAttr + '\'})" onkeydown="uiKeyActivate(event)">' +
         '<td>' +
           '<div class="cell-request">' +
             '<div class="cell-request-icon">' + renderIcon('file', 16) + '</div>' +
@@ -464,6 +464,7 @@ function renderAdminRequestTable(rows) {
   }).join('');
 
   return '' +
+    '<div class="table-scroll">' +
     '<table class="data-table">' +
       '<thead><tr>' +
         '<th>Request</th>' +
@@ -475,7 +476,8 @@ function renderAdminRequestTable(rows) {
         '<th></th>' +
       '</tr></thead>' +
       '<tbody>' + tableRows + '</tbody>' +
-    '</table>';
+    '</table>' +
+    '</div>';
 }
 
 
@@ -543,7 +545,7 @@ function renderAdminGroupCard(g) {
       escapeHtml(g.id) + ' · ' +
       g.approverCount + ' approver' + (g.approverCount === 1 ? '' : 's') + ' · ' +
       g.pendingCount + ' pending request' + (g.pendingCount === 1 ? '' : 's') +
-      (g.approverCount === 0 ? ' · <span class="admin-warn">⚠ no approver chain — set one up before use</span>' : '') +
+      (g.approverCount === 0 ? ' · <span class="admin-warn">' + renderIcon('alert', 14) + ' no approver chain — set one up before use</span>' : '') +
     '</div>';
 
   let actions = '';
@@ -582,7 +584,7 @@ function renderAdminChainEditor(g) {
   const removed = _adminChainDraft.removed || [];
 
   const warn = g.pendingCount > 0
-    ? '<div class="admin-warn">⚠ ' + g.pendingCount + ' in-flight request' + (g.pendingCount === 1 ? '' : 's') +
+    ? '<div class="admin-warn">' + renderIcon('alert', 14) + ' ' + g.pendingCount + ' in-flight request' + (g.pendingCount === 1 ? '' : 's') +
       ' — chain changes take effect immediately. The chain must keep at least ' +
       (g.maxPendingStep || 1) + ' approver' + ((g.maxPendingStep || 1) === 1 ? '' : 's') + '.</div>'
     : '';
@@ -595,9 +597,9 @@ function renderAdminChainEditor(g) {
           ' oninput="adminChainInput(' + i + ', \'email\', this.value)">' +
         '<input type="text" class="form-input" placeholder="designation (optional)" value="' + escapeHtml(s.designation) + '"' +
           ' oninput="adminChainInput(' + i + ', \'designation\', this.value)">' +
-        '<button class="btn btn-secondary" title="Move up"   ' + (i === 0 ? 'disabled' : '') + ' onclick="adminChainMove(' + i + ', -1)">↑</button>' +
-        '<button class="btn btn-secondary" title="Move down" ' + (i === slots.length - 1 ? 'disabled' : '') + ' onclick="adminChainMove(' + i + ', 1)">↓</button>' +
-        '<button class="btn btn-danger"    title="Remove"    onclick="adminChainRemove(' + i + ')">✕</button>' +
+        '<button class="btn btn-secondary" title="Move up" aria-label="Move up" ' + (i === 0 ? 'disabled' : '') + ' onclick="adminChainMove(' + i + ', -1)">' + renderIcon('arrow-up', 14) + '</button>' +
+        '<button class="btn btn-secondary" title="Move down" aria-label="Move down" ' + (i === slots.length - 1 ? 'disabled' : '') + ' onclick="adminChainMove(' + i + ', 1)">' + renderIcon('arrow-down', 14) + '</button>' +
+        '<button class="btn btn-danger" title="Remove" aria-label="Remove" onclick="adminChainRemove(' + i + ')">' + renderIcon('x', 14) + '</button>' +
       '</div>';
   }).join('');
 

@@ -64,17 +64,18 @@ const NEW_REQUEST_REQUIRED = Object.keys(NEW_REQUEST_LABELS);
 
 /*
   Function Name: renderNewRequestPage
-  LAYMAN    : Ipakita ang bagong request form. Isang beses lang iload ang group
-              list galing sa server; ulit-ulit na nabubuksan pero cached na.
-  TECHNICAL : Checks state.approverGroups cache; callServer('getApproverGroups')
-              on first open; returns the full form HTML with 5 card sections.
+  LAYMAN    : Ipakita ang bagong request form. Sariwa ang group list sa bawat
+              pagbukas — kaka-fetch galing sa server, kaya kung nag-edit ang admin
+              ng groups (nag-add/deactivate), makikita agad dito.
+  TECHNICAL : Fetches state.approverGroups fresh via callServer('getApproverGroups')
+              on every render (no session cache — an admin group change must not be
+              masked by a stale cache); returns the full form HTML with 5 card sections.
   RETURNS   : HTML string.
 */
 async function renderNewRequestPage() {
-  // Cache the approver-group list — the form opens often, the list rarely changes.
-  if (!state.approverGroups) {
-    state.approverGroups = await callServer('getApproverGroups');
-  }
+  // Always fetch fresh so admin changes to the group list (add / deactivate /
+  // chain edits that empty a group) are reflected the next time the form opens.
+  state.approverGroups = await callServer('getApproverGroups');
 
   // getApproverGroups() returns [{id, name}] — the option VALUE is the group_id
   // (what submitNewRequest stores in CR.GROUP); the LABEL is the display name.
@@ -99,38 +100,38 @@ async function renderNewRequestPage() {
         <div class="form-section-title">Request information</div>
 
         <div class="form-row">
-          <label class="form-label">Project title <span class="required">*</span></label>
-          <input type="text" class="form-input" name="projectTitle" required>
+          <label class="form-label" for="projectTitle">Project title <span class="required">*</span></label>
+          <input type="text" class="form-input" id="projectTitle" name="projectTitle" required>
         </div>
 
         <div class="form-grid">
           <div class="form-row">
-            <label class="form-label">Approver group <span class="required">*</span></label>
-            <select class="form-select" name="group" required>
+            <label class="form-label" for="group">Approver group <span class="required">*</span></label>
+            <select class="form-select" id="group" name="group" required>
               <option value="">Select a group…</option>
               ${groupOptions}
             </select>
           </div>
           <div class="form-row">
-            <label class="form-label">Requestor designation</label>
-            <input type="text" class="form-input" name="requestorDesig" placeholder="e.g. Systems Analyst">
+            <label class="form-label" for="requestorDesig">Requestor designation</label>
+            <input type="text" class="form-input" id="requestorDesig" name="requestorDesig" placeholder="e.g. Systems Analyst">
           </div>
         </div>
 
         <div class="form-grid">
           <div class="form-row">
-            <label class="form-label">Accountable person <span class="required">*</span></label>
-            <input type="text" class="form-input" name="accountablePerson" required>
+            <label class="form-label" for="accountablePerson">Accountable person <span class="required">*</span></label>
+            <input type="text" class="form-input" id="accountablePerson" name="accountablePerson" required>
           </div>
           <div class="form-row">
-            <label class="form-label">Department <span class="required">*</span></label>
-            <input type="text" class="form-input" name="department" required>
+            <label class="form-label" for="department">Department <span class="required">*</span></label>
+            <input type="text" class="form-input" id="department" name="department" required>
           </div>
         </div>
 
         <div class="form-grid">
           <div class="form-row">
-            <label class="form-label">Location <span class="required">*</span></label>
+            <label class="form-label" for="location-select">Location <span class="required">*</span></label>
             <select class="form-select" name="location" id="location-select" required
               onchange="onLocationChange(this.value)">
               <option value="">Select a location…</option>
@@ -142,13 +143,13 @@ async function renderNewRequestPage() {
             </select>
           </div>
           <div class="form-row">
-            <label class="form-label">PC name <span class="required">*</span></label>
-            <input type="text" class="form-input" name="pcName" required>
+            <label class="form-label" for="pcName">PC name <span class="required">*</span></label>
+            <input type="text" class="form-input" id="pcName" name="pcName" required>
           </div>
         </div>
 
         <div class="form-row hidden" id="location-other-row">
-          <label class="form-label">Specify location <span class="required">*</span></label>
+          <label class="form-label" for="location-other">Specify location <span class="required">*</span></label>
           <input type="text" class="form-input" name="locationOther" id="location-other"
             placeholder="Enter the location">
         </div>
@@ -159,22 +160,22 @@ async function renderNewRequestPage() {
         <div class="form-section-title">Reference numbers</div>
         <div class="form-grid">
           <div class="form-row">
-            <label class="form-label">PRISM</label>
-            <input type="text" class="form-input" name="prism" placeholder="Optional">
+            <label class="form-label" for="prism">PRISM</label>
+            <input type="text" class="form-input" id="prism" name="prism" placeholder="Optional">
           </div>
           <div class="form-row">
-            <label class="form-label">Purchase Order <span class="required">*</span></label>
-            <input type="text" class="form-input" name="purchaseOrder" required>
+            <label class="form-label" for="purchaseOrder">Purchase Order <span class="required">*</span></label>
+            <input type="text" class="form-input" id="purchaseOrder" name="purchaseOrder" required>
           </div>
         </div>
         <div class="form-grid">
           <div class="form-row">
-            <label class="form-label">IHelp number</label>
-            <input type="text" class="form-input" name="ihelpNumber" placeholder="Optional">
+            <label class="form-label" for="ihelpNumber">IHelp number</label>
+            <input type="text" class="form-input" id="ihelpNumber" name="ihelpNumber" placeholder="Optional">
           </div>
           <div class="form-row">
-            <label class="form-label">Supplier name <span class="required">*</span></label>
-            <input type="text" class="form-input" name="supplierName" required>
+            <label class="form-label" for="supplierName">Supplier name <span class="required">*</span></label>
+            <input type="text" class="form-input" id="supplierName" name="supplierName" required>
           </div>
         </div>
       </div>
@@ -184,22 +185,22 @@ async function renderNewRequestPage() {
         <div class="form-section-title">Product</div>
         <div class="form-grid">
           <div class="form-row">
-            <label class="form-label">Product type <span class="required">*</span></label>
-            <input type="text" class="form-input" name="productType" placeholder="e.g. Software, Hardware" required>
+            <label class="form-label" for="productType">Product type <span class="required">*</span></label>
+            <input type="text" class="form-input" id="productType" name="productType" placeholder="e.g. Software, Hardware" required>
           </div>
           <div class="form-row">
-            <label class="form-label">Product name <span class="required">*</span></label>
-            <input type="text" class="form-input" name="productName" required>
+            <label class="form-label" for="productName">Product name <span class="required">*</span></label>
+            <input type="text" class="form-input" id="productName" name="productName" required>
           </div>
         </div>
         <div class="form-grid">
           <div class="form-row">
-            <label class="form-label">Type of purchase <span class="required">*</span></label>
-            <input type="text" class="form-input" name="typeOfPurchase" placeholder="e.g. New, Renewal" required>
+            <label class="form-label" for="typeOfPurchase">Type of purchase <span class="required">*</span></label>
+            <input type="text" class="form-input" id="typeOfPurchase" name="typeOfPurchase" placeholder="e.g. New, Renewal" required>
           </div>
           <div class="form-row">
-            <label class="form-label">Type of license <span class="required">*</span></label>
-            <input type="text" class="form-input" name="typeOfLicense" placeholder="e.g. 3-year Subscription" required>
+            <label class="form-label" for="typeOfLicense">Type of license <span class="required">*</span></label>
+            <input type="text" class="form-input" id="typeOfLicense" name="typeOfLicense" placeholder="e.g. 3-year Subscription" required>
           </div>
         </div>
       </div>
@@ -209,13 +210,13 @@ async function renderNewRequestPage() {
         <div class="form-section-title">Contract</div>
         <div class="form-grid">
           <div class="form-row">
-            <label class="form-label">Contract start date <span class="required">*</span></label>
-            <input type="date" class="form-input" name="contractStart" required
+            <label class="form-label" for="contractStart">Contract start date <span class="required">*</span></label>
+            <input type="date" class="form-input" id="contractStart" name="contractStart" required
               oninput="var e=this.closest('form').elements['contractEnd']; if(e) e.min=this.value;">
           </div>
           <div class="form-row">
-            <label class="form-label">Contract end date <span class="required">*</span></label>
-            <input type="date" class="form-input" name="contractEnd" required>
+            <label class="form-label" for="contractEnd">Contract end date <span class="required">*</span></label>
+            <input type="date" class="form-input" id="contractEnd" name="contractEnd" required>
           </div>
         </div>
       </div>
@@ -224,8 +225,8 @@ async function renderNewRequestPage() {
       <div class="card">
         <div class="form-section-title">Purpose</div>
         <div class="form-row">
-          <label class="form-label">Purpose / remark <span class="required">*</span></label>
-          <textarea class="form-textarea" name="requestorRemark" placeholder="State the purpose of this e-certificate request." required></textarea>
+          <label class="form-label" for="requestorRemark">Purpose / remark <span class="required">*</span></label>
+          <textarea class="form-textarea" id="requestorRemark" name="requestorRemark" placeholder="State the purpose of this e-certificate request." required></textarea>
         </div>
       </div>
 
@@ -332,12 +333,20 @@ async function onNewRequestSubmit(e) {
   e.preventDefault();
   const form = e.target;
 
+  // Clear any inline error marks left over from a previous submit attempt so
+  // only the currently-offending field is highlighted.
+  clearNewRequestFieldErrors(form);
+
   // Step 1 — Validate form fields (existing logic)
   const err = validateNewRequest(form);
   if (err) {
     showToast(err.message, 'error');
     const el = form.elements[err.field];
-    if (el && typeof el.focus === 'function') el.focus();
+    if (el) {
+      if (el.classList) el.classList.add('input-error');
+      if (typeof el.setAttribute === 'function') el.setAttribute('aria-invalid', 'true');
+      if (typeof el.focus === 'function') el.focus();
+    }
     return;
   }
 
@@ -451,6 +460,28 @@ function validateNewRequest(form) {
   }
 
   return null;
+}
+
+
+/*
+  Function Name: clearNewRequestFieldErrors
+  LAYMAN    : Alisin ang pulang error highlight sa lahat ng field bago i-validate
+              ulit — para iisa lang ang naka-highlight (yung kasalukuyang mali),
+              hindi yung luma.
+  TECHNICAL : Removes the .input-error class and the aria-invalid attribute from
+              every control in the form. Called at the start of each submit before
+              re-validating.
+  PARAMS    : form — the HTMLFormElement.
+  RETURNS   : (void)
+*/
+function clearNewRequestFieldErrors(form) {
+  if (!form || !form.elements) return;
+  for (let i = 0; i < form.elements.length; i++) {
+    const el = form.elements[i];
+    if (!el) continue;
+    if (el.classList) el.classList.remove('input-error');
+    if (typeof el.removeAttribute === 'function') el.removeAttribute('aria-invalid');
+  }
 }
 
 

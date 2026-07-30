@@ -42,7 +42,7 @@
   MIGA WIDGET            .miga-widget, .miga-img, .miga-bubble-*
   EMPTY STATE            .empty-state
   LOGIN SPLASH           .login-shell, .login-card
-  TAB ROW                .tab-row, .tab, .tab-count (kept for reference)
+  TAB ROW                .tab-row, .tab, .tab-count (used by ApproverDashboard view switch)
   ADMIN CONSOLE          .admin-groups-head, .admin-group-card/-title/-name/-meta/-actions,
                          .admin-inline-form, .admin-warn, .admin-chain-editor,
                          .chain-slot-row, .chain-slot-seq
@@ -93,7 +93,7 @@
     --green-bg:   #eaf3de;
     --green-text: #3b6d11;
     --amber-bg:   #faeeda;
-    --amber-text: #ba7517;
+    --amber-text: #8a5510;
     --red-bg:     #fcebeb;
     --red-text:   #a32d2d;
     --purple-bg:  #eeedfe;
@@ -229,6 +229,7 @@
     font-weight: 500;
     box-shadow: inset 3px 0 0 rgba(255,255,255,0.6);
   }
+  .navbar-link:focus-visible { outline: none; box-shadow: var(--focus-ring); }
   /* User block — pinned to bottom */
   .navbar-user {
     display: flex;
@@ -475,6 +476,12 @@
 
 
   /* ─── TABLES ────────────────────────────────────────────── */
+  /* Wraps a full data-table so it scrolls horizontally inside its own box on
+     narrow viewports instead of forcing the whole page to scroll sideways. */
+  .table-scroll {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
   .data-table {
     width: 100%;
     border-collapse: collapse;
@@ -569,6 +576,12 @@
     box-shadow: var(--focus-ring);
   }
   .form-textarea { min-height: 80px; resize: vertical; }
+  /* Inline validation: a field flagged by the submit handler shows a red border. */
+  .form-input.input-error,
+  .form-select.input-error,
+  .form-textarea.input-error {
+    border-color: var(--red-text);
+  }
   .form-actions {
     display: flex;
     justify-content: flex-end;
@@ -605,9 +618,9 @@
   }
   .attachment-item:last-child { border-bottom: none; }
 
-  /* Filename — fixed width, truncates with ellipsis */
+  /* Filename — flexes to share the row, truncates with ellipsis */
   .attachment-item-name {
-    flex: 0 0 180px;
+    flex: 1 1 auto;
     min-width: 0;
     font-size: 13px;
     color: var(--gray-900);
@@ -858,6 +871,7 @@
     font-weight: 500;
   }
   .tab:hover:not(.active) { color: var(--gray-900); }
+  .tab:focus-visible { outline: none; box-shadow: var(--focus-ring); }
   .tab-count {
     display: inline-flex;
     align-items: center;
@@ -926,11 +940,6 @@
     text-align: center;
     padding: 48px 24px;
     color: var(--gray-600);
-  }
-  .empty-state-icon {
-    font-size: 48px;
-    margin-bottom: 12px;
-    opacity: 0.4;
   }
   .empty-state-title {
     font-size: 15px;
@@ -1679,6 +1688,8 @@
     /* Horizontal-bar mode: hide the logo mark, keep wordmark compact */
     .navbar-logo { display: none; }
     .navbar-brand-row { gap: 0; }
+    /* Drop the wordmark's second line so the top bar stays compact */
+    .navbar-brand-sub { display: none; }
   }
 
   /* Tablet/large-phone: hero mascot gets in the way — trim it down */
@@ -1700,5 +1711,7 @@
     .controls-bar .filter-bar { margin-left: 0; }
     .search-bar { max-width: none; }
     .pagination { justify-content: center; }
+    /* Chain editor: let email + designation inputs and buttons reflow */
+    .chain-slot-row { flex-wrap: wrap; }
   }
 </style>

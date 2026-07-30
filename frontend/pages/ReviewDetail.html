@@ -140,7 +140,7 @@ async function renderReviewDetailPage(params) {
 */
 function renderPreviousApprovalNote(detail, userEmail) {
   const mine = (detail.priorApprovals || []).find(function (a) {
-    return a.email === userEmail;
+    return sameEmail(a.email, userEmail);
   });
   if (!mine) return '';
   return '' +
@@ -168,7 +168,7 @@ function isCurrentApproverFor(detail, userEmail) {
   const slots = getConfiguredApproverSlots(detail);
   const step  = Number(detail.step) || 0;
   const slot  = slots.find(function (s) { return s.n === step; });
-  return !!(slot && slot.approver === userEmail);
+  return !!(slot && sameEmail(slot.approver, userEmail));
 }
 
 
