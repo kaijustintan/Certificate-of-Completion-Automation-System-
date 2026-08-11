@@ -16,10 +16,10 @@
   TECHNICAL:
   Core state transitions, normalized schema. Each mutator reads the request's
   cache (step/group_id/resubmit_count from Requests), computes the next state,
-  then writes via the Accessors seam: appendAction() (append-only timeline) +
-  setRequestCache() (status/step/resubmit_count). No flat AppN_* columns. The
+  then writes via the Accessors seam: appendAction_() (append-only timeline) +
+  setRequestCache_() (status/step/resubmit_count). No flat AppN_* columns. The
   per-step dates/remarks, previousApprovals, history, and audit are all DERIVED
-  from Approval_Actions (see getApprovalView). Each mutator self-guards on caller
+  from Approval_Actions (see getApprovalView_). Each mutator self-guards on caller
   identity + actionable status (defense in depth), and takes a LockService lock so
   a racing second action cannot double-apply, because any server function is
   reachable directly via google.script.run, not only through the handle* wrappers.
@@ -31,41 +31,41 @@
   ────────────────────────────────────────────────────────────
   OUTLINE
   ────────────────────────────────────────────────────────────
-  - approve(id)                append APPROVED, advance step / finish
-  - decline(id, remark)        append DECLINED, status → Declined (terminal)
-  - returnRequest(id, remark)  append RETURNED, step → 0, status → Returned
-  - resubmit(id)               append RESUBMITTED, bump cycle, restart at step 1
+  - approve_(id)                append APPROVED, advance step / finish
+  - decline_(id, remark)        append DECLINED, status → Declined (terminal)
+  - returnRequest_(id, remark)  append RETURNED, step → 0, status → Returned
+  - resubmit_(id)               append RESUBMITTED, bump cycle, restart at step 1
 */
 
 
 /*
-  Function Name: approve
+  Function Name: approve_
   LAYMAN    : Ina-aprubahan ang request sa kasalukuyang step. Nagdadagdag ng
               "approved" action, itinataas ang step, at ina-update ang status —
               papunta sa susunod na approver, o "Fully Approved" kung wala nang
               susunod. Nilalaktawan ang blangkong approver slots.
-  TECHNICAL : Reads step/group_id/cycle from the Requests cache; getApprovers()
-              for skip-blank routing; appendAction(APPROVED) at the current step;
-              setRequestCache(status, step). Cycle = current resubmit_count.
-  PARAMS    : requestId — request to approve.
+  TECHNICAL : Reads step/group_id/cycle from the Requests cache; getApprovers_()
+              for skip-blank routing; appendAction_(APPROVED) at the current step;
+              setRequestCache_(status, step). Cycle = current resubmit_count.
+  PARAMS    : requestId — request to approve_.
   RETURNS   : { success:true, newStatus, step:newStep } or { success:false, message }.
 
   EXAMPLE
-    approve("9B1")  → { success:true, newStatus:"Fully Approved", step:2 }
+    approve_("9B1")  → { success:true, newStatus:"Fully Approved", step:2 }
 */
-function approve(requestId) {
+function approve_(requestId) {
   // Serialize with a script lock so a re-read inside the lock is a true
-  // compare-and-set: a racing second approve (two tabs, double email link)
+  // compare-and-set: a racing second approve_ (two tabs, double email link)
   // sees the already-advanced status and is rejected, so the certificate and
   // requestor email are never generated twice.
   const lock = LockService.getScriptLock();
   try { lock.waitLock(10000); }
   catch (e) { return { success: false, message: "System is busy. Please try again." }; }
   try {
-    const sheet  = getSheet(SHEET_NAMES.REQUESTS);
-    const rowNum = getRowNumberByRequestId(requestId);
+    const sheet  = getSheet_(SHEET_NAMES.REQUESTS);
+    const rowNum = getRowNumberByRequestId_(requestId);
     if (rowNum === -1) {
-      Logger.log(`approve(): Request ID not found — ${requestId}`);
+      Logger.log(`approve_(): Request ID not found — ${requestId}`);
       return { success: false, message: "Request not found." };
     }
 
@@ -83,19 +83,19 @@ function approve(requestId) {
     if (status !== STATUS.PENDING_1 && status !== STATUS.PENDING_2 && status !== STATUS.PENDING_3) {
       return { success: false, message: "This request is no longer awaiting approval." };
     }
-    if (!isCurrentApprover(rowData, caller)) {
+    if (!isCurrentApprover_(rowData, caller)) {
       // A chain approver who is not the CURRENT one almost always means the
       // request already moved on — e.g. a double-click across two tabs, where
       // the first click advanced the step. Tell them that plainly. Reserve
       // "Unauthorized" for a caller who has no business with this request.
-      return isChainApprover(rowData, caller)
+      return isChainApprover_(rowData, caller)
         ? { success: false, message: "This request has already been actioned." }
         : { success: false, message: "Unauthorized" };
     }
 
-    const approvers = getApprovers(groupId);
+    const approvers = getApprovers_(groupId);
     if (!approvers) {
-      Logger.log(`approve(): No approver config for group_id — ${groupId}`);
+      Logger.log(`approve_(): No approver config for group_id — ${groupId}`);
       return { success: false, message: "Approver group not configured." };
     }
 
@@ -120,10 +120,10 @@ function approve(requestId) {
     else if (newStatus === STATUS.PENDING_3) newStep = 3;
     else                                     newStep = step + 1; // APPROVED: step no longer routes
 
-    appendAction(requestId, groupId, cycle, step, caller, ACTION.APPROVED, "");
-    setRequestCache(requestId, { status: newStatus, step: newStep });
+    appendAction_(requestId, groupId, cycle, step, caller, ACTION.APPROVED, "");
+    setRequestCache_(requestId, { status: newStatus, step: newStep });
 
-    Logger.log(`approve(): ${requestId} approved at Step ${step} → ${newStatus}`);
+    Logger.log(`approve_(): ${requestId} approved at Step ${step} → ${newStatus}`);
     return { success: true, newStatus, step: newStep };
   } finally {
     lock.releaseLock();
@@ -132,23 +132,23 @@ function approve(requestId) {
 
 
 /*
-  Function Name: decline
+  Function Name: decline_
   LAYMAN    : Tinatanggihan ang request. Nagdadagdag ng "declined" action na may
               dahilan, at status → "Declined" (TAPOS na — bagong request na lang).
-  TECHNICAL : appendAction(DECLINED, remark) at the current step; setRequestCache
+  TECHNICAL : appendAction_(DECLINED, remark) at the current step; setRequestCache_
               (status=DECLINED). No step change. Reason is on the action row.
   PARAMS    : requestId; approverRemark — the reason.
   RETURNS   : { success:true, newStatus:"Declined" } or { success:false, message }.
 */
-function decline(requestId, approverRemark) {
+function decline_(requestId, approverRemark) {
   const lock = LockService.getScriptLock();
   try { lock.waitLock(10000); }
   catch (e) { return { success: false, message: "System is busy. Please try again." }; }
   try {
-    const sheet  = getSheet(SHEET_NAMES.REQUESTS);
-    const rowNum = getRowNumberByRequestId(requestId);
+    const sheet  = getSheet_(SHEET_NAMES.REQUESTS);
+    const rowNum = getRowNumberByRequestId_(requestId);
     if (rowNum === -1) {
-      Logger.log(`decline(): Request ID not found — ${requestId}`);
+      Logger.log(`decline_(): Request ID not found — ${requestId}`);
       return { success: false, message: "Request not found." };
     }
 
@@ -164,17 +164,20 @@ function decline(requestId, approverRemark) {
     if (status !== STATUS.PENDING_1 && status !== STATUS.PENDING_2 && status !== STATUS.PENDING_3) {
       return { success: false, message: "This request is no longer awaiting approval." };
     }
-    if (!isCurrentApprover(rowData, caller)) {
-      // See approve(): distinguish "already actioned" from a genuine outsider.
-      return isChainApprover(rowData, caller)
+    if (!isCurrentApprover_(rowData, caller)) {
+      // See approve_(): distinguish "already actioned" from a genuine outsider.
+      return isChainApprover_(rowData, caller)
         ? { success: false, message: "This request has already been actioned." }
         : { success: false, message: "Unauthorized" };
     }
 
-    appendAction(requestId, groupId, cycle, step, caller, ACTION.DECLINED, approverRemark || "");
-    setRequestCache(requestId, { status: STATUS.DECLINED });
+    const rv = validateRemark_(approverRemark);
+    if (!rv.ok) return { success: false, message: rv.message };
 
-    Logger.log(`decline(): ${requestId} declined at Step ${step}`);
+    appendAction_(requestId, groupId, cycle, step, caller, ACTION.DECLINED, approverRemark || "");
+    setRequestCache_(requestId, { status: STATUS.DECLINED });
+
+    Logger.log(`decline_(): ${requestId} declined at Step ${step}`);
     return { success: true, newStatus: STATUS.DECLINED };
   } finally {
     lock.releaseLock();
@@ -183,25 +186,46 @@ function decline(requestId, approverRemark) {
 
 
 /*
-  Function Name: returnRequest
+  Function Name: validateRemark_
+  LAYMAN    : Tinitingnan lang kung hindi sobrang haba ang dahilan na tinype ng
+              approver. Dati walang limitasyon — pwedeng 50,000 characters, tapos
+              lalabas yun sa detail page at sa lahat ng email.
+  TECHNICAL : Length cap for approver-supplied free text before it enters the
+              append-only Activity_Log. Rejects rather than truncates, so the
+              approver is never silently robbed of their wording. Blank stays
+              acceptable — this does NOT introduce a mandatory-reason rule.
+  PARAMS    : remark — the caller-supplied string (may be undefined/null).
+  RETURNS   : { ok:true } | { ok:false, message:"<user-facing>" }
+*/
+function validateRemark_(remark) {
+  const MAX_REMARK = 2000;
+  if (remark && String(remark).length > MAX_REMARK) {
+    return { ok: false, message: "Your remark is too long (max " + MAX_REMARK + " characters)." };
+  }
+  return { ok: true };
+}
+
+
+/*
+  Function Name: returnRequest_
   LAYMAN    : Ibinabalik ang request sa requestor para ayusin. Nagdadagdag ng
               "returned" action na may dahilan; Step → 0, Status → "Returned to
-              Requestor". Pwede itong i-resubmit.
-  TECHNICAL : appendAction(RETURNED, remark) at the current step; setRequestCache
+              Requestor". Pwede itong i-resubmit_.
+  TECHNICAL : appendAction_(RETURNED, remark) at the current step; setRequestCache_
               (status=RETURNED, step=0). previousApprovals + history are derived
               from the timeline — no bookkeeping needed here or in handleReturn.
   PARAMS    : requestId; approverRemark — what to change.
   RETURNS   : { success:true, newStatus:"Returned to Requestor" } or { success:false, message }.
 */
-function returnRequest(requestId, approverRemark) {
+function returnRequest_(requestId, approverRemark) {
   const lock = LockService.getScriptLock();
   try { lock.waitLock(10000); }
   catch (e) { return { success: false, message: "System is busy. Please try again." }; }
   try {
-    const sheet  = getSheet(SHEET_NAMES.REQUESTS);
-    const rowNum = getRowNumberByRequestId(requestId);
+    const sheet  = getSheet_(SHEET_NAMES.REQUESTS);
+    const rowNum = getRowNumberByRequestId_(requestId);
     if (rowNum === -1) {
-      Logger.log(`returnRequest(): Request ID not found — ${requestId}`);
+      Logger.log(`returnRequest_(): Request ID not found — ${requestId}`);
       return { success: false, message: "Request not found." };
     }
 
@@ -217,17 +241,20 @@ function returnRequest(requestId, approverRemark) {
     if (status !== STATUS.PENDING_1 && status !== STATUS.PENDING_2 && status !== STATUS.PENDING_3) {
       return { success: false, message: "This request is no longer awaiting approval." };
     }
-    if (!isCurrentApprover(rowData, caller)) {
-      // See approve(): distinguish "already actioned" from a genuine outsider.
-      return isChainApprover(rowData, caller)
+    if (!isCurrentApprover_(rowData, caller)) {
+      // See approve_(): distinguish "already actioned" from a genuine outsider.
+      return isChainApprover_(rowData, caller)
         ? { success: false, message: "This request has already been actioned." }
         : { success: false, message: "Unauthorized" };
     }
 
-    appendAction(requestId, groupId, cycle, step, caller, ACTION.RETURNED, approverRemark || "");
-    setRequestCache(requestId, { status: STATUS.RETURNED, step: 0 });
+    const rv = validateRemark_(approverRemark);
+    if (!rv.ok) return { success: false, message: rv.message };
 
-    Logger.log(`returnRequest(): ${requestId} returned at Step ${step}`);
+    appendAction_(requestId, groupId, cycle, step, caller, ACTION.RETURNED, approverRemark || "");
+    setRequestCache_(requestId, { status: STATUS.RETURNED, step: 0 });
+
+    Logger.log(`returnRequest_(): ${requestId} returned at Step ${step}`);
     return { success: true, newStatus: STATUS.RETURNED };
   } finally {
     lock.releaseLock();
@@ -236,29 +263,29 @@ function returnRequest(requestId, approverRemark) {
 
 
 /*
-  Function Name: resubmit
-  LAYMAN    : Pag-resubmit ng requestor — binabalik sa simula ang chain.
+  Function Name: resubmit_
+  LAYMAN    : Pag-resubmit_ ng requestor — binabalik sa simula ang chain.
               Nagdadagdag ng "resubmitted" action sa BAGONG cycle, bina-bump ang
-              resubmit count, at babalik sa Step 1 / Pending Approver 1. Hindi na
+              resubmit_ count, at babalik sa Step 1 / Pending Approver 1. Hindi na
               kailangang magbura ng dating approval — naka-tag sila sa lumang
               cycle, at ang bagong cycle ay malinis na simula.
-  TECHNICAL : newCount = resubmit_count + 1. appendAction(RESUBMITTED) tagged with
-              the NEW cycle (so getApprovalView pairs each RETURNED with its
-              resubmit). setRequestCache(status=PENDING_1, step=1, resubmitCount).
+  TECHNICAL : newCount = resubmit_count + 1. appendAction_(RESUBMITTED) tagged with
+              the NEW cycle (so getApprovalView_ pairs each RETURNED with its
+              resubmit_). setRequestCache_(status=PENDING_1, step=1, resubmitCount).
               The frozen-DTO per-step/history fields recompute automatically off
               the cycle tag — no column clears.
-  PARAMS    : requestId — the returned request to resubmit.
+  PARAMS    : requestId — the returned request to resubmit_.
   RETURNS   : { success:true, newStatus:"Pending Approver 1", newCount } or { success:false, message }.
 */
-function resubmit(requestId) {
+function resubmit_(requestId) {
   const lock = LockService.getScriptLock();
   try { lock.waitLock(10000); }
   catch (e) { return { success: false, message: "System is busy. Please try again." }; }
   try {
-    const sheet  = getSheet(SHEET_NAMES.REQUESTS);
-    const rowNum = getRowNumberByRequestId(requestId);
+    const sheet  = getSheet_(SHEET_NAMES.REQUESTS);
+    const rowNum = getRowNumberByRequestId_(requestId);
     if (rowNum === -1) {
-      Logger.log(`resubmit(): Request ID not found — ${requestId}`);
+      Logger.log(`resubmit_(): Request ID not found — ${requestId}`);
       return { success: false, message: "Request not found." };
     }
 
@@ -268,16 +295,16 @@ function resubmit(requestId) {
     const newCount     = currentCount + 1;
     const caller       = Session.getActiveUser().getEmail();
 
-    // Self-guard: only the requestor may resubmit, and only a Returned request.
+    // Self-guard: only the requestor may resubmit_, and only a Returned request.
     // Re-checked inside the lock so two rapid resubmits cannot both bump the cycle.
-    if (!sameEmail(rowData[CR.REQUESTOR - 1], caller) || rowData[CR.STATUS - 1] !== STATUS.RETURNED) {
+    if (!sameEmail_(rowData[CR.REQUESTOR - 1], caller) || rowData[CR.STATUS - 1] !== STATUS.RETURNED) {
       return { success: false, message: "Unauthorized" };
     }
 
-    appendAction(requestId, groupId, newCount, null, caller, ACTION.RESUBMITTED, "");
-    setRequestCache(requestId, { status: STATUS.PENDING_1, step: 1, resubmitCount: newCount });
+    appendAction_(requestId, groupId, newCount, null, caller, ACTION.RESUBMITTED, "");
+    setRequestCache_(requestId, { status: STATUS.PENDING_1, step: 1, resubmitCount: newCount });
 
-    Logger.log(`resubmit(): ${requestId} resubmitted (count: ${newCount}) → ${STATUS.PENDING_1}`);
+    Logger.log(`resubmit_(): ${requestId} resubmitted (count: ${newCount}) → ${STATUS.PENDING_1}`);
     return { success: true, newStatus: STATUS.PENDING_1, newCount };
   } finally {
     lock.releaseLock();

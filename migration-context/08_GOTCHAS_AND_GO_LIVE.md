@@ -47,11 +47,11 @@ The whole build ran on Kai's **personal DLSU account** with `EMAIL_DEV_TAG=true`
 - [ ] **`Admins_Log` tab created by hand** (headers `log_id | admin_email | action | target_group | details | timestamp`).
 - [ ] Run **`registerExpiryTrigger()`** once on the Megaworld account (daily 8am expiry sweep, #10).
 - [ ] Run **`registerApproverReminderTrigger()`** once on the Megaworld account (daily 8am pending-approval digest).
-- [ ] (If using the legacy `onSheetChange` path) decide whether to register `registerTrigger()` — and resolve the double-send risk with the `handle*` paths.
+- [ ] **Do NOT run `registerTrigger()`.** It now throws on purpose. Registering the legacy `onSheetChange` path would send a SECOND copy of every workflow email, and inside an installable trigger `Session.getActiveUser()` resolves to the trigger owner rather than the acting approver, so receipts go to the wrong person. Reviving it requires deliberately removing the throw AND neutralising the sends in `handleCertificateRequestChange` first.
 - [ ] Deploy under the Megaworld account with **"Execute as: Me"** (NOT execute-as-user — that would force sharing the backend Sheet with every user and break the Cat-3 auth hardening). Revert any temporary dev "anyone can access" / Sheet-sharing.
 - [ ] Verify the production email sender is the Megaworld service account (`GmailApp` sends as the script owner).
 
-> **Why per-account triggers must be re-run:** time-based triggers are per-Google-account and are **NOT** created by `clasp push`. The three registrations (`registerTrigger`, `registerExpiryTrigger`, `registerApproverReminderTrigger`) must each be run once in the Apps Script editor on the Megaworld account.
+> **Why per-account triggers must be re-run:** time-based triggers are per-Google-account and are **NOT** created by `clasp push`. There are **TWO** registrations to run once each in the Apps Script editor on the Megaworld account: `registerExpiryTrigger()` and `registerApproverReminderTrigger()`. `registerTrigger()` is **not** a third — it is intentionally disabled and throws.
 
 ## PART D — Exactly where the project was left (as of 2026-06-11)
 

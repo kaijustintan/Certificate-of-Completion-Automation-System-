@@ -16,9 +16,14 @@
   routes to sheet-specific handlers by tab name (STATUS-column changes only). (2)
   TWO daily TIME-BASED triggers (both ~8am Manila): checkContractExpiries (#10)
   emails the requestor about lapsing contracts; checkPendingApprovals emails the
-  current approver a digest of requests still awaiting their action. All three
-  need a one-time manual registration (registerTrigger / registerExpiryTrigger /
-  registerApproverReminderTrigger).
+  current approver a digest of requests still awaiting their action.
+
+  ⚠️ TWO registrations exist, and both must be run once per Google account:
+  registerExpiryTrigger() and registerApproverReminderTrigger(). registerTrigger()
+  is NOT a third — it throws on purpose (registering onSheetChange would
+  double-send every workflow email). All four of those entry points are guarded
+  by isOwnerContext_(), because a bare global is callable via google.script.run
+  and checkPendingApprovals in particular has no idempotency flag by design.
 
   ────────────────────────────────────────────────────────────
   OUTLINE
@@ -26,7 +31,7 @@
   - onSheetChange(e)                       entry point; routes by sheet name
   - handleCertificateRequestChange         STATUS-column watcher; fires emails
   - handleAttachmentChange                 new-row detector; calls sync check
-  - registerTrigger()                      one-time setup; run once manually
+  - registerTrigger()                      ⚠️ DISABLED — throws; do NOT run
   - checkContractExpiries()                daily 8am clock handler; expiry reminders (#10)
   - registerExpiryTrigger()                one-time setup for the expiry trigger
   - checkPendingApprovals()                daily 8am clock handler; approver nudge digest
@@ -90,11 +95,11 @@ function onSheetChange(e) {
   RETURNS   : (void)
 
   STATUS → EMAIL mapping (AppSheet bot equivalents):
-    "Pending Approver N"  → sendApprovalRequest (Next Approver Bot)
+    "Pending Approver N"  → sendApprovalRequest_ (Next Approver Bot)
                             (only if attachments satisfied)
-    "Declined"            → sendDeclineToApprover + sendDeclineToRequestor
-    "Fully Approved"      → sendFullyApprovedToApprover + sendFullyApprovedToRequestor
-    "Returned to…"        → sendReturnToRequestor + sendReturnConfirmToApprover
+    "Declined"            → sendDeclineToApprover_ + sendDeclineToRequestor_
+    "Fully Approved"      → sendFullyApprovedToApprover_ + sendFullyApprovedToRequestor_
+    "Returned to…"        → sendReturnToRequestor_ + sendReturnConfirmToApprover_
 
   NOTE: In the current portal, the handle* functions in WebApp.js already send
   these emails directly. This trigger provides a fallback for any direct sheet
@@ -123,7 +128,7 @@ function handleCertificateRequestChange(e, sheet) {
   // Condition: CONTAINS([Status], "Pending Approver")
   //
   // ⚠️ DOUBLE-SEND GUARD — read before registering the trigger.
-  // submitNewRequest() in WebApp.js calls sendApprovalRequest() DIRECTLY for
+  // submitNewRequest() in WebApp.js calls sendApprovalRequest_() DIRECTLY for
   // every new PENDING_1 submission (Phase 8: all submits go straight to PENDING_1).
   // If onSheetChange were registered, a new submission would fire TWO approver
   // emails — one from submitNewRequest, one here. This is PRE-EXISTING behaviour
@@ -133,31 +138,31 @@ function handleCertificateRequestChange(e, sheet) {
   if (newStatus.includes("Pending Approver")) {
     // Phase 8: attachments are uploaded before submit — no attachment gate
     // anymore. A Pending status always means an approver should be notified.
-    sendApprovalRequest(requestId);
+    sendApprovalRequest_(requestId);
     return;
   }
 
   // Replaces: Decline Notification Bot
   // Condition: [Status] = "Declined"
   if (newStatus === STATUS.DECLINED) {
-    sendDeclineToApprover(requestId);
-    sendDeclineToRequestor(requestId);
+    sendDeclineToApprover_(requestId);
+    sendDeclineToRequestor_(requestId);
     return;
   }
 
   // Replaces: Fully Approved Notification Bot
   // Condition: [Status] = "Fully Approved"
   if (newStatus === STATUS.APPROVED) {
-    sendFullyApprovedToApprover(requestId);
-    sendFullyApprovedToRequestor(requestId);
+    sendFullyApprovedToApprover_(requestId);
+    sendFullyApprovedToRequestor_(requestId);
     return;
   }
 
   // Replaces: Return Notification Bot
   // Condition: STARTSWITH([Status], "Returned to")
   if (newStatus.startsWith("Returned to")) {
-    sendReturnToRequestor(requestId);
-    sendReturnConfirmToApprover(requestId);
+    sendReturnToRequestor_(requestId);
+    sendReturnConfirmToApprover_(requestId);
     return;
   }
 }
@@ -174,7 +179,7 @@ function handleCertificateRequestChange(e, sheet) {
               may na-upload na file), dito pumupunta. Tinutukoy kung anong
               request ang affected, tapos tinatawag ang sync check.
   TECHNICAL : Guards on row > 1 AND column === 1 (new row adds start at col 1).
-              Reads the REQUEST_ID from the new row, calls checkAttachmentSync.
+              Reads the REQUEST_ID from the new row, calls checkAttachmentSync_.
   PARAMS    : e — the onEdit event; sheet — the Request_Attachments Sheet.
   RETURNS   : (void)
 */
@@ -189,29 +194,25 @@ function handleAttachmentChange(e, sheet) {
   // A new row add will always start at column 1
   if (range.getColumn() !== 1) return;
 
-  const rowData  = sheet.getRange(row, 1, 1, 5).getValues()[0];
+  const rowData  = sheet.getRange(row, 1, 1, RA.UPLOADED_AT).getValues()[0];
   const requestId = rowData[RA.REQUEST_ID - 1];
 
   if (!requestId) return;
 
   Logger.log(`handleAttachmentChange(): New attachment detected for ${requestId}`);
-  checkAttachmentSync(requestId);
+  checkAttachmentSync_(requestId);
 }
 
 
 // ============================================================
-// TRIGGER REGISTRATION
-// Run this function ONCE manually to register onSheetChange()
-// as an installable trigger on the Sheet.
+// TRIGGER REGISTRATION — ⚠️ DISABLED. DO NOT RUN registerTrigger().
+// It throws on purpose (see the comment inside it). The legacy
+// onSheetChange path below is kept readable for reference only.
 //
-// HOW TO RUN IT:
-//   1. Open Apps Script editor
-//   2. Select "registerTrigger" from the function dropdown
-//   3. Click Run
-//   4. Done — you only need to do this once
-//
-// After registration, onSheetChange() fires automatically
-// every time anyone edits the Sheet.
+// The registrations you DO run once per Google account are:
+//   • registerExpiryTrigger()
+//   • registerApproverReminderTrigger()
+// That is TWO registrations, not three.
 // ============================================================
 /*
   Function Name: registerTrigger
@@ -237,22 +238,9 @@ function registerTrigger() {
   // the legacy sheet-change email path, remove this throw deliberately AND first
   // neutralize the email sends in handleCertificateRequestChange.
   throw new Error("registerTrigger() is intentionally disabled: it would double-send every workflow email. See the comment above this line.");
-
-  // Remove any existing triggers first to avoid duplicates
-  const triggers = ScriptApp.getProjectTriggers();
-  triggers.forEach(trigger => {
-    if (trigger.getHandlerFunction() === "onSheetChange") {
-      ScriptApp.deleteTrigger(trigger);
-    }
-  });
-
-  // Register the new trigger
-  ScriptApp.newTrigger("onSheetChange")
-    .forSpreadsheet(SpreadsheetApp.getActiveSpreadsheet())
-    .onEdit()
-    .create();
-
-  Logger.log("registerTrigger(): onSheetChange trigger registered successfully.");
+  // NOTE: the original registration body was removed — it was unreachable after
+  // the throw above and read as live code. Recover it from git history
+  // (commit e87d69c and earlier) if the legacy path is ever deliberately revived.
 }
 
 
@@ -304,7 +292,7 @@ function registerTrigger() {
               may kaparehong request ID pa sa listahan, hindi na ito madodoble.
   TECHNICAL : Keeps getExpiryFlagMap_'s snapshot consistent with writes made
               during the same sweep. Required because the map is built ONCE
-              before the loop, whereas the previous per-row getApprovalActions()
+              before the loop, whereas the previous per-row getApprovalActions_()
               re-read the sheet and so observed mid-loop appends. Keyed with
               String() to match getExpiryFlagMap_.
   PARAMS    : map — the flag map; requestId; action — an ACTION.EXPIRY_* value.
@@ -317,7 +305,14 @@ function markExpiryFlag_(map, requestId, action) {
 }
 
 function checkContractExpiries() {
-  const rows = getDataRows(SHEET_NAMES.REQUESTS);
+  // Owner/trigger only. Reachable via google.script.run otherwise, which would let
+  // any authenticated user fire the whole day's send batch on demand and write
+  // "system"-attributed rows into the append-only Activity_Log at will.
+  if (!isOwnerContext_()) {
+    Logger.log("checkContractExpiries(): refused — not an owner/trigger execution.");
+    return;
+  }
+  const rows = getDataRows_(SHEET_NAMES.REQUESTS);
   let warned = 0, noticed = 0, overdue = 0;
 
   // ONE Activity_Log scan for the entire sweep (was: one full scan per approved
@@ -334,7 +329,7 @@ function checkContractExpiries() {
       const rawEnd = row[CR.CONTRACT_END - 1];
       if (!rawEnd) return;
 
-      const daysUntil = daysUntilContractEnd(rawEnd);
+      const daysUntil = daysUntilContractEnd_(rawEnd);
       if (daysUntil === null) return;
 
       const requestId = row[CR.REQUEST_ID - 1];
@@ -348,18 +343,18 @@ function checkContractExpiries() {
       const endStr = Utilities.formatDate(new Date(rawEnd), "Asia/Manila", "yyyy-MM-dd");
 
       if (daysUntil >= 1 && daysUntil <= 3 && !hasWarning) {
-        sendExpiryReminderToRequestor(requestId, daysUntil);
-        appendAction(requestId, groupId, 0, null, "system", ACTION.EXPIRY_WARNING, "Contract expires " + endStr);
+        sendExpiryReminderToRequestor_(requestId, daysUntil);
+        appendAction_(requestId, groupId, 0, null, "system", ACTION.EXPIRY_WARNING, "Contract expires " + endStr);
         markExpiryFlag_(expiryFlags, requestId, ACTION.EXPIRY_WARNING);
         warned++;
       } else if (daysUntil === 0 && !hasNotice) {
-        sendExpiryReminderToRequestor(requestId, daysUntil);
-        appendAction(requestId, groupId, 0, null, "system", ACTION.EXPIRY_NOTICE, "Contract expires today " + endStr);
+        sendExpiryReminderToRequestor_(requestId, daysUntil);
+        appendAction_(requestId, groupId, 0, null, "system", ACTION.EXPIRY_NOTICE, "Contract expires today " + endStr);
         markExpiryFlag_(expiryFlags, requestId, ACTION.EXPIRY_NOTICE);
         noticed++;
       } else if (daysUntil < 0 && !hasOverdue) {
-        sendExpiryReminderToRequestor(requestId, daysUntil);
-        appendAction(requestId, groupId, 0, null, "system", ACTION.EXPIRY_OVERDUE, "Contract expired " + endStr);
+        sendExpiryReminderToRequestor_(requestId, daysUntil);
+        appendAction_(requestId, groupId, 0, null, "system", ACTION.EXPIRY_OVERDUE, "Contract expired " + endStr);
         markExpiryFlag_(expiryFlags, requestId, ACTION.EXPIRY_OVERDUE);
         overdue++;
       }
@@ -389,6 +384,13 @@ function checkContractExpiries() {
   RETURNS   : (void) — logs confirmation.
 */
 function registerExpiryTrigger() {
+  // Owner only. This function DELETES the live trigger before re-creating it, so an
+  // unprivileged caller could use it to silently remove the daily sweep (duplicates
+  // are impossible thanks to the dedup, but deletion is not).
+  if (!isOwnerContext_()) {
+    throw new Error("registerExpiryTrigger() may only be run by the script owner from the Apps Script editor.");
+  }
+
   const triggers = ScriptApp.getProjectTriggers();
   triggers.forEach(function (trigger) {
     if (trigger.getHandlerFunction() === "checkContractExpiries") {
@@ -426,9 +428,9 @@ function registerExpiryTrigger() {
   TECHNICAL:
   Time-based trigger handler (registered by registerApproverReminderTrigger). One pass
   over the Requests sheet; only the three PENDING_* statuses are considered. For each,
-  getCurrentApprover(step, group) resolves the responsible approver email; rows are
-  bucketed by normalizeEmail(approver) so a single approver gets ONE digest covering
-  all their pending requests (regardless of step/group). Then sendPendingApprovalReminder
+  getCurrentApprover_(step, group) resolves the responsible approver email; rows are
+  bucketed by normalizeEmail_(approver) so a single approver gets ONE digest covering
+  all their pending requests (regardless of step/group). Then sendPendingApprovalReminder_
   fires once per bucket.
 
   Unlike checkContractExpiries this writes NOTHING to Activity_Log and uses NO system
@@ -446,10 +448,10 @@ function registerExpiryTrigger() {
   STEPS
     Step 1 — Sweep + bucket
       Layman    : Lakad sa lahat ng row; kung pending, alamin kanino, isalansan.
-      Technical : Filter PENDING_*; getCurrentApprover→normalizeEmail key; push rowData.
+      Technical : Filter PENDING_*; getCurrentApprover→normalizeEmail_ key; push rowData.
     Step 2 — Send one digest per approver
       Layman    : Kada approver, isang email na listahan ng lahat niyang pending.
-      Technical : Iterate buckets; sendPendingApprovalReminder(email, rows); count sends.
+      Technical : Iterate buckets; sendPendingApprovalReminder_(email, rows); count sends.
 
   EXAMPLE
     (trigger fires at 8am; approverA holds 2 pending, approverB holds 1)
@@ -457,16 +459,26 @@ function registerExpiryTrigger() {
     → no pending rows: 0 emails; log "reminded 0 approver(s)."
 */
 function checkPendingApprovals() {
-  const rows    = getDataRows(SHEET_NAMES.REQUESTS);
+  // ⚠️ Owner/trigger only — this is the guard that makes the "the daily schedule
+  // IS the idempotency" design above actually true. Without it, any authenticated
+  // user could loop this via google.script.run to mail-bomb every approver and
+  // exhaust the daily Gmail quota (which then silently kills all workflow mail,
+  // because sendBrandedEmail_ fails soft).
+  if (!isOwnerContext_()) {
+    Logger.log("checkPendingApprovals(): refused — not an owner/trigger execution.");
+    return;
+  }
+
+  const rows    = getDataRows_(SHEET_NAMES.REQUESTS);
   const pending = [STATUS.PENDING_1, STATUS.PENDING_2, STATUS.PENDING_3];
   const byApprover = {};   // normalized email -> [rowData, ...]
 
   rows.forEach(function (row) {
     try {
       if (pending.indexOf(row[CR.STATUS - 1]) === -1) return;
-      const approver = getCurrentApprover(row[CR.STEP - 1], row[CR.GROUP - 1]);
+      const approver = getCurrentApprover_(row[CR.STEP - 1], row[CR.GROUP - 1]);
       if (!approver) return;                       // unconfigured group / step 0 — skip
-      const key = normalizeEmail(approver);
+      const key = normalizeEmail_(approver);
       if (!key) return;                            // guard against a blank approver cell
       (byApprover[key] = byApprover[key] || []).push(row);
     } catch (err) {
@@ -477,7 +489,7 @@ function checkPendingApprovals() {
   let sent = 0;
   Object.keys(byApprover).forEach(function (email) {
     try {
-      sendPendingApprovalReminder(email, byApprover[email]);
+      sendPendingApprovalReminder_(email, byApprover[email]);
       sent++;
     } catch (err) {
       Logger.log("checkPendingApprovals(): email error for " + email + " — " + err.message);
@@ -506,6 +518,11 @@ function checkPendingApprovals() {
   RETURNS   : (void) — logs confirmation.
 */
 function registerApproverReminderTrigger() {
+  // Owner only — same delete-then-create exposure as registerExpiryTrigger().
+  if (!isOwnerContext_()) {
+    throw new Error("registerApproverReminderTrigger() may only be run by the script owner from the Apps Script editor.");
+  }
+
   const triggers = ScriptApp.getProjectTriggers();
   triggers.forEach(function (trigger) {
     if (trigger.getHandlerFunction() === "checkPendingApprovals") {

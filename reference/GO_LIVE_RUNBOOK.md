@@ -44,6 +44,36 @@
 11. **Expiry send path:** set one approved request's `CONTRACT_END` (col V) to today+2, delete its `expiry_warning` row from `Activity_Log`, run → exactly **1** email + 1 new row; run again → 0.
 12. **⚠️ The duplicate-ID test (the one that catches a subtly wrong implementation):** duplicate a `Requests` row so **two rows share the same `request_id`**, both with `CONTRACT_END` = today+2, and delete their `expiry_warning` rows. Run once → must send **1 email, not 2** (log should read `1 warning(s)`). Delete the duplicate row afterward and restore any edited `CONTRACT_END` values.
 
+### 🔴 Also re-test (callable-surface hardening, 2026-08-11)
+
+> A full audit found that **118 of 140 backend functions were callable from any user's browser console** via `google.script.run`, while the frontend only calls **19**. Of the rest, 37 had a side effect or returned other users' data with no guard. The sweep renamed internal functions to a trailing `_` (which Apps Script hides from `google.script.run` while keeping them callable server-side) and guarded the entry points that cannot take an underscore. **Callable surface is now 31 names.** Nothing in the frontend changed — verified zero frontend references to every renamed function.
+
+**Regression tests — these prove the renames did not sever a live call path:**
+13. **Full happy path:** submit with ≥1 attachment → Approver 1 email → approve through the whole chain → COC generates **once**, requestor email arrives **once** with the PDF, one new `COC_PDFs` row.
+14. **Decline** and **Return → resubmit with new files** both work; resubmitted files land under the right cycle.
+15. **Admin console:** create group, rename, save a chain (reorder + add + remove), deactivate. Confirm rows appear in `Admins_Log` (this exercises `appendAdminLog_`, `replaceGroupChain_`, and the chain-change notification).
+16. **Attachment view** still serves the file in-portal.
+17. Editor: `_testConfig` and `_testGenerateCOC` still run. `checkContractExpiries()` and `checkPendingApprovals()` still run **from the editor**.
+
+**Security tests — paste in the browser console while signed in to the portal.** Each must now fail with *"is not a function"*:
+```
+google.script.run.setRequestCache("REQ-anything", {status:"Fully Approved"})
+google.script.run.getAllData("Admins")
+google.script.run.sendBrandedEmail("you@example.com","x","y","z")
+google.script.run.appendAction("REQ-x","G001",0,1,"boss@corp.com","approved","")
+google.script.run.uploadAttachmentFile({base64:"",filename:"x",mimeType:"text/plain"},"x")
+```
+18. Also confirm `checkPendingApprovals()` called from the **console** does nothing (logs "refused"), while the same call from the **editor** works. That is `isOwnerContext_()` doing its job.
+
+### 🔴 New validation behaviour to sanity-check
+19. Submit with a >200-char project title → rejected with a clear message (previously accepted an unbounded value straight into the sheet).
+20. Decline/return with a >2000-char remark → rejected.
+21. Submit with contract end **earlier than** contract start → rejected. (Previously accepted, and the row was born expired, immediately tripping the expiry sweep.)
+
+### ⚠️ Two things this sweep deliberately did NOT change
+- **`include()` stays callable.** It is invoked from `Index.html` scriptlets; if underscore-hiding broke scriptlet resolution, no page would render at all. Too much blast radius for a Low finding that cannot be verified locally. Revisit with a live `/dev` to test against.
+- **`ORG.ALLOWED_DOMAINS` still ships as `[]` (allow-all).** Correct for dev, wrong for production — see Phase D1b. `_testConfig` now prints a loud warning while it is empty.
+
 ### Tier 1 — go-live blockers (real, meaningful)
 - [ ] **B1. Auth guards are bypassable.** The workflow mutators (`approve/decline/returnRequest/resubmit` in `Approvals.js`) and the admin write-primitives (`replaceGroupChain/createGroup/updateGroupFields` in `Accessors.js`) + `generateCOC` carry NO auth of their own — the guards live only in the `handle*`/`admin*` wrappers. In Apps Script, `google.script.run` can call ANY global directly, around the wrappers. → Any authenticated Megaworld user could self-approve their own request or make themselves a group's sole approver (logged under their real email, but still). **Fix:** fold an identity + actionable-status guard INTO each workflow mutator; add `isAdmin()` guards into the admin write-primitives; guard `generateCOC` on `isChainApprover || isAdmin` + `status===APPROVED`.
 - [ ] **B2. Declined requests can be re-opened.** `decline()` sets status Declined but never resets `step`, so the decliner is still "current approver" → they can re-Approve/Return a terminal request through the normal button. **Fix:** reject in the handlers unless status ∈ {PENDING_1/2/3}; have `decline()` also move step out of range. (Closed by the B1 status-guard.)

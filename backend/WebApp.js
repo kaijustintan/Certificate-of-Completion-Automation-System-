@@ -8,7 +8,7 @@
   Ito yung "front desk" ng web app. Pag may nagbukas ng portal URL, dito
   unang dumadaan (doGet). Pero higit pa rito: nandito rin lahat ng functions
   na tinatawag ng frontend para kumuha ng data (dashboard lists, request
-  detail) at para kumilos (approve/decline/return/resubmit). Mahalaga: bawat
+  detail) at para kumilos (approve_/decline_/return/resubmit_). Mahalaga: bawat
   "sensitibong" galaw ay sinisiguro dito kung SINO talaga ang tumatawag —
   galing sa Google session, hindi sa frontend — para hindi mapeke.
 
@@ -37,17 +37,17 @@
      - doGet(e)                       serves the SPA shell + deep-link params
 
   B. ROLE DETECTION
-     - detectRole(email)              "approver" | "requestor"
+     - detectRole_(email)              "approver" | "requestor"
 
   C. AUTHORIZATION HELPERS  (server-side, identity from Session)
-     - normalizeEmail(email)          trim + lowercase
-     - sameEmail(a, b)                safe non-blank equality
-     - getRequestRowData(id)          full 34-col row by Request ID
-     - isCurrentApprover(row, caller) is caller the one due to act now?
-     - isChainApprover(row, caller)   is caller any approver for the group?
+     - normalizeEmail_(email)          trim + lowercase
+     - sameEmail_(a, b)                safe non-blank equality
+     - getRequestRowData_(id)          full 34-col row by Request ID
+     - isCurrentApprover_(row, caller) is caller the one due to act now?
+     - isChainApprover_(row, caller)   is caller any approver for the group?
 
   D. READ-ONLY GETTERS  (return DTOs for the frontend)
-     - getCurrentUser()               { email, role, isAdmin }
+     - getCurrentUser()               { email, role, isAdmin_ }
      - getMyRequests()                requestor dashboard list
      - getPendingApprovals()          approver "awaiting" list
      - getMyActionedRequests()        approver "actioned" list
@@ -139,8 +139,8 @@ function doGet(e) {
 // Returns "approver" or "requestor".
 // ============================================================
 
-// detectRole(email) — MOVED to Accessors.js (now scans Group_Approvers by email).
-// isAdmin(email) also lives there. One global scope — re-declaring detectRole
+// detectRole_(email) — MOVED to Accessors.js (now scans Group_Approvers by email).
+// isAdmin_(email) also lives there. One global scope — re-declaring detectRole_
 // here would collide.
 
 
@@ -154,19 +154,19 @@ function doGet(e) {
 // ============================================================
 
 /*
-  Function Name: normalizeEmail
+  Function Name: normalizeEmail_
   LAYMAN    : Linisin ang email bago ihambing — alisin ang spaces, gawing
               lowercase — para "Juan@X.com " at "juan@x.com" ay magkatugma.
   TECHNICAL : String(email||"").trim().toLowerCase().
   PARAMS    : email — any value.
   RETURNS   : Normalized email string ("" if blank).
 */
-function normalizeEmail(email) {
+function normalizeEmail_(email) {
   return String(email || "").trim().toLowerCase();
 }
 
 /*
-  Function Name: sameEmail
+  Function Name: sameEmail_
   LAYMAN    : Pareho bang account ang dalawang email? Totoo lang kung pareho
               SILA AT hindi blangko (para hindi "match" ang dalawang walang laman).
   TECHNICAL : Equality after normalize, with a non-blank guard.
@@ -175,13 +175,13 @@ function normalizeEmail(email) {
   NOTE      : The non-blank guard is security-relevant — two empty cells must
               never be treated as "the same approver".
 */
-function sameEmail(a, b) {
-  const na = normalizeEmail(a);
-  return na !== "" && na === normalizeEmail(b);
+function sameEmail_(a, b) {
+  const na = normalizeEmail_(a);
+  return na !== "" && na === normalizeEmail_(b);
 }
 
 /*
-  Function Name: isAllowedDomain
+  Function Name: isAllowedDomain_
   LAYMAN    : Taga-Megaworld ba ang email na ito? Kapag walang nakalista sa
               ORG.ALLOWED_DOMAINS, lahat pinapayagan (ganito sa dev/testing).
               Blangkong email ay LAGING bawal — ibig sabihin nun ay hindi
@@ -197,12 +197,12 @@ function sameEmail(a, b) {
 
   EXAMPLE
     // ORG.ALLOWED_DOMAINS = ["megaworldcorp.com"]
-    isAllowedDomain("juan@megaworldcorp.com")  → true
-    isAllowedDomain("outsider@gmail.com")      → false
-    isAllowedDomain("")                        → false (always)
+    isAllowedDomain_("juan@megaworldcorp.com")  → true
+    isAllowedDomain_("outsider@gmail.com")      → false
+    isAllowedDomain_("")                        → false (always)
 */
-function isAllowedDomain(email) {
-  const e = normalizeEmail(email);
+function isAllowedDomain_(email) {
+  const e = normalizeEmail_(email);
   if (e === "" || e.indexOf("@") === -1) return false;   // unidentified caller — always denied
   const allowed = (typeof ORG !== "undefined" && ORG.ALLOWED_DOMAINS) || [];
   if (!allowed.length) return true;                      // no allowlist configured — allow all
@@ -211,48 +211,84 @@ function isAllowedDomain(email) {
 }
 
 /*
-  Function Name: getRequestRowData
+  Function Name: isOwnerContext_
+
+  LAYMAN (Tropang Ex):
+  Tinatanong nito: "ang tumatakbo ba ngayon ay ang may-ari mismo ng script,
+  o isang ordinaryong user na nag-click sa portal?" Ginagamit ito ng mga
+  maintenance function (yung mga daily sweep at yung register* na tinatakbo
+  mo sa editor) para hindi sila matawag ng kung sino-sino mula sa browser.
+
+  TECHNICAL:
+  Distinguishes an owner/trigger execution from a web-app visitor call.
+  Under a "execute as me" deployment, getEffectiveUser() is ALWAYS the owner,
+  while getActiveUser() is the calling visitor. In a time-driven trigger or an
+  editor Run, both resolve to the owner. So equality ⇒ owner-or-trigger context.
+
+  ⚠️ WHY THIS EXISTS: every top-level function is reachable via
+  google.script.run. Without this, checkPendingApprovals() — which has NO
+  idempotency flag by design, because "the daily schedule is the idempotency" —
+  could be looped by any authenticated user to mass-mail every approver and
+  burn the account's daily Gmail quota, silently disabling all workflow mail.
+
+  Fails CLOSED: a blank active user (consumer account / cross-domain visitor)
+  will not match, because sameEmail_() rejects blanks.
+
+  PARAMS  : (none) — reads Session directly.
+  RETURNS : Boolean — true only for the owner or a trigger-run execution.
+*/
+function isOwnerContext_() {
+  try {
+    return sameEmail_(Session.getActiveUser().getEmail(),
+                     Session.getEffectiveUser().getEmail());
+  } catch (e) {
+    return false;   // Session unavailable — deny
+  }
+}
+
+/*
+  Function Name: getRequestRowData_
   LAYMAN    : Kunin ang buong row ng isang request gamit ang Request ID.
-  TECHNICAL : Resolves the Sheet row number, then reads the full 34-column row.
+  TECHNICAL : Resolves the Sheet row number, then reads the full 25-column row.
   PARAMS    : requestId — the request to read.
   RETURNS   : 0-indexed row array (access via CR.* - 1), or null if not found.
   NOTE      : Reads all 25 Requests columns (through RESUBMIT_COUNT). Approval
               history lives in Approval_Actions, read via the Accessors layer.
 */
-function getRequestRowData(requestId) {
-  const sheet  = getSheet(SHEET_NAMES.REQUESTS);
-  const rowNum = getRowNumberByRequestId(requestId);
+function getRequestRowData_(requestId) {
+  const sheet  = getSheet_(SHEET_NAMES.REQUESTS);
+  const rowNum = getRowNumberByRequestId_(requestId);
   if (rowNum === -1) return null;
   return sheet.getRange(rowNum, 1, 1, CR.RESUBMIT_COUNT).getValues()[0];
 }
 
 /*
-  Function Name: isCurrentApprover
+  Function Name: isCurrentApprover_
   LAYMAN    : Ang tumatawag ba ang DAPAT kumilos sa request ngayon (base sa
               kasalukuyang Step at Group)?
-  TECHNICAL : sameEmail(getCurrentApprover(step, group), caller).
+  TECHNICAL : sameEmail_(getCurrentApprover_(step, group), caller).
   PARAMS    : row — the request's 0-indexed row array; callerEmail — the caller.
-  RETURNS   : Boolean. Gate for approve/decline/return.
+  RETURNS   : Boolean. Gate for approve_/decline_/return.
 */
-function isCurrentApprover(row, callerEmail) {
-  return sameEmail(getCurrentApprover(row[CR.STEP - 1], row[CR.GROUP - 1]), callerEmail);
+function isCurrentApprover_(row, callerEmail) {
+  return sameEmail_(getCurrentApprover_(row[CR.STEP - 1], row[CR.GROUP - 1]), callerEmail);
 }
 
 /*
-  Function Name: isChainApprover
+  Function Name: isChainApprover_
   LAYMAN    : Ang tumatawag ba ay isa sa mga approver ng group ng request na
               ito (kahit hindi pa siya ang nasa pila)? Ginagamit para payagang
               tingnan ang detalye ng request.
   TECHNICAL : True if caller matches any of the group's 3 approver slots.
   PARAMS    : row — the request's row array; callerEmail — the caller.
-  RETURNS   : Boolean. Broader than isCurrentApprover (view vs act).
+  RETURNS   : Boolean. Broader than isCurrentApprover_ (view vs act).
 */
-function isChainApprover(row, callerEmail) {
-  const approvers = getApprovers(row[CR.GROUP - 1]);
+function isChainApprover_(row, callerEmail) {
+  const approvers = getApprovers_(row[CR.GROUP - 1]);
   if (!approvers) return false;
-  return sameEmail(approvers.approver1, callerEmail)
-      || sameEmail(approvers.approver2, callerEmail)
-      || sameEmail(approvers.approver3, callerEmail);
+  return sameEmail_(approvers.approver1, callerEmail)
+      || sameEmail_(approvers.approver2, callerEmail)
+      || sameEmail_(approvers.approver3, callerEmail);
 }
 
 
@@ -266,9 +302,9 @@ function isChainApprover(row, callerEmail) {
   Function Name: getCurrentUser
   LAYMAN    : Sino ang naka-login at ano ang role niya? Ito ang tinatawag ng
               app sa simula para malaman kung saang dashboard dadalhin.
-  TECHNICAL : Reads the session email and classifies it via detectRole().
+  TECHNICAL : Reads the session email and classifies it via detectRole_().
   PARAMS    : (none) — identity from Session.
-  RETURNS   : { email, role, isAdmin }. isAdmin is ADDITIVE — role semantics
+  RETURNS   : { email, role, isAdmin_ }. isAdmin_ is ADDITIVE — role semantics
               are unchanged (an admin who is also an approver keeps role
               "approver"); the flag only adds the Admin nav link + page.
 */
@@ -280,13 +316,19 @@ function getCurrentUser() {
   // the same blank-identity shape the frontend already handles, so bootstrap()
   // shows the "sign in with your Megaworld account" screen instead of an empty
   // but functional dashboard. Shape is unchanged (frozen DTO).
-  if (!isAllowedDomain(email)) {
-    Logger.log("getCurrentUser(): rejected caller outside allowed domain — '" + email + "'");
-    return { email: "", role: "requestor", isAdmin: false };
+  if (!isAllowedDomain_(email)) {
+    // Log the domain only, never the full address: this path fires for every
+    // outsider who opens the link, and the execution log would otherwise
+    // accumulate a list of non-employee identities readable by any project editor.
+    const rejectedDomain = String(email).indexOf("@") !== -1
+      ? String(email).split("@").pop()
+      : "(unidentified)";
+    Logger.log("getCurrentUser(): rejected caller outside allowed domain — domain '" + rejectedDomain + "'");
+    return { email: "", role: "requestor", isAdmin_: false };
   }
 
-  const role = detectRole(email);
-  return { email, role, isAdmin: isAdmin(email) };
+  const role = detectRole_(email);
+  return { email, role, isAdmin_: isAdmin_(email) };
 }
 
 
@@ -300,12 +342,12 @@ function getCurrentUser() {
   RETURNS   : Array of { requestId, controlNumber, projectTitle, group, status,
               step, dateFiled, contractEnd, isExpired }. Empty if the user has
               submitted nothing. isExpired (#10) is computed server-side via
-              isContractExpired() so the UI never parses date strings.
+              isContractExpired_() so the UI never parses date strings.
 
   STEPS
     Step 1 — Resolve caller + load rows
       Layman    : Kunin ang email ng naka-login at lahat ng request rows.
-      Technical : Session email + getDataRows(REQUESTS).
+      Technical : Session email + getDataRows_(REQUESTS).
     Step 2 — Keep only my requests
       Layman    : Panatilihin lang ang akin (ako ang requestor).
       Technical : filter REQUESTOR === email (exact match; requestor is always
@@ -322,14 +364,14 @@ function getCurrentUser() {
 */
 function getMyRequests() {
   const email = Session.getActiveUser().getEmail();
-  const rows  = getDataRows(SHEET_NAMES.REQUESTS);
+  const rows  = getDataRows_(SHEET_NAMES.REQUESTS);
   return rows
-    .filter(row => sameEmail(row[CR.REQUESTOR - 1], email))
+    .filter(row => sameEmail_(row[CR.REQUESTOR - 1], email))
     .map(row => ({
       requestId:     row[CR.REQUEST_ID - 1],
       controlNumber: row[CR.CONTROL_NUMBER - 1],
       projectTitle:  row[CR.PROJECT_TITLE - 1],
-      group:         getGroupNameById(row[CR.GROUP - 1]),  // display name (CR.GROUP holds group_id)
+      group:         getGroupNameById_(row[CR.GROUP - 1]),  // display name (CR.GROUP holds group_id)
       status:        row[CR.STATUS - 1],
       step:          row[CR.STEP - 1],
       dateFiled:     row[CR.DATE_OF_FILING - 1]
@@ -338,7 +380,7 @@ function getMyRequests() {
       contractEnd:   row[CR.CONTRACT_END - 1]
         ? Utilities.formatDate(new Date(row[CR.CONTRACT_END - 1]), "Asia/Manila", "MMM dd, yyyy")
         : "",
-      isExpired:     isContractExpired(row[CR.CONTRACT_END - 1]),
+      isExpired:     isContractExpired_(row[CR.CONTRACT_END - 1]),
     }));
 }
 
@@ -358,10 +400,10 @@ function getMyRequests() {
   STEPS
     Step 1 — Resolve caller + load rows + pending-status set
       Layman    : Kunin ang email, lahat ng rows, at listahan ng "pending" statuses.
-      Technical : Session email; getDataRows; pending = [PENDING_1/2/3].
+      Technical : Session email; getDataRows_; pending = [PENDING_1/2/3].
     Step 2 — Filter to "pending AND mine to act"
       Layman    : Panatilihin lang kung pending pa AT ako ang dapat pumirma ngayon.
-      Technical : status ∈ pending && getCurrentApprover(step, group) === email
+      Technical : status ∈ pending && getCurrentApprover_(step, group) === email
                   (drops rows whose group has no approver config).
     Step 3 — Project + format date
       Layman    : Gawing DTO; petsa → readable PH format.
@@ -374,7 +416,7 @@ function getMyRequests() {
 */
 function getPendingApprovals() {
   const email = Session.getActiveUser().getEmail();
-  const rows  = getDataRows(SHEET_NAMES.REQUESTS);
+  const rows  = getDataRows_(SHEET_NAMES.REQUESTS);
   const pending = [STATUS.PENDING_1, STATUS.PENDING_2, STATUS.PENDING_3];
 
   return rows
@@ -383,14 +425,14 @@ function getPendingApprovals() {
       const step    = row[CR.STEP - 1];
       const groupId = row[CR.GROUP - 1];
       if (!pending.includes(status)) return false;
-      return sameEmail(getCurrentApprover(step, groupId), email);
+      return sameEmail_(getCurrentApprover_(step, groupId), email);
     })
     .map(row => ({
       requestId:     row[CR.REQUEST_ID - 1],
       controlNumber: row[CR.CONTROL_NUMBER - 1],
       projectTitle:  row[CR.PROJECT_TITLE - 1],
       requestor:     row[CR.REQUESTOR - 1],
-      group:         getGroupNameById(row[CR.GROUP - 1]),
+      group:         getGroupNameById_(row[CR.GROUP - 1]),
       status:        row[CR.STATUS - 1],
       step:          row[CR.STEP - 1],
       dateFiled:     row[CR.DATE_OF_FILING - 1]
@@ -399,7 +441,7 @@ function getPendingApprovals() {
       contractEnd:   row[CR.CONTRACT_END - 1]
         ? Utilities.formatDate(new Date(row[CR.CONTRACT_END - 1]), "Asia/Manila", "MMM dd, yyyy")
         : "",
-      isExpired:     isContractExpired(row[CR.CONTRACT_END - 1]),
+      isExpired:     isContractExpired_(row[CR.CONTRACT_END - 1]),
     }));
 }
 
@@ -421,11 +463,11 @@ function getPendingApprovals() {
   STEPS
     Step 1 — Resolve caller + load rows
       Layman    : Kunin ang naka-login at lahat ng request rows.
-      Technical : Session email + getDataRows(REQUESTS).
+      Technical : Session email + getDataRows_(REQUESTS).
     Step 2 — Build the "acted" set from the timeline
       Layman    : Isang pass sa Activity_Log: lahat ng request na ako ang
-                  umaprove/nag-decline/nagbalik, itala.
-      Technical : One getDataRows(ACTIVITY_LOG) scan → membership map keyed by
+                  umaprove/nag-decline_/nagbalik, itala.
+      Technical : One getDataRows_(ACTIVITY_LOG) scan → membership map keyed by
                   request_id (no per-row sheet reads).
     Step 3 — Filter + project + format date
       Layman    : Panatilihin ang nasa listahan; gawing DTO; petsa → PH format.
@@ -439,16 +481,16 @@ function getPendingApprovals() {
 */
 function getMyActionedRequests() {
   const email = Session.getActiveUser().getEmail();
-  const rows  = getDataRows(SHEET_NAMES.REQUESTS);
+  const rows  = getDataRows_(SHEET_NAMES.REQUESTS);
 
   // Which requests has the caller acted on? Derive from the append-only timeline:
-  // any approve/decline/return action whose actor is the caller. Load all action
+  // any approve_/decline_/return action whose actor is the caller. Load all action
   // rows once, build a membership set — no per-row sheet reads, no LAST_ACTION_BY.
   const acted = {};
-  getDataRows(SHEET_NAMES.ACTIVITY_LOG).forEach(function (a) {
+  getDataRows_(SHEET_NAMES.ACTIVITY_LOG).forEach(function (a) {
     const action = a[ACT.ACTION - 1];
     if ((action === ACTION.APPROVED || action === ACTION.DECLINED || action === ACTION.RETURNED) &&
-        sameEmail(a[ACT.ACTOR_EMAIL - 1], email)) {
+        sameEmail_(a[ACT.ACTOR_EMAIL - 1], email)) {
       acted[String(a[ACT.REQUEST_ID - 1])] = true;
     }
   });
@@ -461,7 +503,7 @@ function getMyActionedRequests() {
         controlNumber: row[CR.CONTROL_NUMBER - 1],
         projectTitle:  row[CR.PROJECT_TITLE - 1],
         requestor:     row[CR.REQUESTOR - 1],
-        group:         getGroupNameById(row[CR.GROUP - 1]),
+        group:         getGroupNameById_(row[CR.GROUP - 1]),
         status:        row[CR.STATUS - 1],
         step:          row[CR.STEP - 1],
         dateFiled:     row[CR.DATE_OF_FILING - 1]
@@ -470,7 +512,7 @@ function getMyActionedRequests() {
         contractEnd:   row[CR.CONTRACT_END - 1]
           ? Utilities.formatDate(new Date(row[CR.CONTRACT_END - 1]), "Asia/Manila", "MMM dd, yyyy")
           : "",
-        isExpired:     isContractExpired(row[CR.CONTRACT_END - 1]),
+        isExpired:     isContractExpired_(row[CR.CONTRACT_END - 1]),
       };
     });
 }
@@ -479,7 +521,7 @@ function getMyActionedRequests() {
 /*
   Function Name: getRequestDetail
   LAYMAN    : Buong detalye ng IISANG request — lahat ng field, approvers,
-              attachments, resubmit history — para sa detail page. May guard:
+              attachments, resubmit_ history — para sa detail page. May guard:
               ang requestor, isang approver ng group nito, o isang admin lang
               ang makakakita. Kung wala kang karapatan, null ang babalik (hindi error).
   TECHNICAL : Reads the full row, authorizes the caller (requestor OR chain
@@ -491,14 +533,14 @@ function getMyActionedRequests() {
   STEPS
     Step 1 — Locate the row
       Layman    : Hanapin ang row ng request; wala → null.
-      Technical : getRowNumberByRequestId(); -1 → return null.
+      Technical : getRowNumberByRequestId_(); -1 → return null.
     Step 2 — Read row + group approvers
       Layman    : Basahin ang buong row at ang approvers ng group.
-      Technical : getRange(rowNum,1,1,34); getApprovers(group) || {}.
+      Technical : getRange(rowNum,1,1,34); getApprovers_(group) || {}.
     Step 3 — Authorize the caller (view gate)
       Layman    : Requestor ka ba, approver ng chain, o admin? Kung hindi, null.
-      Technical : return null unless sameEmail(REQUESTOR, caller) ||
-                  isChainApprover(row, caller) || isAdmin(caller). Null (not an
+      Technical : return null unless sameEmail_(REQUESTOR, caller) ||
+                  isChainApprover_(row, caller) || isAdmin_(caller). Null (not an
                   error object) so the detail renderer treats it as "not found
                   / no access". Admin access is read-only by construction —
                   action panels are owner/current-approver gated in the UI and
@@ -521,19 +563,19 @@ function getMyActionedRequests() {
     getRequestDetail("REQ-9b1")  →  null
 */
 function getRequestDetail(requestId) {
-  const sheet  = getSheet(SHEET_NAMES.REQUESTS);
-  const rowNum = getRowNumberByRequestId(requestId);
+  const sheet  = getSheet_(SHEET_NAMES.REQUESTS);
+  const rowNum = getRowNumberByRequestId_(requestId);
   if (rowNum === -1) return null;
 
   const row       = sheet.getRange(rowNum, 1, 1, CR.RESUBMIT_COUNT).getValues()[0];
   const groupId   = row[CR.GROUP - 1];
-  const approvers = getApprovers(groupId) || {};
+  const approvers = getApprovers_(groupId) || {};
 
   // Only the requestor, an approver in this request's chain, or an admin
   // (Tier-2 oversight — read-only; the UI hides action panels for non-owners)
   // may view it.
   const caller = Session.getActiveUser().getEmail();
-  if (!sameEmail(row[CR.REQUESTOR - 1], caller) && !isChainApprover(row, caller) && !isAdmin(caller)) {
+  if (!sameEmail_(row[CR.REQUESTOR - 1], caller) && !isChainApprover_(row, caller) && !isAdmin_(caller)) {
     return null;
   }
 
@@ -544,7 +586,7 @@ function getRequestDetail(requestId) {
 
   // Per-step dates/remarks, previousApprovals, and resubmitHistory are DERIVED
   // from the append-only Approval_Actions timeline (frozen DTO — same shape).
-  const view       = getApprovalView(requestId);
+  const view       = getApprovalView_(requestId);
   const stepDate   = (n) => (view.byStep[n] && view.byStep[n].date) ? fmtDateTime(view.byStep[n].date) : "";
   const stepRemark = (n) => (view.byStep[n] ? view.byStep[n].remark : "") || "";
 
@@ -557,7 +599,7 @@ function getRequestDetail(requestId) {
     projectTitle:         row[CR.PROJECT_TITLE - 1],
     requestor:            row[CR.REQUESTOR - 1],
     requestorDesig:       row[CR.REQUESTOR_DESIG - 1],
-    group:                getGroupNameById(groupId),  // display name (row holds group_id)
+    group:                getGroupNameById_(groupId),  // display name (row holds group_id)
     accountablePerson:    row[CR.ACCOUNTABLE_PERSON - 1],
     department:           row[CR.DEPARTMENT - 1],
     location:             row[CR.LOCATION - 1],
@@ -571,7 +613,7 @@ function getRequestDetail(requestId) {
     typeOfLicense:        row[CR.TYPE_OF_LICENSE - 1],
     contractStart:        fmtDateOnly(row[CR.CONTRACT_START - 1]),
     contractEnd:          fmtDateOnly(row[CR.CONTRACT_END - 1]),
-    isExpired:            isContractExpired(row[CR.CONTRACT_END - 1]),  // #10 — drives the detail-page "Expired" chip
+    isExpired:            isContractExpired_(row[CR.CONTRACT_END - 1]),  // #10 — drives the detail-page "Expired" chip
     supplierName:         row[CR.SUPPLIER_NAME - 1],
     requestorRemark:      row[CR.REQUESTOR_REMARK - 1],
     app1Remark:           stepRemark(1),
@@ -592,7 +634,7 @@ function getRequestDetail(requestId) {
     designation3:         approvers.designation3 || "",
     // No raw Drive URL is sent to the frontend. The UI uses attachmentId to call
     // the identity-gated downloadAttachment(); FILE holds the display filename.
-    attachments:          getAttachmentsForRequest(row[CR.REQUEST_ID - 1]).map(a => ({
+    attachments:          getAttachmentsForRequest_(row[CR.REQUEST_ID - 1]).map(a => ({
       attachmentId:  a[RA.ATTACHMENT_ID - 1],
       filename:      a[RA.FILE - 1],
       description:   a[RA.DESCRIPTION - 1],
@@ -621,7 +663,7 @@ function getRequestDetail(requestId) {
   TECHNICAL : Phase 8 submit-time upload flow. Upload-first for atomicity:
               Drive uploads can fail; sheet appends cannot be rolled back. By
               the time we write any sheet row, all risky I/O is done.
-              validateAttachmentPayload, uploadAttachmentFile, writeAttachmentRows
+              validateAttachmentPayload_, uploadAttachmentFile_, writeAttachmentRows_
               are in Attachments.js. Status always PENDING_1 — no SYNCING state.
   PARAMS    : formData — form fields + formData.files (Array<FilePayload>).
               FilePayload: { filename, mimeType, base64, description }.
@@ -631,16 +673,16 @@ function getRequestDetail(requestId) {
   STEPS
     Step 1 — Validate file payload
       Layman    : Bago mag-upload, siguraduhing may files at kumpleto ang data.
-      Technical : validateAttachmentPayload(files) — returns {ok,error}; early
+      Technical : validateAttachmentPayload_(files) — returns {ok,error}; early
                   return on failure. No I/O performed yet.
     Step 2 — Generate identifiers
       Layman    : Gumawa ng request ID at control number.
-      Technical : generateRequestId(); generateControlNumber(requestId).
+      Technical : generateRequestId_(); generateControlNumber_(requestId).
     Step 3 — Upload all files to Drive (rollback on any failure)
       Layman    : I-upload ang bawat file. Kung may pumalpak, itapon ang mga
                   naunang naka-upload at ibalik ang error — walang request na
                   nalilikha sa sheet.
-      Technical : uploadAttachmentFile(f) per file; on catch: trash uploaded
+      Technical : uploadAttachmentFile_(f) per file; on catch: trash uploaded
                   fileIds via DriveApp.getFileById().setTrashed(true).
     Step 4 — Append the request row (PENDING_1)
       Layman    : Ngayon lang isusulat ang request — pagkatapos ng upload.
@@ -648,10 +690,10 @@ function getRequestDetail(requestId) {
                   EXPECTED_ATTACHMENTS = files.length (record-keeping).
     Step 5 — Write attachment child rows (batched)
       Layman    : Isulat ang lahat ng attachment rows sa isang write.
-      Technical : writeAttachmentRows(requestId, uploaded) — one setValues call.
+      Technical : writeAttachmentRows_(requestId, uploaded) — one setValues call.
     Step 6 — Send approval email (last — implies files are ready)
       Layman    : Padala ng email sa Approver 1. Siniguro na na kumpleto ang lahat.
-      Technical : sendApprovalRequest(requestId).
+      Technical : sendApprovalRequest_(requestId).
 
   EXAMPLE
     submitNewRequest({ projectTitle:"Antivirus", group:"ISM - InfoSec", …,
@@ -660,6 +702,75 @@ function getRequestDetail(requestId) {
     → { success:true, requestId:"9B1", controlNumber:"EC-2026-00042-9B1" }
       (file in Drive; row in PENDING_1; approver emailed)
 */
+/*
+  Function Name: validateRequestFields_
+
+  LAYMAN (Tropang Ex):
+  Bago isulat sa sheet, tinitingnan muna nito kung may kalokohan sa mga
+  tinype: sobrang haba bang project title, o baka mas maaga pa ang katapusan
+  ng contract kaysa sa simula nito. Dati kasi, ang na-validate lang ay yung
+  mga file — yung mga text field, basta pinapasok kahit gaano kahaba.
+
+  TECHNICAL:
+  Server-side companion to validateAttachmentPayload_(). Caps every free-text
+  field written by submitNewRequest and checks contract-date ordering. Mirrors
+  that function's { ok, error } shape so the call site reads the same way.
+
+  ⚠️ WHY: a Sheets cell holds 50,000 chars and submitNewRequest is directly
+  callable via google.script.run, so the form's own inputs are not a control.
+  An unbounded title renders into every dashboard row and every notification
+  email. An end-before-start row is born expired and immediately trips
+  checkContractExpiries().
+
+  Deliberately does NOT newly require any field to be non-blank — that would
+  change existing accepted behaviour. Ordering is only enforced when BOTH
+  dates are present and parseable.
+
+  PARAMS  : formData — the raw submit payload from the frontend.
+  RETURNS : { ok: true } | { ok: false, error: "<user-facing message>" }
+*/
+function validateRequestFields_(formData) {
+  const MAX_SHORT_TEXT = 200;    // names, designations, reference numbers
+  const MAX_REMARK     = 2000;   // requestor's free-text remark
+
+  const shortFields = {
+    "Project title":     formData.projectTitle,
+    "Designation":       formData.requestorDesig,
+    "Accountable person":formData.accountablePerson,
+    "Department":        formData.department,
+    "Location":          formData.location,
+    "PC name":           formData.pcName,
+    "PRISM":             formData.prism,
+    "Purchase order":    formData.purchaseOrder,
+    "iHelp number":      formData.ihelpNumber,
+    "Product type":      formData.productType,
+    "Product name":      formData.productName,
+    "Type of purchase":  formData.typeOfPurchase,
+    "Type of license":   formData.typeOfLicense,
+    "Supplier name":     formData.supplierName
+  };
+
+  for (const label in shortFields) {
+    const val = shortFields[label];
+    if (val !== undefined && val !== null && String(val).length > MAX_SHORT_TEXT) {
+      return { ok: false, error: label + " is too long (max " + MAX_SHORT_TEXT + " characters)." };
+    }
+  }
+
+  if (formData.requestorRemark && String(formData.requestorRemark).length > MAX_REMARK) {
+    return { ok: false, error: "Remark is too long (max " + MAX_REMARK + " characters)." };
+  }
+
+  // Ordering only — blanks stay acceptable, as before.
+  const start = formData.contractStart ? new Date(formData.contractStart) : null;
+  const end   = formData.contractEnd   ? new Date(formData.contractEnd)   : null;
+  if (start && end && !isNaN(start.getTime()) && !isNaN(end.getTime()) && end < start) {
+    return { ok: false, error: "Contract end date cannot be earlier than the contract start date." };
+  }
+
+  return { ok: true };
+}
+
 function submitNewRequest(formData) {
   const caller = Session.getActiveUser().getEmail();
   const files  = Array.isArray(formData.files) ? formData.files : [];
@@ -667,40 +778,46 @@ function submitNewRequest(formData) {
   // Step 0 — Identity gate. Blocks an unidentified ("" email) or out-of-domain
   // caller from creating rows. Without this, a misconfigured "Anyone" deployment
   // would let an anonymous visitor write requests with a blank requestor.
-  if (!isAllowedDomain(caller)) {
+  if (!isAllowedDomain_(caller)) {
     return { success: false, error: "Unauthorized. Please sign in with your organization Google account." };
   }
 
   // Step 1 — Server-side validation (size/count/shape/descriptions)
-  const v = validateAttachmentPayload(files);
+  const v = validateAttachmentPayload_(files);
   if (!v.ok) return { success: false, error: v.error };
 
+  // Step 1b — Server-side validation of the text fields + contract dates.
+  // The form's maxlength attributes are not a control: this function is
+  // directly callable via google.script.run.
+  const tv = validateRequestFields_(formData);
+  if (!tv.ok) return { success: false, error: tv.error };
+
   // Step 2a — Reject a group with no active approver chain. Without this the
-  // request would route to nobody (getCurrentApprover -> null) and sit invisible
+  // request would route to nobody (getCurrentApprover_ -> null) and sit invisible
   // on every pending list forever. Mirrors the getApproverGroups dropdown filter.
   // Require a usable Approver 1, not merely a non-empty chain: a hand-seeded
   // Group_Approvers row with ACTIVE=TRUE but a blank email yields a truthy
   // object here, and the request would then route to nobody and stay invisible.
-  const groupChain = getApprovers(formData.group);
+  const groupChain = getApprovers_(formData.group);
   if (!groupChain || !groupChain.approver1) {
     return { success: false, error: "That approver group has no active approvers. Please choose another group." };
   }
 
   // Step 2b — Generate identifiers. Regenerate the requestId until it is unique
   // (a final guard on top of the now-collision-resistant generator).
-  let requestId = generateRequestId();
-  while (getRowNumberByRequestId(requestId) !== -1) requestId = generateRequestId();
-  const controlNo = generateControlNumber(requestId);
+  let requestId = generateRequestId_();
+  while (getRowNumberByRequestId_(requestId) !== -1) requestId = generateRequestId_();
+  const controlNo = generateControlNumber_(requestId);
 
   // Step 3 — Upload ALL files to Drive first (rollback on any failure)
   // Nothing is written to either sheet until every upload succeeds.
   const uploaded = [];
   try {
     for (let i = 0; i < files.length; i++) {
-      // First submit = resubmit cycle 0. Drive name uses the naming convention;
+      // First submit = resubmit_ cycle 0. Drive name uses the naming convention;
       // the friendly original filename is what we store for display.
-      const driveName = buildAttachmentDriveName(controlNo, 0, files[i].filename);
-      const result    = uploadAttachmentFile(files[i], driveName);
+      const driveName = buildAttachmentDriveName_(controlNo, 0, files[i].filename);
+      const result    = uploadAttachmentFile_(files[i], driveName);
       uploaded.push({
         fileId:      result.fileId,
         url:         result.url,
@@ -721,7 +838,7 @@ function submitNewRequest(formData) {
   // fails after the files were uploaded, roll back: trash the files AND remove the
   // request row, so no half-written request (visible to an approver with no
   // supporting documents) and no orphaned Drive files survive.
-  const sheet = getSheet(SHEET_NAMES.REQUESTS);
+  const sheet = getSheet_(SHEET_NAMES.REQUESTS);
   let rowWritten = false;
   try {
     const newRow = new Array(CR.RESUBMIT_COUNT).fill("");
@@ -754,13 +871,13 @@ function submitNewRequest(formData) {
     rowWritten = true;
 
     // Write attachment child rows (one batched write; cycle 0 = first submit).
-    writeAttachmentRows(requestId, uploaded, 0);
+    writeAttachmentRows_(requestId, uploaded, 0);
 
     // Log the submit LAST. Activity_Log is append-only and can never be
     // un-written, so it must be the final step: if an earlier write fails we
     // roll back without stranding a `submitted` row for a request that does
     // not exist (which would poison the audit trail the whole schema rests on).
-    appendAction(requestId, formData.group, 0, null, caller, ACTION.SUBMITTED, "");
+    appendAction_(requestId, formData.group, 0, null, caller, ACTION.SUBMITTED, "");
   } catch (err) {
     uploaded.forEach(function (u) {
       try { DriveApp.getFileById(u.fileId).setTrashed(true); } catch (e) {}
@@ -771,7 +888,7 @@ function submitNewRequest(formData) {
     // user's request. Looking it up by identity is always correct.
     if (rowWritten) {
       try {
-        const rollbackRow = getRowNumberByRequestId(requestId);
+        const rollbackRow = getRowNumberByRequestId_(requestId);
         if (rollbackRow !== -1) sheet.deleteRow(rollbackRow);
       } catch (e) {}
     }
@@ -780,8 +897,8 @@ function submitNewRequest(formData) {
   }
 
   // Step 6 — Send approval email LAST. A mail failure must NOT roll back the
-  // committed request; sendBrandedEmail swallows send errors so this never throws.
-  sendApprovalRequest(requestId);
+  // committed request; sendBrandedEmail_ swallows send errors so this never throws.
+  sendApprovalRequest_(requestId);
 
   return { success: true, requestId, controlNumber: controlNo };
 }
@@ -797,26 +914,26 @@ function submitNewRequest(formData) {
 /*
   Function Name: handleApprove
   LAYMAN    : Pag pinindot ng approver ang "Approve". Sinisiguro muna kung siya
-              nga ang nasa pila. Kung oo, ina-approve ang request: kung siya
+              nga ang nasa pila. Kung oo, ina-approve_ ang request: kung siya
               ang huling pirmador → "Fully Approved" + emails; kung hindi → next
               approver na, may resibo sa kanya at progress update sa requestor.
-  TECHNICAL : Guard (isCurrentApprover) → approve() → branch on newStatus to
+  TECHNICAL : Guard (isCurrentApprover_) → approve_() → branch on newStatus to
               fire either the fully-approved pair or the intermediate trio.
-  PARAMS    : requestId — the request to approve.
-  RETURNS   : approve()'s result { success, newStatus, step } — or
+  PARAMS    : requestId — the request to approve_.
+  RETURNS   : approve_()'s result { success, newStatus, step } — or
               { success:false, error } if not found / unauthorized.
 
   STEPS
     Step 1 — Authorize
       Layman    : Hanapin ang row; kung wala → error; kung hindi ikaw ang
                   current approver → Unauthorized.
-      Technical : getRequestRowData; isCurrentApprover(row, caller) gate.
+      Technical : getRequestRowData_; isCurrentApprover_(row, caller) gate.
     Step 2 — Perform the approval
       Layman    : Itaas ang step / markahan kung fully approved na.
-      Technical : approve(requestId) (Approvals.js) returns newStatus/step.
+      Technical : approve_(requestId) (Approvals.js) returns newStatus/step.
     Step 3 — Fire the right emails
       Layman    : Tapos na lahat → 2 fully-approved emails. May susunod pa →
-                  email sa next approver + resibo sa nag-approve + progress sa
+                  email sa next approver + resibo sa nag-approve_ + progress sa
                   requestor.
       Technical : if newStatus === APPROVED → fullyApproved(approver+requestor);
                   else → approvalRequest + approveConfirm + progressUpdate.
@@ -824,23 +941,23 @@ function submitNewRequest(formData) {
   EXAMPLE
     handleApprove("REQ-9b1")  // final approver
     → { success:true, newStatus:"Fully Approved", step:3 }
-      (sends sendFullyApprovedToApprover + sendFullyApprovedToRequestor)
+      (sends sendFullyApprovedToApprover_ + sendFullyApprovedToRequestor_)
 */
 function handleApprove(requestId) {
   const caller = Session.getActiveUser().getEmail();
-  const row    = getRequestRowData(requestId);
+  const row    = getRequestRowData_(requestId);
   if (!row) return { success: false, error: "Request not found." };
-  if (!isCurrentApprover(row, caller)) return { success: false, error: "Unauthorized" };
+  if (!isCurrentApprover_(row, caller)) return { success: false, error: "Unauthorized" };
 
-  const result = approve(requestId);
+  const result = approve_(requestId);
   if (result.success) {
     if (result.newStatus === STATUS.APPROVED) {
-      sendFullyApprovedToApprover(requestId);
-      sendFullyApprovedToRequestor(requestId);
+      sendFullyApprovedToApprover_(requestId);
+      sendFullyApprovedToRequestor_(requestId);
     } else {
-      sendApprovalRequest(requestId);           // next approver — action needed
-      sendApproveConfirmToApprover(requestId);  // actioner receipt (symmetric with decline/return)
-      sendProgressUpdateToRequestor(requestId); // requestor mid-chain progress update
+      sendApprovalRequest_(requestId);           // next approver — action needed
+      sendApproveConfirmToApprover_(requestId);  // actioner receipt (symmetric with decline_/return)
+      sendProgressUpdateToRequestor_(requestId); // requestor mid-chain progress update
     }
   }
   return result;
@@ -850,21 +967,21 @@ function handleApprove(requestId) {
   Function Name: handleDecline
   LAYMAN    : Pag pinindot ng approver ang "Decline". Sinisiguro muna kung siya
               ang nasa pila, tapos isinasara ang request (hindi na pwedeng
-              i-resubmit) at nag-eemail sa nag-decline at sa requestor.
-  TECHNICAL : Guard (isCurrentApprover) → decline() → notify decliner + requestor.
-  PARAMS    : requestId — request to decline; remark — the decline reason.
-  RETURNS   : decline()'s result, or { success:false, error }.
+              i-resubmit_) at nag-eemail sa nag-decline_ at sa requestor.
+  TECHNICAL : Guard (isCurrentApprover_) → decline_() → notify decliner + requestor.
+  PARAMS    : requestId — request to decline_; remark — the decline_ reason.
+  RETURNS   : decline_()'s result, or { success:false, error }.
 
   STEPS
     Step 1 — Authorize
       Layman    : Row check + current-approver check; else error/Unauthorized.
-      Technical : getRequestRowData; isCurrentApprover gate.
-    Step 2 — Perform the decline
+      Technical : getRequestRowData_; isCurrentApprover_ gate.
+    Step 2 — Perform the decline_
       Layman    : Markahang "Declined", itala ang remark.
-      Technical : decline(requestId, remark) (Approvals.js).
+      Technical : decline_(requestId, remark) (Approvals.js).
     Step 3 — Notify both sides
-      Layman    : Email sa nag-decline (resibo) at sa requestor.
-      Technical : sendDeclineToApprover + sendDeclineToRequestor.
+      Layman    : Email sa nag-decline_ (resibo) at sa requestor.
+      Technical : sendDeclineToApprover_ + sendDeclineToRequestor_.
 
   EXAMPLE
     handleDecline("REQ-9b1", "Budget not approved")
@@ -872,14 +989,14 @@ function handleApprove(requestId) {
 */
 function handleDecline(requestId, remark) {
   const caller = Session.getActiveUser().getEmail();
-  const row    = getRequestRowData(requestId);
+  const row    = getRequestRowData_(requestId);
   if (!row) return { success: false, error: "Request not found." };
-  if (!isCurrentApprover(row, caller)) return { success: false, error: "Unauthorized" };
+  if (!isCurrentApprover_(row, caller)) return { success: false, error: "Unauthorized" };
 
-  const result = decline(requestId, remark);
+  const result = decline_(requestId, remark);
   if (result.success) {
-    sendDeclineToApprover(requestId);
-    sendDeclineToRequestor(requestId);
+    sendDeclineToApprover_(requestId);
+    sendDeclineToRequestor_(requestId);
   }
   return result;
 }
@@ -890,31 +1007,31 @@ function handleDecline(requestId, remark) {
               Ito ang pinaka-maraming bookkeeping: bago baguhin ang state,
               itinatala muna kung SINO ang nagbalik, KAILAN, at BAKIT (bilang
               [PENDING] entry sa history), at kung SINO-SINO nang approver ang
-              nakapag-approve (para malaman pag na-resubmit, babalik ulit sa
+              nakapag-approve_ (para malaman pag na-resubmit_, babalik ulit sa
               kanila). Tapos saka ibinabalik at nag-eemail sa lahat ng apektado.
   TECHNICAL : Captures returner + reason + prior approvals WHILE Step still
               reflects the returner (this is the only reliable point), writes a
               single active [PENDING] history entry + the PREVIOUS_APPROVALS
-              JSON, then returnRequest() + 3 notifications.
+              JSON, then returnRequest_() + 3 notifications.
   PARAMS    : requestId — request to return; remark — what needs to change.
-  RETURNS   : returnRequest()'s result, or { success:false, error/message }.
+  RETURNS   : returnRequest_()'s result, or { success:false, error/message }.
 
   STEPS
     Step 1 — Locate row + read pre-mutation state
       Layman    : Hanapin ang row; basahin ang step, group, approvers, at
                   kung sino ang nagbalik — BAGO magbago ang state.
-      Technical : getRowNumberByRequestId; read 33-col row; returner = session.
+      Technical : getRowNumberByRequestId_; read 33-col row; returner = session.
     Step 2 — Authorize BEFORE any write
       Layman    : Kung hindi ikaw ang current approver → Unauthorized (bago
                   pa masulatan ang history/AH).
-      Technical : sameEmail(getCurrentApprover(step,group), returner) gate,
+      Technical : sameEmail_(getCurrentApprover_(step,group), returner) gate,
                   placed before any setValue so no unauthorized mutation.
     Step 3 — Build the [PENDING] history entry
       Layman    : Buuin ang tala: sino, kailan, anong dahilan.
       Technical : approverLabel = `Approver ${step}`; pendingEntry string with
                   returner, PH timestamp, and reason.
     Step 4 — Snapshot prior approvals → AH column
-      Layman    : Itala kung sino nang nakapag-approve bago mabura ang petsa.
+      Layman    : Itala kung sino nang nakapag-approve_ bago mabura ang petsa.
       Technical : push {step,email,date} for each filled AppN_Date; write JSON
                   to PREVIOUS_APPROVALS (AH) — keeps AG as pure narrative.
     Step 5 — Write history (one active [PENDING] only)
@@ -924,8 +1041,8 @@ function handleDecline(requestId, remark) {
     Step 6 — Perform the return + notify
       Layman    : Ibalik ang request; email sa requestor, sa nagbalik, at sa
                   mga dating approver (na kasama ang dahilan).
-      Technical : returnRequest(); on success → sendReturnToRequestor +
-                  sendReturnConfirmToApprover + sendReturnedChainNotification.
+      Technical : returnRequest_(); on success → sendReturnToRequestor_ +
+                  sendReturnConfirmToApprover_ + sendReturnedChainNotification_.
 
   EXAMPLE
     handleReturn("REQ-9b1", "Wrong supplier on contract")
@@ -933,7 +1050,7 @@ function handleDecline(requestId, remark) {
       (AH stores prior approvers; requestor + returner + prior approvers emailed)
 */
 function handleReturn(requestId, remark) {
-  const row = getRequestRowData(requestId);
+  const row = getRequestRowData_(requestId);
   if (!row) return { success: false, message: "Request not found." };
 
   const step          = row[CR.STEP - 1];
@@ -941,7 +1058,7 @@ function handleReturn(requestId, remark) {
   const returnerEmail = Session.getActiveUser().getEmail();
 
   // Only the current approver may return this request (checked before any write).
-  if (!sameEmail(getCurrentApprover(step, groupId), returnerEmail)) {
+  if (!sameEmail_(getCurrentApprover_(step, groupId), returnerEmail)) {
     return { success: false, error: "Unauthorized" };
   }
 
@@ -949,54 +1066,54 @@ function handleReturn(requestId, remark) {
 
   // Who had already approved this cycle — for the prior-approver notification.
   // Derived from the append-only timeline; no [PENDING]/PREVIOUS_APPROVALS
-  // bookkeeping columns anymore (returnRequest() appends a RETURNED action, and
-  // getApprovalView reconstructs history + previousApprovals from the timeline).
-  const previousApprovals = getApprovalView(requestId).previousApprovals;
+  // bookkeeping columns anymore (returnRequest_() appends a RETURNED action, and
+  // getApprovalView_ reconstructs history + previousApprovals from the timeline).
+  const previousApprovals = getApprovalView_(requestId).previousApprovals;
 
-  const result = returnRequest(requestId, remark);
+  const result = returnRequest_(requestId, remark);
   if (result.success) {
-    sendReturnToRequestor(requestId, approverLabel);
-    sendReturnConfirmToApprover(requestId, approverLabel);
-    sendReturnedChainNotification(requestId, previousApprovals, remark, approverLabel);
+    sendReturnToRequestor_(requestId, approverLabel);
+    sendReturnConfirmToApprover_(requestId, approverLabel);
+    sendReturnedChainNotification_(requestId, previousApprovals, remark, approverLabel);
   }
   return result;
 }
 
 /*
   Function Name: handleResubmit
-  LAYMAN    : Pag ire-resubmit ng requestor ang request na ibinalik sa kanya.
+  LAYMAN    : Pag ire-resubmit_ ng requestor ang request na ibinalik sa kanya.
               Requestor lang ang pwede, at "Returned" lang ang pwedeng
-              i-resubmit. Pwede silang magdagdag ng bago/tamang documents (kasi
+              i-resubmit_. Pwede silang magdagdag ng bago/tamang documents (kasi
               kadalasan dahil sa maling/kulang na dokumento kaya naibalik) —
               OPTIONAL lang ito; ang lumang files ay pinananatili (audit trail).
               Ina-upload muna ang bagong files BAGO baguhin ang status, tapos
-              ibinabalik sa Approver 1 ang chain na may resubmit email.
+              ibinabalik sa Approver 1 ang chain na may resubmit_ email.
   TECHNICAL : Guard (caller === requestor AND status === RETURNED) → validate +
               upload-first any newFiles (rollback on failure) → append their rows
-              (old rows kept) → capture return reason + next resubmit count BEFORE
-              resubmit() clears the remark columns → resubmit() (→ PENDING_1) →
-              confirmation + resubmit approval email. Upload-first mirrors
+              (old rows kept) → capture return reason + next resubmit_ count BEFORE
+              resubmit_() clears the remark columns → resubmit_() (→ PENDING_1) →
+              confirmation + resubmit_ approval email. Upload-first mirrors
               submitNewRequest's atomicity: no state change until files are safe.
-  PARAMS    : requestId — the returned request to resubmit.
+  PARAMS    : requestId — the returned request to resubmit_.
               newFiles  — optional Array<FilePayload> of added/corrected docs
                           ({filename, mimeType, base64, description}). May be empty.
-  RETURNS   : resubmit()'s result, or { success:false, error }.
+  RETURNS   : resubmit_()'s result, or { success:false, error }.
 
   STEPS
     Step 1 — Authorize (owner + returned-only)
       Layman    : Ikaw ba ang requestor AT "Returned" ba ito? Kung hindi →
                   Unauthorized.
-      Technical : sameEmail(REQUESTOR, caller) && status === RETURNED.
+      Technical : sameEmail_(REQUESTOR, caller) && status === RETURNED.
     Step 2 — Capture reason + count BEFORE clearing
       Layman    : Kunin ang dating dahilan (sa remark cols) at ang bagong
-                  resubmit number bago burahin ni resubmit().
+                  resubmit_ number bago burahin ni resubmit_().
       Technical : returnReason from APP3/2/1_REMARK fallback; resubmitCount =
-                  current + 1 (mirrors what resubmit() will write).
-    Step 3 — Perform the resubmit + notify
+                  current + 1 (mirrors what resubmit_() will write).
+    Step 3 — Perform the resubmit_ + notify
       Layman    : Ibalik sa simula ng chain; email-confirm sa requestor; kung
-                  diretso sa Approver 1, padalhan siya ng dedicated resubmit email.
-      Technical : resubmit(); sendResubmitConfirmToRequestor; if newStatus ===
-                  PENDING_1 → sendResubmitApprovalRequest (SYNCING defers it).
+                  diretso sa Approver 1, padalhan siya ng dedicated resubmit_ email.
+      Technical : resubmit_(); sendResubmitConfirmToRequestor_; if newStatus ===
+                  PENDING_1 → sendResubmitApprovalRequest_ (SYNCING defers it).
 
   EXAMPLE
     handleResubmit("REQ-9b1")
@@ -1005,22 +1122,22 @@ function handleReturn(requestId, remark) {
 */
 function handleResubmit(requestId, newFiles) {
   const caller = Session.getActiveUser().getEmail();
-  const row    = getRequestRowData(requestId);
+  const row    = getRequestRowData_(requestId);
   if (!row) return { success: false, error: "Request not found." };
-  // Only the requestor may resubmit, and only a returned request can be resubmitted.
-  if (!sameEmail(row[CR.REQUESTOR - 1], caller) || row[CR.STATUS - 1] !== STATUS.RETURNED) {
+  // Only the requestor may resubmit_, and only a returned request can be resubmitted.
+  if (!sameEmail_(row[CR.REQUESTOR - 1], caller) || row[CR.STATUS - 1] !== STATUS.RETURNED) {
     return { success: false, error: "Unauthorized" };
   }
 
-  // Return reason (latest decline/return remark) + next cycle, derived from the timeline.
-  const returnReason  = getApprovalView(requestId).latestRemark || "No reason provided.";
-  const resubmitCount = (parseInt(row[CR.RESUBMIT_COUNT - 1]) || 0) + 1; // +1 mirrors what resubmit() will write
+  // Return reason (latest decline_/return remark) + next cycle, derived from the timeline.
+  const returnReason  = getApprovalView_(requestId).latestRemark || "No reason provided.";
+  const resubmitCount = (parseInt(row[CR.RESUBMIT_COUNT - 1]) || 0) + 1; // +1 mirrors what resubmit_() will write
 
   // Optional re-upload: validate + upload-first any new/corrected documents.
   // Old attachment rows are KEPT; new ones are appended with the r{N} naming
   // convention so both cycles are distinguishable in the Drive folder.
   const files = Array.isArray(newFiles) ? newFiles : [];
-  const v = validateAttachmentPayload(files, false); // false → new files optional
+  const v = validateAttachmentPayload_(files, false); // false → new files optional
   if (!v.ok) return { success: false, error: v.error };
 
   const uploaded = [];
@@ -1028,8 +1145,8 @@ function handleResubmit(requestId, newFiles) {
     const controlNo = row[CR.CONTROL_NUMBER - 1];
     try {
       for (let i = 0; i < files.length; i++) {
-        const driveName = buildAttachmentDriveName(controlNo, resubmitCount, files[i].filename);
-        const result    = uploadAttachmentFile(files[i], driveName);
+        const driveName = buildAttachmentDriveName_(controlNo, resubmitCount, files[i].filename);
+        const result    = uploadAttachmentFile_(files[i], driveName);
         uploaded.push({
           fileId:      result.fileId,
           url:         result.url,
@@ -1047,26 +1164,26 @@ function handleResubmit(requestId, newFiles) {
     }
   }
 
-  // Flip the state BEFORE recording the new attachment rows. resubmit() can now
-  // fail on a lock timeout, and writing rows tagged with a resubmit cycle that
+  // Flip the state BEFORE recording the new attachment rows. resubmit_() can now
+  // fail on a lock timeout, and writing rows tagged with a resubmit_ cycle that
   // never happened would file the documents under a phantom "Resubmit #N" and
   // make the user's retry upload a duplicate set.
-  const result = resubmit(requestId);
+  const result = resubmit_(requestId);
   if (!result.success) {
     uploaded.forEach(function(u) {
       try { DriveApp.getFileById(u.fileId).setTrashed(true); } catch (e) {}
     });
-    Logger.log("handleResubmit(): resubmit() failed — " + (result.message || "") + ". Rolled back uploaded files.");
+    Logger.log("handleResubmit(): resubmit_() failed — " + (result.message || "") + ". Rolled back uploaded files.");
     return result;
   }
 
   if (uploaded.length > 0) {
-    writeAttachmentRows(requestId, uploaded, resubmitCount); // append — keeps the original files
+    writeAttachmentRows_(requestId, uploaded, resubmitCount); // append — keeps the original files
   }
 
-  sendResubmitConfirmToRequestor(requestId, returnReason, resubmitCount);
+  sendResubmitConfirmToRequestor_(requestId, returnReason, resubmitCount);
   if (result.newStatus === STATUS.PENDING_1) {
-    sendResubmitApprovalRequest(requestId, returnReason, resubmitCount); // dedicated resubmit email for Approver 1
+    sendResubmitApprovalRequest_(requestId, returnReason, resubmitCount); // dedicated resubmit_ email for Approver 1
   }
   return result;
 }

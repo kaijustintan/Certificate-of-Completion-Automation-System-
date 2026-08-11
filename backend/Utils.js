@@ -20,28 +20,28 @@
   OUTLINE
   ────────────────────────────────────────────────────────────
   SHEET ACCESS
-    - getSpreadsheet()          bound spreadsheet handle
-    - getSheet(name)            one tab by name
-    - getAllData(name)          all rows incl. header (2D array)
-    - getDataRows(name)         data rows only (header sliced off)
+    - getSpreadsheet_()          bound spreadsheet handle
+    - getSheet_(name)            one tab by name
+    - getAllData_(name)          all rows incl. header (2D array)
+    - getDataRows_(name)         data rows only (header sliced off)
 
   APPROVER LOOKUP — MOVED to Accessors.js (now keyed by group_id, reads
-    Groups / Group_Approvers). getApprovers() / getCurrentApprover() live there.
+    Groups / Group_Approvers). getApprovers_() / getCurrentApprover_() live there.
 
   ATTACHMENT HELPERS
-    - getAttachmentsForRequest(id)      attachment rows for one request
-    - countAttachments(id)              how many were uploaded
+    - getAttachmentsForRequest_(id)      attachment rows for one request
+    - countAttachments_(id)              how many were uploaded
 
   ROW FINDER
-    - getRowNumberByRequestId(id)       array index → real Sheet row number
+    - getRowNumberByRequestId_(id)       array index → real Sheet row number
 
   DATE + TIME   (PH time, Asia/Manila)
-    - formatPHTime(date)                format a Date
-    - nowFormatted()                    formatted "now"
+    - formatPHTime_(date)                format a Date
+    - nowFormatted_()                    formatted "now"
 
   ID GENERATORS
-    - generateRequestId()               short 3-char unique ID
-    - generateControlNumber(reqId)      EC-YYYY-NNNNN-XXX
+    - generateRequestId_()               short 3-char unique ID
+    - generateControlNumber_(reqId)      EC-YYYY-NNNNN-XXX
 */
 
 
@@ -50,62 +50,62 @@
 // =========================================================================================================
 
 /*
-  Function Name: getSpreadsheet
+  Function Name: getSpreadsheet_
   LAYMAN    : Kunin ang buong Google Sheet file na naka-attach sa script.
   TECHNICAL : Returns the container-bound spreadsheet.
   PARAMS    : (none)
   RETURNS   : Spreadsheet object.
 */
-function getSpreadsheet() {
+function getSpreadsheet_() {
   return SpreadsheetApp.getActiveSpreadsheet();
 }
 
 
 /*
-  Function Name: getSheet
+  Function Name: getSheet_
   LAYMAN    : Kunin ang isang partikular na tab (hal. "Certificate_Requests").
   TECHNICAL : Returns the Sheet for the given tab name.
   PARAMS    : sheetName — exact tab name (use SHEET_NAMES.*).
   RETURNS   : Sheet object, or null if no tab matches.
 */
-function getSheet(sheetName) {
-  return getSpreadsheet().getSheetByName(sheetName);
+function getSheet_(sheetName) {
+  return getSpreadsheet_().getSheetByName(sheetName);
 }
 
 
 /*
-  Function Name: getAllData
+  Function Name: getAllData_
   LAYMAN    : Kunin LAHAT ng laman ng tab, kasama ang header row, bilang 2D
               array (data[0] = header, data[1] = unang record).
   TECHNICAL : getDataRange().getValues() — the full used range as a 2D array.
   PARAMS    : sheetName — tab to read.
   RETURNS   : 2D array (rows × cells); index 0 is the header row.
-  NOTE      : Use this (not getDataRows) when you need the header or the true
+  NOTE      : Use this (not getDataRows_) when you need the header or the true
               1-based Sheet row numbers.
 */
-function getAllData(sheetName) {
-  return getSheet(sheetName).getDataRange().getValues();
+function getAllData_(sheetName) {
+  return getSheet_(sheetName).getDataRange().getValues();
 }
 
 
 /*
-  Function Name: getDataRows
-  LAYMAN    : Parang getAllData pero tinanggal na ang header — yung mga tunay
+  Function Name: getDataRows_
+  LAYMAN    : Parang getAllData_ pero tinanggal na ang header — yung mga tunay
               na records na lang ang natitira, madaling i-loop.
-  TECHNICAL : getAllData(name).slice(1) — drops the header row.
+  TECHNICAL : getAllData_(name).slice(1) — drops the header row.
   PARAMS    : sheetName — tab to read.
   RETURNS   : 2D array of data rows only (0-based; index 0 = first record).
   ⚠️ NOTE   : Header is gone, so array index i maps to Sheet row i+2. If you
-              need the real row number, use getRowNumberByRequestId().
+              need the real row number, use getRowNumberByRequestId_().
 */
-function getDataRows(sheetName) {
-  return getAllData(sheetName).slice(1);
+function getDataRows_(sheetName) {
+  return getAllData_(sheetName).slice(1);
 }
 
 
 // =========================================================================================================
 // APPROVER LOOKUP — moved to Accessors.js
-// getApprovers(groupId) and getCurrentApprover(step, groupId) now live in
+// getApprovers_(groupId) and getCurrentApprover_(step, groupId) now live in
 // Accessors.js, keyed by the surrogate group_id and reading the normalized
 // Groups / Group_Approvers sheets. (One global scope — defining them here too
 // would collide.)
@@ -119,28 +119,28 @@ function getDataRows(sheetName) {
 // =========================================================================================================
 
 /*
-  Function Name: getAttachmentsForRequest
+  Function Name: getAttachmentsForRequest_
   LAYMAN    : Kunin lahat ng files na naka-attach sa isang request.
   TECHNICAL : Filters Request_Attachments by REQUEST_ID (string-compared to
               survive numeric/string ID drift between sheets).
   PARAMS    : requestId — the parent request's ID.
   RETURNS   : Array of attachment rows (empty array if none).
 */
-function getAttachmentsForRequest(requestId) {
-  const rows   = getDataRows(SHEET_NAMES.REQUEST_ATTACHMENTS);
+function getAttachmentsForRequest_(requestId) {
+  const rows   = getDataRows_(SHEET_NAMES.REQUEST_ATTACHMENTS);
   const target = String(requestId);
   return rows.filter(row => String(row[RA.REQUEST_ID - 1]) === target);
 }
 
 /*
-  Function Name: countAttachments
+  Function Name: countAttachments_
   LAYMAN    : Ilang files ba ang na-upload para sa request na ito?
-  TECHNICAL : Length of getAttachmentsForRequest(requestId).
+  TECHNICAL : Length of getAttachmentsForRequest_(requestId).
   PARAMS    : requestId — the parent request's ID.
   RETURNS   : Number — count of attachments.
 */
-function countAttachments(requestId) {
-  return getAttachmentsForRequest(requestId).length;
+function countAttachments_(requestId) {
+  return getAttachmentsForRequest_(requestId).length;
 }
 
 
@@ -151,7 +151,7 @@ function countAttachments(requestId) {
 // =========================================================================================================
 
 /*
-  Function Name: getRowNumberByRequestId
+  Function Name: getRowNumberByRequestId_
   LAYMAN    : Sa anong Sheet row number (yung totoong nakikita sa Sheets, may
               header) nakaupo ang isang Request ID? Kailangan ito kasi ang
               getRange() ay row NUMBER ang hinihingi, hindi array index.
@@ -163,7 +163,7 @@ function countAttachments(requestId) {
   STEPS
     Step 1 — Read all data (header included)
       Layman    : Kunin lahat para tugma ang indexing sa totoong row numbers.
-      Technical : getAllData() keeps the header, so allData[i] = Sheet row i+1.
+      Technical : getAllData_() keeps the header, so allData[i] = Sheet row i+1.
     Step 2 — Loop from the first data row
       Layman    : Simula sa i=1 (laktawan ang header), hanapin ang tugma.
       Technical : for i = 1..n-1; string-compare REQUEST_ID.
@@ -173,11 +173,11 @@ function countAttachments(requestId) {
 
   EXAMPLE
     // REQ-9b1 is stored in Sheet row 5 (header is row 1)
-    getRowNumberByRequestId("REQ-9b1")  →  5
-    getRowNumberByRequestId("nope")     →  -1
+    getRowNumberByRequestId_("REQ-9b1")  →  5
+    getRowNumberByRequestId_("nope")     →  -1
 */
-function getRowNumberByRequestId(requestId) {
-  const allData = getAllData(SHEET_NAMES.REQUESTS);
+function getRowNumberByRequestId_(requestId) {
+  const allData = getAllData_(SHEET_NAMES.REQUESTS);
   const target  = String(requestId);
   for (let i = 1; i < allData.length; i++) {
     if (String(allData[i][CR.REQUEST_ID - 1]) === target) {
@@ -194,7 +194,7 @@ function getRowNumberByRequestId(requestId) {
 // =========================================================================================================
 
 /*
-  Function Name: formatPHTime
+  Function Name: formatPHTime_
   LAYMAN    : Gawing readable na PH-time text ang isang Date
               (hal. "May 26, 2026 02:30:00 PM").
   TECHNICAL : Utilities.formatDate(date, "Asia/Manila",
@@ -202,23 +202,23 @@ function getRowNumberByRequestId(requestId) {
   PARAMS    : date — a JS Date object.
   RETURNS   : Formatted PH-time string.
 */
-function formatPHTime(date) {
+function formatPHTime_(date) {
   return Utilities.formatDate(date, "Asia/Manila", "MMMM dd, yyyy hh:mm:ss a");
 }
 
 /*
-  Function Name: nowFormatted
+  Function Name: nowFormatted_
   LAYMAN    : Ang oras NGAYON, naka-format na sa PH time.
-  TECHNICAL : formatPHTime(new Date()).
+  TECHNICAL : formatPHTime_(new Date()).
   PARAMS    : (none)
   RETURNS   : Current timestamp as a PH-time string.
 */
-function nowFormatted() {
-  return formatPHTime(new Date());
+function nowFormatted_() {
+  return formatPHTime_(new Date());
 }
 
 /*
-  Function Name: isContractExpired
+  Function Name: isContractExpired_
   LAYMAN    : Lapsed na ba ang contract ng request? Oo kung may Contract End
               Date at lumipas na ito. Blangko ang end date → hindi expired.
   TECHNICAL : Server-side comparison so the frontend never parses date strings.
@@ -228,7 +228,7 @@ function nowFormatted() {
   PARAMS    : rawEnd — the raw CR.CONTRACT_END cell value (Date, string, or blank).
   RETURNS   : Boolean.
 */
-function isContractExpired(rawEnd) {
+function isContractExpired_(rawEnd) {
   if (!rawEnd) return false;
   const end = new Date(rawEnd);
   if (isNaN(end.getTime())) return false;
@@ -237,7 +237,7 @@ function isContractExpired(rawEnd) {
 }
 
 /*
-  Function Name: daysUntilContractEnd
+  Function Name: daysUntilContractEnd_
   LAYMAN    : Ilang araw bago (o pagkatapos) mag-expire ang contract? Positibo =
               hindi pa, 0 = expires today, negatibo = lumipas na. Blangko/invalid
               na petsa → null. Ginagamit ng daily expiry-reminder sweep (#10).
@@ -251,12 +251,12 @@ function isContractExpired(rawEnd) {
 
   EXAMPLE
     // today (Manila) = 2026-06-10
-    daysUntilContractEnd("2026-06-17")  → 7
-    daysUntilContractEnd("2026-06-10")  → 0
-    daysUntilContractEnd("2026-06-08")  → -2
-    daysUntilContractEnd("")            → null
+    daysUntilContractEnd_("2026-06-17")  → 7
+    daysUntilContractEnd_("2026-06-10")  → 0
+    daysUntilContractEnd_("2026-06-08")  → -2
+    daysUntilContractEnd_("")            → null
 */
-function daysUntilContractEnd(rawEnd) {
+function daysUntilContractEnd_(rawEnd) {
   if (!rawEnd) return null;
   const end = new Date(rawEnd);
   if (isNaN(end.getTime())) return null;
@@ -278,7 +278,7 @@ function daysUntilContractEnd(rawEnd) {
 // =========================================================================================================
 
 /*
-  Function Name: generateRequestId
+  Function Name: generateRequestId_
   LAYMAN    : Gumawa ng natatanging Request ID. Dating 3-char lang (4096 lang ang
               posible, kaya nagbabanggaan pagdami ng request). Ngayon buong UUID
               na, may "REQ-" prefix para hindi mabasang numero ng Sheets.
@@ -290,12 +290,12 @@ function daysUntilContractEnd(rawEnd) {
   PARAMS    : (none)
   RETURNS   : Unique ID string (e.g. "REQ-A1B2C3D4E5F6...").
 */
-function generateRequestId() {
+function generateRequestId_() {
   return "REQ-" + Utilities.getUuid().replace(/-/g, "").toUpperCase();
 }
 
 /*
-  Function Name: generateControlNumber
+  Function Name: generateControlNumber_
   LAYMAN    : Buuin ang opisyal na control number ng request, format na
               EC-TAON-BILANG-XXX (hal. EC-2026-00001-9B1).
   TECHNICAL : Composes EC-<year>-<5-digit running count>-<requestId>, using the
@@ -317,7 +317,7 @@ function generateRequestId() {
 
   EXAMPLE
     // 41 requests already exist; requestId ends in "9B1"
-    generateControlNumber("REQ-...9B1")  →  "EC-2026-00042-9B1"
+    generateControlNumber_("REQ-...9B1")  →  "EC-2026-00042-9B1"
 
   NOTE: the running count is derived from getLastRow(), so two truly-simultaneous
      submits could compute the same count. That is now cosmetic only: the suffix
@@ -325,8 +325,8 @@ function generateRequestId() {
      between the two. (A script lock on the count could remove even the cosmetic
      repeat, but is not needed for correctness now that the suffix is unique.)
 */
-function generateControlNumber(requestId) {
-  const sheet = getSheet(SHEET_NAMES.REQUESTS);
+function generateControlNumber_(requestId) {
+  const sheet = getSheet_(SHEET_NAMES.REQUESTS);
   const lastRow = sheet.getLastRow();
   const count = lastRow > 1 ? lastRow - 1 : 0; // subtract header row
   const padded = String(count + 1).padStart(5, "0");

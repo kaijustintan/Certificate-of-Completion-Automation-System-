@@ -15,74 +15,74 @@
   TECHNICAL:
   The accessor seam for the normalized schema. Centralizes:
     • Group/approver reads (keyed by surrogate group_id) — preserves the legacy
-      getApprovers() 6-field shape so every downstream consumer is untouched.
+      getApprovers_() 6-field shape so every downstream consumer is untouched.
     • Append-only Approval_Actions reads + a derived "view" that reconstructs the
       OLD per-step date/remark, previousApprovals, latestRemark, N-of-M, and
       resubmitHistory string — so getRequestDetail / emails / Certificate read
       identical values to before.
-    • Write primitives: appendAction() + setRequestCache() — the only writers of
+    • Write primitives: appendAction_() + setRequestCache_() — the only writers of
       Approval_Actions and the Requests status/step/resubmit_count cache.
-    • Role: detectRole(), isAdmin().
+    • Role: detectRole_(), isAdmin_().
     • ID generators for the new sheets.
 
-  Depends on Utils.js (getSheet, getDataRows, getRowNumberByRequestId, formatPHTime)
-  and WebApp.js (sameEmail, normalizeEmail). One global scope — no imports.
+  Depends on Utils.js (getSheet_, getDataRows_, getRowNumberByRequestId_, formatPHTime_)
+  and WebApp.js (sameEmail_, normalizeEmail_). One global scope — no imports.
 
   ────────────────────────────────────────────────────────────
   OUTLINE
   ────────────────────────────────────────────────────────────
   ID GENERATORS
-    - generateActionId() / generateGroupId() / generateGroupApproverId()
+    - generateActionId_() / generateGroupId_() / generateGroupApproverId_()
   GROUPS / APPROVERS
-    - getGroupApprovers(groupId)         ordered active approver rows
-    - getApprovers(groupId)              legacy 6-field shape (compat)
-    - getCurrentApprover(step, groupId)  email at a given sequence
-    - getGroupById / getGroupNameById / getGroupIdByName
+    - getGroupApprovers_(groupId)         ordered active approver rows
+    - getApprovers_(groupId)              legacy 6-field shape (compat)
+    - getCurrentApprover_(step, groupId)  email at a given sequence
+    - getGroupById_ / getGroupNameById_ / getGroupIdByName
     - getApproverGroups()                [{id, name}] for the form dropdown
   GROUPS / APPROVERS — ADMIN (read incl. inactive + write primitives)
-    - getAllGroups()                     all groups incl. inactive
-    - getGroupChain(groupId)             active chain rows, full fields
-    - createGroup(name)                  append a Groups row
-    - updateGroupFields(groupId, fields) in-place name/active update
-    - replaceGroupChain(groupId, slots)  in-place update (append on grow, deactivate on shrink)
-    - appendAdminLog(admin, action, gid, details)  audit an admin action
+    - getAllGroups_()                     all groups incl. inactive
+    - getGroupChain_(groupId)             active chain rows, full fields
+    - createGroup_(name)                  append a Groups row
+    - updateGroupFields_(groupId, fields) in-place name/active update
+    - replaceGroupChain_(groupId, slots)  in-place update (append on grow, deactivate on shrink)
+    - appendAdminLog_(admin, action, gid, details)  audit an admin action
   ROLE
-    - detectRole(email) / isAdmin(email)
+    - detectRole_(email) / isAdmin_(email)
   APPROVAL ACTIONS (read)
-    - getApprovalActions(requestId)      raw timeline rows
-    - getApprovalView(requestId)         derived per-step/history view (frozen-DTO source)
+    - getApprovalActions_(requestId)      raw timeline rows
+    - getApprovalView_(requestId)         derived per-step/history view (frozen-DTO source)
   APPROVAL ACTIONS (write)
-    - appendAction(requestId, groupId, cycle, step, actor, action, remark)
-    - setRequestCache(requestId, {status, step, resubmitCount})
+    - appendAction_(requestId, groupId, cycle, step, actor, action, remark)
+    - setRequestCache_(requestId, {status, step, resubmitCount})
 */
 
 
 // ============================================================
 // ID GENERATORS
 // ============================================================
-/* generateActionId — unique Approval_Actions key (e.g. "ACT-1A2B3C4D"). */
-function generateActionId() {
+/* generateActionId_ — unique Approval_Actions key (e.g. "ACT-1A2B3C4D"). */
+function generateActionId_() {
   return "ACT-" + Utilities.getUuid().replace(/-/g, "").substring(0, 8).toUpperCase();
 }
-/* generateGroupApproverId — unique Group_Approvers key (e.g. "GA-1A2B3C4D"). */
-function generateGroupApproverId() {
+/* generateGroupApproverId_ — unique Group_Approvers key (e.g. "GA-1A2B3C4D"). */
+function generateGroupApproverId_() {
   return "GA-" + Utilities.getUuid().replace(/-/g, "").substring(0, 8).toUpperCase();
 }
-/* generateCocId — unique COC_PDFs key (e.g. "COC-1A2B3C4D"). */
-function generateCocId() {
+/* generateCocId_ — unique COC_PDFs key (e.g. "COC-1A2B3C4D"). */
+function generateCocId_() {
   return "COC-" + Utilities.getUuid().replace(/-/g, "").substring(0, 8).toUpperCase();
 }
-/* generateAdminLogId — unique Admins_Log key (e.g. "ADL-1A2B3C4D"). */
-function generateAdminLogId() {
+/* generateAdminLogId_ — unique Admins_Log key (e.g. "ADL-1A2B3C4D"). */
+function generateAdminLogId_() {
   return "ADL-" + Utilities.getUuid().replace(/-/g, "").substring(0, 8).toUpperCase();
 }
 /*
-  generateGroupId — next sequential group id "G###".
+  generateGroupId_ — next sequential group id "G###".
   LAYMAN    : Susunod na G001, G002, … base sa pinakamataas na meron.
   TECHNICAL : Scans Groups for the max G\d+ and returns max+1 zero-padded to 3.
 */
-function generateGroupId() {
-  const rows = getDataRows(SHEET_NAMES.GROUPS);
+function generateGroupId_() {
+  const rows = getDataRows_(SHEET_NAMES.GROUPS);
   let max = 0;
   rows.forEach(function (r) {
     const m = String(r[GRP.GROUP_ID - 1] || "").match(/^G(\d+)$/);
@@ -96,12 +96,12 @@ function generateGroupId() {
 // GROUPS / APPROVERS
 // ============================================================
 /*
-  getGroupApprovers — ordered active approvers for a group_id.
+  getGroupApprovers_ — ordered active approvers for a group_id.
   RETURNS : [{ sequence, email, designation }] sorted by sequence (active only).
 */
-function getGroupApprovers(groupId) {
+function getGroupApprovers_(groupId) {
   const target = String(groupId);
-  return getDataRows(SHEET_NAMES.GROUP_APPROVERS)
+  return getDataRows_(SHEET_NAMES.GROUP_APPROVERS)
     .filter(function (r) {
       return String(r[GAP.GROUP_ID - 1]) === target &&
              String(r[GAP.ACTIVE - 1]).toUpperCase() !== "FALSE";
@@ -117,18 +117,18 @@ function getGroupApprovers(groupId) {
 }
 
 /*
-  getApprovers — LEGACY 6-field shape from the first 3 sequences.
+  getApprovers_ — LEGACY 6-field shape from the first 3 sequences.
   LAYMAN    : Para hindi masira ang lahat ng lumang code na umaasa sa
               {approver1/2/3, designation1/2/3}, binubuo natin ito mula sa
               unang 3 sequences ng Group_Approvers.
-  TECHNICAL : Preserves the exact return shape of the old Utils.getApprovers so
-              approve() skip-blank, Certificate signatories, buildApprovalLog,
-              N-of-M, isChainApprover, and the detail DTO all keep working.
+  TECHNICAL : Preserves the exact return shape of the old Utils.getApprovers_ so
+              approve_() skip-blank, Certificate signatories, buildApprovalLog_,
+              N-of-M, isChainApprover_, and the detail DTO all keep working.
   RETURNS   : { approver1, designation1, approver2, designation2, approver3,
               designation3 } or null if the group has no approvers.
 */
-function getApprovers(groupId) {
-  const list = getGroupApprovers(groupId);
+function getApprovers_(groupId) {
+  const list = getGroupApprovers_(groupId);
   if (!list.length) return null;
   const bySeq = {};
   list.forEach(function (a) { bySeq[a.sequence] = a; });
@@ -143,31 +143,34 @@ function getApprovers(groupId) {
 }
 
 /*
-  getCurrentApprover — email of the approver at a given step (sequence).
+  getCurrentApprover_ — email of the approver at a given step (sequence).
   PARAMS  : step — 1-based sequence (0 → null, returned to requestor);
             groupId — the group_id FK.
   RETURNS : email string or null.
 */
-function getCurrentApprover(step, groupId) {
+function getCurrentApprover_(step, groupId) {
   if (!step || step === 0) return null;
-  const match = getGroupApprovers(groupId).find(function (a) { return a.sequence === step; });
+  const match = getGroupApprovers_(groupId).find(function (a) { return a.sequence === step; });
   return match ? match.email : null;
 }
 
-/* getGroupById — raw Groups row (0-indexed array) or null. */
-function getGroupById(groupId) {
+/* getGroupById_ — raw Groups row (0-indexed array) or null. */
+function getGroupById_(groupId) {
   const target = String(groupId);
-  return getDataRows(SHEET_NAMES.GROUPS)
+  return getDataRows_(SHEET_NAMES.GROUPS)
     .find(function (r) { return String(r[GRP.GROUP_ID - 1]) === target; }) || null;
 }
-/* getGroupNameById — display name for a group_id ("" if not found). */
-function getGroupNameById(groupId) {
-  const g = getGroupById(groupId);
+/* getGroupNameById_ — display name for a group_id ("" if not found). */
+function getGroupNameById_(groupId) {
+  const g = getGroupById_(groupId);
   return g ? g[GRP.GROUP_NAME - 1] : "";
 }
-/* getGroupIdByName — group_id for a display name ("" if not found). Transitional. */
-function getGroupIdByName(name) {
-  const m = getDataRows(SHEET_NAMES.GROUPS)
+/* getGroupIdByName_ — group_id for a display name ("" if not found). Transitional.
+   Trailing underscore: unreferenced today, and name→id resolution is a lookup an
+   unprivileged caller has no reason to perform. Kept (not deleted) because the
+   group rename flow is a plausible future caller. */
+function getGroupIdByName_(name) {
+  const m = getDataRows_(SHEET_NAMES.GROUPS)
     .find(function (r) { return r[GRP.GROUP_NAME - 1] === name; });
   return m ? m[GRP.GROUP_ID - 1] : "";
 }
@@ -184,12 +187,12 @@ function getGroupIdByName(name) {
 */
 function getApproverGroups() {
   const hasApprover = {};
-  getDataRows(SHEET_NAMES.GROUP_APPROVERS).forEach(function (r) {
+  getDataRows_(SHEET_NAMES.GROUP_APPROVERS).forEach(function (r) {
     if (String(r[GAP.ACTIVE - 1]).toUpperCase() !== "FALSE" && r[GAP.GROUP_ID - 1]) {
       hasApprover[String(r[GAP.GROUP_ID - 1])] = true;
     }
   });
-  return getDataRows(SHEET_NAMES.GROUPS)
+  return getDataRows_(SHEET_NAMES.GROUPS)
     .filter(function (r) {
       return r[GRP.GROUP_ID - 1] &&
              String(r[GRP.ACTIVE - 1]).toUpperCase() !== "FALSE" &&
@@ -205,7 +208,7 @@ function getApproverGroups() {
 // MECHANICAL ONLY — validation/policy lives in Admin.js callables.
 // ============================================================
 /*
-  getAllGroups — every Groups row, INCLUDING inactive.
+  getAllGroups_ — every Groups row, INCLUDING inactive.
   LAYMAN    : Lahat ng groups, pati yung naka-deactivate — para makita at
               ma-manage ng admin. (Ang getApproverGroups ay active lang,
               para sa new-request dropdown — huwag itong galawin.)
@@ -213,8 +216,8 @@ function getApproverGroups() {
               no ACTIVE filter.
   RETURNS   : [{ id, name, active(bool), createdAt(Date|"") }].
 */
-function getAllGroups() {
-  return getDataRows(SHEET_NAMES.GROUPS)
+function getAllGroups_() {
+  return getDataRows_(SHEET_NAMES.GROUPS)
     .filter(function (r) { return r[GRP.GROUP_ID - 1]; })
     .map(function (r) {
       return {
@@ -227,17 +230,17 @@ function getAllGroups() {
 }
 
 /*
-  getGroupChain — active chain rows for a group, ALL fields.
+  getGroupChain_ — active chain rows for a group, ALL fields.
   LAYMAN    : Yung kasalukuyang buhay na approver chain ng isang group, kasama
               ang row id at active flag — para sa chain editor ng admin.
-  TECHNICAL : Superset of getGroupApprovers' 3-field shape (adds id + active).
+  TECHNICAL : Superset of getGroupApprovers_' 3-field shape (adds id + active).
               Active rows only — deactivated rows are audit history, not the
               editable chain.
   RETURNS   : [{ id, sequence, email, designation, active }] sorted by sequence.
 */
-function getGroupChain(groupId) {
+function getGroupChain_(groupId) {
   const target = String(groupId);
-  return getDataRows(SHEET_NAMES.GROUP_APPROVERS)
+  return getDataRows_(SHEET_NAMES.GROUP_APPROVERS)
     .filter(function (r) {
       return String(r[GAP.GROUP_ID - 1]) === target &&
              String(r[GAP.ACTIVE - 1]).toUpperCase() !== "FALSE";
@@ -255,24 +258,24 @@ function getGroupChain(groupId) {
 }
 
 /*
-  createGroup — append a new Groups row.
+  createGroup_ — append a new Groups row.
   LAYMAN    : Magdagdag ng bagong group sa registry. Walang validation dito —
               ang Admin.js ang nagche-check ng pangalan bago tumawag.
-  TECHNICAL : generateGroupId() surrogate PK; ACTIVE defaults TRUE.
+  TECHNICAL : generateGroupId_() surrogate PK; ACTIVE defaults TRUE.
   PARAMS    : name — display name (caller has already validated/trimmed).
   RETURNS   : { id, name } of the new group.
 */
-function createGroup(name) {
+function createGroup_(name) {
   // Direct-call guard: this mechanical writer is reachable via google.script.run,
   // so it verifies admin identity itself rather than trusting the adminCreateGroup
-  // wrapper. The lock makes generateGroupId()'s max+1 scan collision-safe under
+  // wrapper. The lock makes generateGroupId_()'s max+1 scan collision-safe under
   // concurrent creates.
-  if (!isAdmin(Session.getActiveUser().getEmail())) throw new Error("Unauthorized");
+  if (!isAdmin_(Session.getActiveUser().getEmail())) throw new Error("Unauthorized");
   const lock = LockService.getScriptLock();
   lock.waitLock(10000);
   try {
-    const sheet = getSheet(SHEET_NAMES.GROUPS);
-    const id    = generateGroupId();
+    const sheet = getSheet_(SHEET_NAMES.GROUPS);
+    const id    = generateGroupId_();
     const row   = new Array(4).fill("");
     row[GRP.GROUP_ID - 1]   = id;
     row[GRP.GROUP_NAME - 1] = name;
@@ -286,19 +289,19 @@ function createGroup(name) {
 }
 
 /*
-  updateGroupFields — in-place update of a Groups row (name and/or active).
+  updateGroupFields_ — in-place update of a Groups row (name and/or active).
   LAYMAN    : Palitan ang pangalan o i-on/off ang group. Safe ang rename dahil
               group_id ang naka-FK sa requests, hindi ang pangalan.
-  TECHNICAL : Only writes the fields provided (setRequestCache style). active
+  TECHNICAL : Only writes the fields provided (setRequestCache_ style). active
               is stored as "TRUE"/"FALSE" strings to match the seeded sheet.
   PARAMS    : groupId; fields — { name?, active?(bool) }.
   RETURNS   : true if the row was found and updated, false otherwise.
 */
-function updateGroupFields(groupId, fields) {
-  // Direct-call guard (reachable via google.script.run — see createGroup).
-  if (!isAdmin(Session.getActiveUser().getEmail())) throw new Error("Unauthorized");
-  const sheet  = getSheet(SHEET_NAMES.GROUPS);
-  const rows   = getDataRows(SHEET_NAMES.GROUPS);
+function updateGroupFields_(groupId, fields) {
+  // Direct-call guard (reachable via google.script.run — see createGroup_).
+  if (!isAdmin_(Session.getActiveUser().getEmail())) throw new Error("Unauthorized");
+  const sheet  = getSheet_(SHEET_NAMES.GROUPS);
+  const rows   = getDataRows_(SHEET_NAMES.GROUPS);
   const target = String(groupId);
   for (let i = 0; i < rows.length; i++) {
     if (String(rows[i][GRP.GROUP_ID - 1]) === target) {
@@ -312,7 +315,7 @@ function updateGroupFields(groupId, fields) {
 }
 
 /*
-  Function Name: replaceGroupChain
+  Function Name: replaceGroupChain_
 
   LAYMAN (Tropang Ex):
   I-update ang approver chain ng isang group nang IN-PLACE: kung pumalit lang ang
@@ -356,21 +359,21 @@ function updateGroupFields(groupId, fields) {
 
   EXAMPLE
     // reorder [A(1),B(2)] → [B(1),A(2)]
-    replaceGroupChain("G001", [{email:"b@x.com"}, {email:"a@x.com"}])
+    replaceGroupChain_("G001", [{email:"b@x.com"}, {email:"a@x.com"}])
     → SAME two rows, emails swapped; no new rows, no inactive rows.
     // add C
-    replaceGroupChain("G001", [{email:"a@x.com"},{email:"b@x.com"},{email:"c@x.com"}])
+    replaceGroupChain_("G001", [{email:"a@x.com"},{email:"b@x.com"},{email:"c@x.com"}])
     → rows 1–2 unchanged; ONE new row seq 3 (C).
 */
-function replaceGroupChain(groupId, slots) {
-  // Direct-call guard (reachable via google.script.run — see createGroup).
+function replaceGroupChain_(groupId, slots) {
+  // Direct-call guard (reachable via google.script.run — see createGroup_).
   // Without this, any authenticated user could rewrite a group's approver chain.
-  if (!isAdmin(Session.getActiveUser().getEmail())) throw new Error("Unauthorized");
+  if (!isAdmin_(Session.getActiveUser().getEmail())) throw new Error("Unauthorized");
   const lock = LockService.getScriptLock();
   lock.waitLock(10000);
   try {
-    const sheet  = getSheet(SHEET_NAMES.GROUP_APPROVERS);
-    const data   = getDataRows(SHEET_NAMES.GROUP_APPROVERS);
+    const sheet  = getSheet_(SHEET_NAMES.GROUP_APPROVERS);
+    const data   = getDataRows_(SHEET_NAMES.GROUP_APPROVERS);
     const target = String(groupId);
 
     // Existing ACTIVE rows for this group, with sheet row numbers, in sequence order.
@@ -393,7 +396,7 @@ function replaceGroupChain(groupId, slots) {
              .setValues([[k + 1, slots[k].email, slots[k].designation || ""]]);
       } else {
         const row = new Array(6).fill("");
-        row[GAP.ID - 1]             = generateGroupApproverId();
+        row[GAP.ID - 1]             = generateGroupApproverId_();
         row[GAP.GROUP_ID - 1]       = groupId;
         row[GAP.SEQUENCE - 1]       = k + 1;
         row[GAP.APPROVER_EMAIL - 1] = slots[k].email;
@@ -417,22 +420,22 @@ function replaceGroupChain(groupId, slots) {
 }
 
 /*
-  appendAdminLog — append one row to the Admins_Log audit timeline (append-only).
+  appendAdminLog_ — append one row to the Admins_Log audit timeline (append-only).
   LAYMAN    : Itala ang ginawa ng admin: sino, ano, aling group, ano ang nabago,
               kailan. Hindi binubura. Hiwalay sa Activity_Log (iba ang klase).
-  TECHNICAL : Mechanical writer (mirror of appendAction). Never updates/deletes.
+  TECHNICAL : Mechanical writer (mirror of appendAction_). Never updates/deletes.
               No-op-safe: blank details allowed. Called from Admin.js mutations.
   PARAMS    : adminEmail; action (ADMIN_ACTION.*); targetGroupId; details (string).
   RETURNS   : (void).
 */
-function appendAdminLog(adminEmail, action, targetGroupId, details) {
+function appendAdminLog_(adminEmail, action, targetGroupId, details) {
   // Self-heal the audit tab: create Admins_Log (with headers) if it is missing,
   // so a forgotten go-live step cannot silently drop the admin audit trail.
   let sheet;
   try { sheet = ensureAdminsLogTab_(); }
-  catch (e) { Logger.log("appendAdminLog(): could not ensure Admins_Log tab — " + e); return; }
+  catch (e) { Logger.log("appendAdminLog_(): could not ensure Admins_Log tab — " + e); return; }
   const row = new Array(6).fill("");
-  row[ADL.LOG_ID - 1]       = generateAdminLogId();
+  row[ADL.LOG_ID - 1]       = generateAdminLogId_();
   row[ADL.ADMIN_EMAIL - 1]  = adminEmail || "";
   row[ADL.ACTION - 1]       = action || "";
   row[ADL.TARGET_GROUP - 1] = targetGroupId || "";
@@ -448,11 +451,11 @@ function appendAdminLog(adminEmail, action, targetGroupId, details) {
               para hindi tahimik na mawala ang admin audit trail kung nakalimutang
               gawin nang mano-mano sa go-live.
   TECHNICAL : insertSheet + header row when missing; returns the existing sheet
-              otherwise. Called by appendAdminLog so the audit self-heals.
+              otherwise. Called by appendAdminLog_ so the audit self-heals.
   RETURNS   : the Admins_Log Sheet object.
 */
 function ensureAdminsLogTab_() {
-  const ss = getSpreadsheet();
+  const ss = getSpreadsheet_();
   let sheet = ss.getSheetByName(SHEET_NAMES.ADMINS_LOG);
   if (!sheet) {
     sheet = ss.insertSheet(SHEET_NAMES.ADMINS_LOG);
@@ -466,31 +469,31 @@ function ensureAdminsLogTab_() {
 // ROLE
 // ============================================================
 /*
-  detectRole — classify a caller as "approver" or "requestor".
+  detectRole_ — classify a caller as "approver" or "requestor".
   LAYMAN    : Approver ka kung nasa Group_Approvers ang email mo kahit saang
-              group. (Ang admin role ay hiwalay na phase — gamitin isAdmin().)
+              group. (Ang admin role ay hiwalay na phase — gamitin isAdmin_().)
   TECHNICAL : Scans Group_Approvers.approver_email. Admin is intentionally NOT
-              returned here yet (admin UI is a later phase); isAdmin() exists
+              returned here yet (admin UI is a later phase); isAdmin_() exists
               for when it is wired.
 */
-function detectRole(email) {
+function detectRole_(email) {
   if (!email) return "requestor";
-  const rows = getDataRows(SHEET_NAMES.GROUP_APPROVERS);
+  const rows = getDataRows_(SHEET_NAMES.GROUP_APPROVERS);
   for (let i = 0; i < rows.length; i++) {
-    if (sameEmail(rows[i][GAP.APPROVER_EMAIL - 1], email)) return "approver";
+    if (sameEmail_(rows[i][GAP.APPROVER_EMAIL - 1], email)) return "approver";
   }
   return "requestor";
 }
 
 /*
-  isAdmin — is this email an active admin?
+  isAdmin_ — is this email an active admin?
   TECHNICAL : Scans the Admins allowlist (active only). Server-side identity
               only — never trust a role flag from the frontend.
 */
-function isAdmin(email) {
+function isAdmin_(email) {
   if (!email) return false;
-  return getDataRows(SHEET_NAMES.ADMINS).some(function (r) {
-    return sameEmail(r[ADM.EMAIL - 1], email) &&
+  return getDataRows_(SHEET_NAMES.ADMINS).some(function (r) {
+    return sameEmail_(r[ADM.EMAIL - 1], email) &&
            String(r[ADM.ACTIVE - 1]).toUpperCase() !== "FALSE";
   });
 }
@@ -500,13 +503,13 @@ function isAdmin(email) {
 // APPROVAL ACTIONS — READ
 // ============================================================
 /*
-  getApprovalActions — the raw append-only timeline for a request.
+  getApprovalActions_ — the raw append-only timeline for a request.
   RETURNS : [{ actionId, requestId, cycle, step, actor, action, remark, timestamp }]
             in append (≈ chronological) order.
 */
-function getApprovalActions(requestId) {
+function getApprovalActions_(requestId) {
   const target = String(requestId);
-  return getDataRows(SHEET_NAMES.ACTIVITY_LOG)
+  return getDataRows_(SHEET_NAMES.ACTIVITY_LOG)
     .filter(function (r) { return String(r[ACT.REQUEST_ID - 1]) === target; })
     .map(function (r) {
       const stepRaw = r[ACT.APPROVER_STEP - 1];
@@ -536,7 +539,7 @@ function getApprovalActions(requestId) {
 
   TECHNICAL:
   ONE full Activity_Log scan reduced to a lookup map for the daily expiry sweep,
-  replacing an O(N) getApprovalActions() call per approved row (O(N²) overall).
+  replacing an O(N) getApprovalActions_() call per approved row (O(N²) overall).
   Only the three system EXPIRY_* actions are indexed — workflow actions are
   irrelevant to expiry idempotency and are skipped.
 
@@ -564,7 +567,7 @@ function getApprovalActions(requestId) {
 */
 function getExpiryFlagMap_() {
   const map = {};
-  getDataRows(SHEET_NAMES.ACTIVITY_LOG).forEach(function (r) {
+  getDataRows_(SHEET_NAMES.ACTIVITY_LOG).forEach(function (r) {
     const act = r[ACT.ACTION - 1] || "";
     if (act !== ACTION.EXPIRY_WARNING &&
         act !== ACTION.EXPIRY_NOTICE  &&
@@ -577,12 +580,12 @@ function getExpiryFlagMap_() {
 }
 
 /*
-  getApprovalView — derived view that reconstructs the OLD shapes from actions.
+  getApprovalView_ — derived view that reconstructs the OLD shapes from actions.
   LAYMAN    : Mula sa listahan ng actions, binubuo nito ang mga lumang field na
               inaasahan ng UI/email/COC: petsa+remark kada step, previousApprovals,
               pinakabagong remark, bilang ng aprubado, at ang resubmitHistory
               string. Kaya hindi nagbago ang DTO.
-  TECHNICAL : Single pass over getApprovalActions. "Current cycle" = max cycle.
+  TECHNICAL : Single pass over getApprovalActions_. "Current cycle" = max cycle.
               byStep covers the current cycle. resubmitHistoryString matches the
               old "\n\n---\n\n"-separated [PENDING]/Resubmit #N contract so the
               frontend banner parser is unaffected.
@@ -592,19 +595,19 @@ function getExpiryFlagMap_() {
       byStep: { 1:{date:Date|null, remark, actor}, 2:{…}, 3:{…} },
       previousApprovals: [{ step, email, date(formatted) }],   // approved this cycle
       approvedCount,
-      latestRemark,                                            // latest decline/return remark (any cycle)
+      latestRemark,                                            // latest decline_/return remark (any cycle)
       resubmitHistory,                                         // formatted string (frozen DTO)
       hasAnyAction
     }
 */
-function getApprovalView(requestId) {
-  const actions = getApprovalActions(requestId);
+function getApprovalView_(requestId) {
+  const actions = getApprovalActions_(requestId);
   let currentCycle = 0;
   actions.forEach(function (a) { if (a.cycle > currentCycle) currentCycle = a.cycle; });
 
   const byStep = {};
   const previousApprovals = [];   // approvals of the CURRENT cycle (who has signed this round)
-  const priorApprovals = [];      // approvals from EARLIER cycles (before the latest resubmit)
+  const priorApprovals = [];      // approvals from EARLIER cycles (before the latest resubmit_)
   let approvedCount = 0;
   let latestRemark = "";
   const historyEntries = [];
@@ -617,7 +620,7 @@ function getApprovalView(requestId) {
       priorApprovals.push({
         step:  a.step,
         email: a.actor,
-        date:  a.timestamp ? formatPHTime(new Date(a.timestamp)) : "",
+        date:  a.timestamp ? formatPHTime_(new Date(a.timestamp)) : "",
       });
     }
     // Per-step date/remark for the CURRENT cycle only (mirrors AppN_Date/Remark).
@@ -638,10 +641,10 @@ function getApprovalView(requestId) {
       previousApprovals.push({
         step:  a.step,
         email: a.actor,
-        date:  a.timestamp ? formatPHTime(new Date(a.timestamp)) : "",
+        date:  a.timestamp ? formatPHTime_(new Date(a.timestamp)) : "",
       });
     }
-    // Latest decline/return remark across all cycles.
+    // Latest decline_/return remark across all cycles.
     if (a.action === ACTION.DECLINED || a.action === ACTION.RETURNED) {
       latestRemark = a.remark;
     }
@@ -650,7 +653,7 @@ function getApprovalView(requestId) {
       const resubmitted = actions.some(function (x) {
         return x.action === ACTION.RESUBMITTED && x.cycle === a.cycle + 1;
       });
-      const when   = a.timestamp ? formatPHTime(new Date(a.timestamp)) : "";
+      const when   = a.timestamp ? formatPHTime_(new Date(a.timestamp)) : "";
       const label  = resubmitted ? ("Resubmit #" + (a.cycle + 1) + " —") : "[PENDING]";
       historyEntries.push(
         label + " Approver " + (a.step || "?") + " (" + a.actor + ")\n" +
@@ -677,16 +680,16 @@ function getApprovalView(requestId) {
 // APPROVAL ACTIONS — WRITE
 // ============================================================
 /*
-  appendAction — append one row to the Activity_Log timeline (append-only).
+  appendAction_ — append one row to the Activity_Log timeline (append-only).
   PARAMS : requestId; groupId (the request's group_id, denormalized for audit);
            cycle (int); step (int|null — the approver position, blank for
-           submit/resubmit); actor (email); action (ACTION.*); remark (string).
+           submit/resubmit_); actor (email); action (ACTION.*); remark (string).
   RETURNS: (void). Never updates/deletes existing rows.
 */
-function appendAction(requestId, groupId, cycle, step, actor, action, remark) {
-  const sheet = getSheet(SHEET_NAMES.ACTIVITY_LOG);
+function appendAction_(requestId, groupId, cycle, step, actor, action, remark) {
+  const sheet = getSheet_(SHEET_NAMES.ACTIVITY_LOG);
   const row = new Array(9).fill("");
-  row[ACT.ACTION_ID - 1]      = generateActionId();
+  row[ACT.ACTION_ID - 1]      = generateActionId_();
   row[ACT.REQUEST_ID - 1]     = requestId;
   row[ACT.GROUP_ID - 1]       = groupId || "";
   row[ACT.RESUBMIT_CYCLE - 1] = (cycle === null || cycle === undefined) ? 0 : cycle;
@@ -699,16 +702,16 @@ function appendAction(requestId, groupId, cycle, step, actor, action, remark) {
 }
 
 /*
-  setRequestCache — update the denormalized status/step/resubmit_count on Requests.
+  setRequestCache_ — update the denormalized status/step/resubmit_count on Requests.
   LAYMAN    : Ina-update ang "cache" na column sa Requests para mabilis basahin
               ng dashboards (hindi na kailangang ipunin lahat ng actions).
   TECHNICAL : Only writes the fields provided. Source of truth stays the actions
               timeline; this keeps the cheap-read cache current.
   PARAMS    : requestId; fields — { status?, step?, resubmitCount? }.
 */
-function setRequestCache(requestId, fields) {
-  const sheet  = getSheet(SHEET_NAMES.REQUESTS);
-  const rowNum = getRowNumberByRequestId(requestId);
+function setRequestCache_(requestId, fields) {
+  const sheet  = getSheet_(SHEET_NAMES.REQUESTS);
+  const rowNum = getRowNumberByRequestId_(requestId);
   if (rowNum === -1) return;
   if (fields.status !== undefined)        sheet.getRange(rowNum, CR.STATUS).setValue(fields.status);
   if (fields.step !== undefined)          sheet.getRange(rowNum, CR.STEP).setValue(fields.step);

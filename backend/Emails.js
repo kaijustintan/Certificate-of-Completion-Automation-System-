@@ -6,11 +6,11 @@
 
   LAYMAN (Tropang Ex):
   Lahat ng email na pinapadala ng portal — mula "may bagong request" hanggang
-  "approved na!", kasama ang bawat decline, return, resubmit at progress
+  "approved na!", kasama ang bawat decline_, return, resubmit_ at progress
   update — narito. Kapalit ito ng AppSheet's 5 notification bots. Ang bawat
   email function ay inaalam ang detalye ng request galing sa sheet, nagtatayo
   ng plain-text body (fallback) + branded HTML body (EmailHtml.js helpers) +
-  subject, at nagpapadala via sendBrandedEmail().
+  subject, at nagpapadala via sendBrandedEmail_().
 
   TECHNICAL:
   15 send* functions (one per notification event) + 7 shared helpers. All
@@ -18,11 +18,11 @@
   after a successful state change; two are trigger-fired (Triggers.js sweeps);
   one is admin-fired (adminSaveChain). Identity for actioner-confirmation
   emails comes from Session.getActiveUser(); caller-independent data comes
-  from getRequestData(). Every send goes through sendBrandedEmail(recipient,
+  from getRequestData_(). Every send goes through sendBrandedEmail_(recipient,
   subject, textBody, htmlBody, extraOptions) (EmailHtml.js): the plain-text
   body remains the fallback (3rd positional arg), the HTML twin rides in
-  options.htmlBody. The HTML layer (emailLayout/emailButton/emailInfoTable/
-  emailRemarkBox/etc.) lives in EmailHtml.js — table-based, inline styles,
+  options.htmlBody. The HTML layer (emailLayout_/emailButton_/emailInfoTable_/
+  emailRemarkBox_/etc.) lives in EmailHtml.js — table-based, inline styles,
   per-status accent band, all user values escaped by the helpers themselves.
 
   ⚠️ PRODUCTION FLAG:
@@ -32,36 +32,36 @@
   ────────────────────────────────────────────────────────────
   HELPERS
     - EMAIL_DEV_TAG          flag: dev subject prefix on/off
-    - emailSubject()         builds subject line
-    - buildInfoBlock()       labeled request-info block (title/ID/requestor/group)
-    - getPortalUrl()         deep-link into the portal for a specific request
-    - buildAttachmentList()  supporting-documents list string
-    - buildApprovalLog()     approval progress log string
-    - getLatestRemark()      most-recent non-blank approver remark
-    - getRequestData()       flat {rowData, rowNum, group, approvers} for email use
+    - emailSubject_()         builds subject line
+    - buildInfoBlock_()       labeled request-info block (title/ID/requestor/group)
+    - getPortalUrl_()         deep-link into the portal for a specific request
+    - buildAttachmentList_()  supporting-documents list string
+    - buildApprovalLog_()     approval progress log string
+    - getLatestRemark_()      most-recent non-blank approver remark
+    - getRequestData_()       flat {rowData, rowNum, group, approvers} for email use
 
   ────────────────────────────────────────────────────────────
   EMAIL FUNCTIONS (event-fired, via handle* in WebApp.js)
   #   Function                          To              Fires when
-  1   sendApprovalRequest               next approver   submit + intermediate approval
-  2   sendDeclineToApprover             decliner        declined
-  3   sendDeclineToRequestor            requestor       declined
-  4   sendFullyApprovedToApprover       last approver   fully approved
-  5   sendFullyApprovedToRequestor      requestor       fully approved
-  6   sendReturnToRequestor             requestor       returned
-  7   sendReturnConfirmToApprover       returner        returned
-  8   sendApproveConfirmToApprover      approver        intermediate approval only
-  9   sendProgressUpdateToRequestor     requestor       intermediate approval
-  10  sendReturnedChainNotification     prior approvers any return
-  11  sendResubmitConfirmToRequestor    requestor       resubmit
-  12  sendResubmitApprovalRequest       approver 1      resubmit
+  1   sendApprovalRequest_               next approver   submit + intermediate approval
+  2   sendDeclineToApprover_             decliner        declined
+  3   sendDeclineToRequestor_            requestor       declined
+  4   sendFullyApprovedToApprover_       last approver   fully approved
+  5   sendFullyApprovedToRequestor_      requestor       fully approved
+  6   sendReturnToRequestor_             requestor       returned
+  7   sendReturnConfirmToApprover_       returner        returned
+  8   sendApproveConfirmToApprover_      approver        intermediate approval only
+  9   sendProgressUpdateToRequestor_     requestor       intermediate approval
+  10  sendReturnedChainNotification_     prior approvers any return
+  11  sendResubmitConfirmToRequestor_    requestor       resubmit_
+  12  sendResubmitApprovalRequest_       approver 1      resubmit_
 
   EMAIL FUNCTIONS (trigger-fired, via the daily sweeps in Triggers.js)
-  13  sendExpiryReminderToRequestor     requestor       daily expiry sweep (#10)
-  14  sendPendingApprovalReminder       current approver daily approver-reminder sweep (digest)
+  13  sendExpiryReminderToRequestor_     requestor       daily expiry sweep (#10)
+  14  sendPendingApprovalReminder_       current approver daily approver-reminder sweep (digest)
 
   EMAIL FUNCTIONS (admin-fired, via adminSaveChain in Admin.js)
-  15  sendNewApproverNotice             new/changed approver  chain add / reorder
+  15  sendNewApproverNotice_             new/changed approver  chain add / reorder
 */
 
 
@@ -89,7 +89,7 @@ function emailDevTag_() {
   return configFlag_("EMAIL_DEV_TAG", EMAIL_DEV_TAG);
 }
 
-// Standing note appended to IN-FLIGHT requestor emails (progress update, resubmit
+// Standing note appended to IN-FLIGHT requestor emails (progress update, resubmit_
 // confirmation). An admin can change a request's approver chain at any time, so a
 // requestor following up off a stale email could reach a former approver. This
 // points them at the portal, which always shows the live current handler. (#4)
@@ -99,7 +99,7 @@ const REQUESTOR_PORTAL_NOTE =
 
 
 /*
-  Function Name: emailSubject
+  Function Name: emailSubject_
   LAYMAN    : Gumawa ng standard na subject line para sa lahat ng emails —
               "[COC Request]: EC-2026-00042 | Action Needed". Sa dev mode,
               may "[FOR APPROVER]" prefix para madaling i-distinguish sa iisang inbox.
@@ -112,7 +112,7 @@ const REQUESTOR_PORTAL_NOTE =
 */
 // Helper — standard minimal subject line.
 // audience = 'APPROVER' | 'REQUESTOR'; statusLabel e.g. 'Action Needed', 'Approved'.
-function emailSubject(controlNumber, statusLabel, audience) {
+function emailSubject_(controlNumber, statusLabel, audience) {
   const tag    = emailDevTag_() ? `[FOR ${audience}] ` : "";
   const suffix = statusLabel ? ` | ${statusLabel}` : "";
   return `${tag}[COC Request]: ${controlNumber}${suffix}`;
@@ -120,30 +120,30 @@ function emailSubject(controlNumber, statusLabel, audience) {
 
 
 /*
-  Function Name: buildInfoBlock
+  Function Name: buildInfoBlock_
   LAYMAN    : Gumawa ng 4-linyang summary ng request para sa email body —
               title, ID, requestor, group — para alam agad ng tatanggap kung
               anong request ang pinag-uusapan.
   TECHNICAL : Joins 4 labeled lines (one per field) with "\n". No padding
               alignment — plain-text emails use proportional fonts.
-  PARAMS    : rowData — the 0-indexed request row array (from getRequestData).
+  PARAMS    : rowData — the 0-indexed request row array (from getRequestData_).
   RETURNS   : Multi-line string.
 */
 // Helper — labeled request-info block shared by every email body.
 // No fake colon-alignment: plain-text email uses proportional fonts,
 // so "Label: value" per line is the cleanest scannable format.
-function buildInfoBlock(rowData) {
+function buildInfoBlock_(rowData) {
   return [
     `E-Certificate Title: ${rowData[CR.PROJECT_TITLE - 1]}`,
     `E-Certificate ID: ${rowData[CR.CONTROL_NUMBER - 1]}`,
     `Requestor: ${rowData[CR.REQUESTOR - 1]}`,
-    `Group: ${getGroupNameById(rowData[CR.GROUP - 1])}`,  // CR.GROUP holds group_id
+    `Group: ${getGroupNameById_(rowData[CR.GROUP - 1])}`,  // CR.GROUP holds group_id
   ].join("\n");
 }
 
 
 /*
-  Function Name: getPortalUrl
+  Function Name: getPortalUrl_
   LAYMAN    : Bumuo ng link para direktang mapuntahan sa portal ang isang
               partikular na request — para sa approver (review page) o sa
               requestor (request page). Inilalagay ito sa dulo ng bawat email.
@@ -159,19 +159,19 @@ function buildInfoBlock(rowData) {
 // iframe, so hash fragments aren't readable by the client, but query params
 // reach doGet() server-side and are forwarded to the page (see WebApp.doGet).
 // page: 'request' (requestor view) | 'review' (approver view).
-function getPortalUrl(requestId, page) {
+function getPortalUrl_(requestId, page) {
   return `${ScriptApp.getService().getUrl()}?page=${page}&id=${encodeURIComponent(requestId)}`;
 }
 
 
 /*
-  Function Name: buildAttachmentList
+  Function Name: buildAttachmentList_
   LAYMAN    : Lista ng mga naka-attach na files ng request — para makita ng
               approver sa email kung anong documents ang kasama. WALANG Drive
               link dito: private na ang files (Phase 8 gated serving), kaya
               bubuksan ang mga ito sa loob ng portal (gamit ang deep-link na
               nasa ibaba ng email) — doon naka-identity-check.
-  TECHNICAL : getAttachmentsForRequest, maps each row to "- filename — description".
+  TECHNICAL : getAttachmentsForRequest_, maps each row to "- filename — description".
               NO FILE_LINK is emitted (files are private; a raw link would 404).
               The approver opens the files via the portal deep-link already in the
               email body → gated downloadAttachment(). Empty → fallback text.
@@ -180,8 +180,8 @@ function getPortalUrl(requestId, page) {
 */
 // Helper — builds the supporting documents list for email body
 // Replaces AppSheet's <<Start: [Related Request_Attachments]>> loop
-function buildAttachmentList(requestId) {
-  const attachments = getAttachmentsForRequest(requestId);
+function buildAttachmentList_(requestId) {
+  const attachments = getAttachmentsForRequest_(requestId);
   if (attachments.length === 0) return "No supporting documents uploaded.";
   return attachments
     .map(row => `- ${row[RA.FILE - 1]} — ${row[RA.DESCRIPTION - 1]}`)
@@ -190,28 +190,28 @@ function buildAttachmentList(requestId) {
 
 
 /*
-  Function Name: buildApprovalLog
-  LAYMAN    : Para sa email, ipakita kung sino-sino nang nag-approve at kailan.
+  Function Name: buildApprovalLog_
+  LAYMAN    : Para sa email, ipakita kung sino-sino nang nag-approve_ at kailan.
               Lalabas lang ang slots na may laman; walang laman → "No approvals
               recorded yet."
   TECHNICAL : Reads APP1/2/3_DATE; for each non-empty slot, appends
               "Approver N: email\nApproved: timestamp". Replaces AppSheet's
               <<If: ISNOTBLANK([App1_Date])>> blocks.
-  PARAMS    : rowData — the 0-indexed row array; approvers — from getApprovers().
+  PARAMS    : rowData — the 0-indexed row array; approvers — from getApprovers_().
   RETURNS   : Multi-line string.
 */
 // Helper — builds the approval progress log shown in emails.
 // Reads per-step approval dates from the Approval_Actions timeline (current
-// cycle) via getApprovalView — signature unchanged so callers don't change.
-function buildApprovalLog(rowData, approvers) {
-  const view = getApprovalView(rowData[CR.REQUEST_ID - 1]);
+// cycle) via getApprovalView_ — signature unchanged so callers don't change.
+function buildApprovalLog_(rowData, approvers) {
+  const view = getApprovalView_(rowData[CR.REQUEST_ID - 1]);
   const slot = function (n) { return n === 1 ? approvers.approver1 : n === 2 ? approvers.approver2 : approvers.approver3; };
   let log = "";
   [1, 2, 3].forEach(function (n) {
     const s = view.byStep[n];
     if (s && s.date) {
       log += `Approver ${n}: ${slot(n) || "—"}\n`;
-      log += `Approved: ${formatPHTime(new Date(s.date))}\n\n`;
+      log += `Approved: ${formatPHTime_(new Date(s.date))}\n\n`;
     }
   });
   return log.trim() || "No approvals recorded yet.";
@@ -219,7 +219,7 @@ function buildApprovalLog(rowData, approvers) {
 
 
 /*
-  Function Name: getLatestRemark
+  Function Name: getLatestRemark_
   LAYMAN    : Kunin ang pinakabagong remark/dahilan ng approver — kung step 3
               ang nag-remark, yun ang gagamitin; kung wala step 2; kung wala
               step 1; kung lahat wala, "No reason provided."
@@ -228,16 +228,16 @@ function buildApprovalLog(rowData, approvers) {
   PARAMS    : rowData — the 0-indexed row array.
   RETURNS   : Remark string.
 */
-// Helper — gets the most recent decline/return remark.
-// Derived from the Approval_Actions timeline via getApprovalView — signature
+// Helper — gets the most recent decline_/return remark.
+// Derived from the Approval_Actions timeline via getApprovalView_ — signature
 // unchanged so callers don't change.
-function getLatestRemark(rowData) {
-  return getApprovalView(rowData[CR.REQUEST_ID - 1]).latestRemark || "No reason provided.";
+function getLatestRemark_(rowData) {
+  return getApprovalView_(rowData[CR.REQUEST_ID - 1]).latestRemark || "No reason provided.";
 }
 
 
 /*
-  Function Name: getRequestData
+  Function Name: getRequestData_
   LAYMAN    : I-load ang request galing sa sheet bilang madaling gamitin na
               object — kasama ang rowData, group, at approvers — para handa
               na ang lahat ng kailangan ng isang email function.
@@ -247,13 +247,13 @@ function getLatestRemark(rowData) {
   RETURNS   : { rowData, rowNum, group, approvers } — or null if not found.
 */
 // Helper — loads a full request row as a flat object for easy reference
-function getRequestData(requestId) {
-  const sheet  = getSheet(SHEET_NAMES.REQUESTS);
-  const rowNum = getRowNumberByRequestId(requestId);
+function getRequestData_(requestId) {
+  const sheet  = getSheet_(SHEET_NAMES.REQUESTS);
+  const rowNum = getRowNumberByRequestId_(requestId);
   if (rowNum === -1) return null;
   const rowData   = sheet.getRange(rowNum, 1, 1, CR.RESUBMIT_COUNT).getValues()[0];
   const group     = rowData[CR.GROUP - 1];   // group_id
-  const approvers = getApprovers(group);
+  const approvers = getApprovers_(group);
   return { rowData, rowNum, group, approvers };
 }
 
@@ -263,36 +263,36 @@ function getRequestData(requestId) {
 // AppSheet equivalent: Next Approver Bot → Step_Update_To_Requestor
 // ============================================================
 /*
-  Function Name: sendApprovalRequest
+  Function Name: sendApprovalRequest_
   LAYMAN    : Email sa approver na "May bagong request para sa iyo." Kasama ang
               detalye ng request, attachments, at progress ng approval. Ginagamit
               sa first-time submit at sa bawat intermediate approval (para sa next
               approver). May deep-link para diretso mapuntahan ang review page.
-  TECHNICAL : TO: getCurrentApprover(step, group). Includes buildInfoBlock,
-              buildAttachmentList, buildApprovalLog, and the review deep-link.
+  TECHNICAL : TO: getCurrentApprover_(step, group). Includes buildInfoBlock_,
+              buildAttachmentList_, buildApprovalLog_, and the review deep-link.
   FIRES     : submitNewRequest (first submit, no attachments) + handleApprove
-              (intermediate step, for the next approver) + checkAttachmentSync.
+              (intermediate step, for the next approver) + checkAttachmentSync_.
 */
-function sendApprovalRequest(requestId) {
-  const data = getRequestData(requestId);
+function sendApprovalRequest_(requestId) {
+  const data = getRequestData_(requestId);
   if (!data) return;
   const { rowData, approvers } = data;
 
   const step            = rowData[CR.STEP - 1];
-  const currentApprover = getCurrentApprover(step, rowData[CR.GROUP - 1]);
+  const currentApprover = getCurrentApprover_(step, rowData[CR.GROUP - 1]);
   if (!currentApprover) return;
 
   const controlNumber   = rowData[CR.CONTROL_NUMBER - 1];
-  const attachmentList  = buildAttachmentList(requestId);
-  const approvalLog     = buildApprovalLog(rowData, approvers);
+  const attachmentList  = buildAttachmentList_(requestId);
+  const approvalLog     = buildApprovalLog_(rowData, approvers);
 
-  const subject = emailSubject(controlNumber, "Action Needed", "APPROVER");
+  const subject = emailSubject_(controlNumber, "Action Needed", "APPROVER");
 
   const body = `Good day!
 
 You have a new e-certificate request that requires your review and action.
 
-${buildInfoBlock(rowData)}
+${buildInfoBlock_(rowData)}
 
 Supporting Documents:
 ${attachmentList}
@@ -300,76 +300,76 @@ ${attachmentList}
 Approval Progress:
 ${approvalLog}
 
-Please review and act on this request (approve, decline, or return).
-Open this request: ${getPortalUrl(requestId, "review")}`;
+Please review and act on this request (approve_, decline_, or return).
+Open this request: ${getPortalUrl_(requestId, "review")}`;
 
   // HTML twin — same content blocks, branded layout. Plain `body` stays the fallback.
-  const html = emailLayout({
+  const html = emailLayout_({
     accent:   "navy", // action needed
     bodyHtml:
-      emailP("Good day!") +
-      emailP("You have a new e-certificate request that requires your <strong>review and action</strong>.") +
-      emailInfoTable(rowData) +
-      emailSection("Supporting Documents", emailAttachmentList(requestId)) +
-      emailSection("Approval Progress", emailApprovalLog(rowData, approvers)) +
-      emailP("Please review and act on this request (approve, decline, or return)."),
-    buttonUrl:   getPortalUrl(requestId, "review"),
+      emailP_("Good day!") +
+      emailP_("You have a new e-certificate request that requires your <strong>review and action</strong>.") +
+      emailInfoTable_(rowData) +
+      emailSection_("Supporting Documents", emailAttachmentList_(requestId)) +
+      emailSection_("Approval Progress", emailApprovalLog_(rowData, approvers)) +
+      emailP_("Please review and act on this request (approve_, decline_, or return)."),
+    buttonUrl:   getPortalUrl_(requestId, "review"),
     buttonLabel: "Review this request",
   });
 
-  sendBrandedEmail(currentApprover, subject, body, html);
-  Logger.log(`sendApprovalRequest(): Emailed ${currentApprover} for ${requestId}`);
+  sendBrandedEmail_(currentApprover, subject, body, html);
+  Logger.log(`sendApprovalRequest_(): Emailed ${currentApprover} for ${requestId}`);
 }
 
 
 // ============================================================
-// EMAIL 2 — Confirm decline to the approver who declined
+// EMAIL 2 — Confirm decline_ to the approver who declined
 // AppSheet equivalent: Decline Bot → Confirm_Decline_To_Approver
 // ============================================================
 /*
-  Function Name: sendDeclineToApprover
+  Function Name: sendDeclineToApprover_
   LAYMAN    : Resibo sa approver na nagdecline: "Confirmed, dinecline mo ito."
-  TECHNICAL : TO: Session.getActiveUser() (the decliner). Date of action from nowFormatted().
+  TECHNICAL : TO: Session.getActiveUser() (the decliner). Date of action from nowFormatted_().
   FIRES     : handleDecline (on success).
 */
-function sendDeclineToApprover(requestId) {
-  const data = getRequestData(requestId);
+function sendDeclineToApprover_(requestId) {
+  const data = getRequestData_(requestId);
   if (!data) return;
   const { rowData } = data;
 
   const actioner      = Session.getActiveUser().getEmail();
-  const approverLabel = "Approver " + rowData[CR.STEP - 1];   // step is unchanged on decline
+  const approverLabel = "Approver " + rowData[CR.STEP - 1];   // step is unchanged on decline_
   const controlNumber = rowData[CR.CONTROL_NUMBER - 1];
 
-  const subject = emailSubject(controlNumber, "Declined", "APPROVER");
+  const subject = emailSubject_(controlNumber, "Declined", "APPROVER");
 
   const body = `Good day!
 
 This confirms that you, as ${approverLabel}, have declined the following request.
 
-${buildInfoBlock(rowData)}
+${buildInfoBlock_(rowData)}
 
-Date of Action: ${nowFormatted()}
+Date of Action: ${nowFormatted_()}
 
 The requestor has been notified that this request is now closed and cannot be resubmitted.
-Open this request: ${getPortalUrl(requestId, "review")}`;
+Open this request: ${getPortalUrl_(requestId, "review")}`;
 
-  // HTML twin — red accent (decline receipt).
-  const html = emailLayout({
+  // HTML twin — red accent (decline_ receipt).
+  const html = emailLayout_({
     accent:   "red",
     bodyHtml:
-      emailP("Good day!") +
-      emailP("This confirms that you, as <strong>" + escapeHtml(approverLabel) +
+      emailP_("Good day!") +
+      emailP_("This confirms that you, as <strong>" + escapeHtml_(approverLabel) +
              "</strong>, have <strong>declined</strong> the following request.") +
-      emailInfoTable(rowData) +
-      emailKeyValueRows([["Date of Action", nowFormatted()]]) +
-      emailP("The requestor has been notified that this request is now closed and cannot be resubmitted."),
-    buttonUrl:   getPortalUrl(requestId, "review"),
+      emailInfoTable_(rowData) +
+      emailKeyValueRows_([["Date of Action", nowFormatted_()]]) +
+      emailP_("The requestor has been notified that this request is now closed and cannot be resubmitted."),
+    buttonUrl:   getPortalUrl_(requestId, "review"),
     buttonLabel: "Open this request",
   });
 
-  sendBrandedEmail(actioner, subject, body, html);
-  Logger.log(`sendDeclineToApprover(): Confirmation sent to ${actioner}`);
+  sendBrandedEmail_(actioner, subject, body, html);
+  Logger.log(`sendDeclineToApprover_(): Confirmation sent to ${actioner}`);
 }
 
 
@@ -378,58 +378,58 @@ Open this request: ${getPortalUrl(requestId, "review")}`;
 // AppSheet equivalent: Decline Bot → Process_NotifyDecline
 // ============================================================
 /*
-  Function Name: sendDeclineToRequestor
+  Function Name: sendDeclineToRequestor_
   LAYMAN    : Email sa requestor: "Tinanggihan ang request mo." Kasama ang dahilan
-              at sinabi na hindi na maaaring i-resubmit — bagong request na lang.
-  TECHNICAL : TO: REQUESTOR column. Includes getLatestRemark (the decline reason).
+              at sinabi na hindi na maaaring i-resubmit_ — bagong request na lang.
+  TECHNICAL : TO: REQUESTOR column. Includes getLatestRemark_ (the decline_ reason).
               Links to the requestor's 'request' page (not 'review').
   FIRES     : handleDecline (on success).
 */
-function sendDeclineToRequestor(requestId) {
-  const data = getRequestData(requestId);
+function sendDeclineToRequestor_(requestId) {
+  const data = getRequestData_(requestId);
   if (!data) return;
   const { rowData } = data;
 
   const requestor     = rowData[CR.REQUESTOR - 1];
   const controlNumber = rowData[CR.CONTROL_NUMBER - 1];
   const actioner      = Session.getActiveUser().getEmail();
-  const approverLabel = "Approver " + rowData[CR.STEP - 1];   // step is unchanged on decline
-  const reason        = getLatestRemark(rowData);
+  const approverLabel = "Approver " + rowData[CR.STEP - 1];   // step is unchanged on decline_
+  const reason        = getLatestRemark_(rowData);
 
-  const subject = emailSubject(controlNumber, "Declined", "REQUESTOR");
+  const subject = emailSubject_(controlNumber, "Declined", "REQUESTOR");
 
   const body = `Good day!
 
 We regret to inform you that your request has been declined.
 
-${buildInfoBlock(rowData)}
+${buildInfoBlock_(rowData)}
 
 Reason for Decline: ${reason}
 Declined by: ${approverLabel} (${actioner})
-Date: ${nowFormatted()}
+Date: ${nowFormatted_()}
 
 Note: If you would like to try again, you must create a brand new request.
-Open this request: ${getPortalUrl(requestId, "request")}`;
+Open this request: ${getPortalUrl_(requestId, "request")}`;
 
-  // HTML twin — red accent; decline reason in a red callout box.
-  const html = emailLayout({
+  // HTML twin — red accent; decline_ reason in a red callout box.
+  const html = emailLayout_({
     accent:   "red",
     bodyHtml:
-      emailP("Good day!") +
-      emailP("We regret to inform you that your request has been <strong>declined</strong>.") +
-      emailInfoTable(rowData) +
-      emailRemarkBox("Reason for Decline", reason, "red") +
-      emailKeyValueRows([
+      emailP_("Good day!") +
+      emailP_("We regret to inform you that your request has been <strong>declined</strong>.") +
+      emailInfoTable_(rowData) +
+      emailRemarkBox_("Reason for Decline", reason, "red") +
+      emailKeyValueRows_([
         ["Declined by", approverLabel + " (" + actioner + ")"],
-        ["Date",        nowFormatted()],
+        ["Date",        nowFormatted_()],
       ]) +
-      emailP("Note: If you would like to try again, you must create a brand new request."),
-    buttonUrl:   getPortalUrl(requestId, "request"),
+      emailP_("Note: If you would like to try again, you must create a brand new request."),
+    buttonUrl:   getPortalUrl_(requestId, "request"),
     buttonLabel: "Open this request",
   });
 
-  sendBrandedEmail(requestor, subject, body, html);
-  Logger.log(`sendDeclineToRequestor(): Decline email sent to ${requestor}`);
+  sendBrandedEmail_(requestor, subject, body, html);
+  Logger.log(`sendDeclineToRequestor_(): Decline email sent to ${requestor}`);
 }
 
 
@@ -438,14 +438,14 @@ Open this request: ${getPortalUrl(requestId, "request")}`;
 // AppSheet equivalent: Fully Approved Bot → Step_Final_Receipt_To_Approver
 // ============================================================
 /*
-  Function Name: sendFullyApprovedToApprover
+  Function Name: sendFullyApprovedToApprover_
   LAYMAN    : Resibo sa huling approver: "Fully approved na, salamat sa pag-sign."
   TECHNICAL : TO: last configured approver slot (approver3 → 2 → 1 fallback).
               Uses the last non-empty AppN_DATE for "Final Approval Date".
   FIRES     : handleApprove (final step, newStatus === APPROVED).
 */
-function sendFullyApprovedToApprover(requestId) {
-  const data = getRequestData(requestId);
+function sendFullyApprovedToApprover_(requestId) {
+  const data = getRequestData_(requestId);
   if (!data) return;
   const { rowData, approvers } = data;
 
@@ -458,39 +458,39 @@ function sendFullyApprovedToApprover(requestId) {
   if (!recipient) return;
 
   // Get the last approval date from the timeline (latest approved step).
-  const _view = getApprovalView(requestId);
+  const _view = getApprovalView_(requestId);
   const lastDate = (_view.byStep[3] && _view.byStep[3].date)
     || (_view.byStep[2] && _view.byStep[2].date)
     || (_view.byStep[1] && _view.byStep[1].date);
 
-  const subject = emailSubject(controlNumber, "Fully Approved", "APPROVER");
+  const subject = emailSubject_(controlNumber, "Fully Approved", "APPROVER");
 
   const body = `Good day!
 
 This confirms that you provided the final approval for the following request.
 
-${buildInfoBlock(rowData)}
+${buildInfoBlock_(rowData)}
 
-Final Approval Date: ${formatPHTime(new Date(lastDate))}
+Final Approval Date: ${formatPHTime_(new Date(lastDate))}
 
 The request is now fully approved and the requestor has been notified. Thank you!
-Open this request: ${getPortalUrl(requestId, "review")}`;
+Open this request: ${getPortalUrl_(requestId, "review")}`;
 
   // HTML twin — green accent (final approval receipt).
-  const html = emailLayout({
+  const html = emailLayout_({
     accent:   "green",
     bodyHtml:
-      emailP("Good day!") +
-      emailP("This confirms that you provided the <strong>final approval</strong> for the following request.") +
-      emailInfoTable(rowData) +
-      emailKeyValueRows([["Final Approval Date", formatPHTime(new Date(lastDate))]]) +
-      emailP("The request is now fully approved and the requestor has been notified. Thank you!"),
-    buttonUrl:   getPortalUrl(requestId, "review"),
+      emailP_("Good day!") +
+      emailP_("This confirms that you provided the <strong>final approval</strong> for the following request.") +
+      emailInfoTable_(rowData) +
+      emailKeyValueRows_([["Final Approval Date", formatPHTime_(new Date(lastDate))]]) +
+      emailP_("The request is now fully approved and the requestor has been notified. Thank you!"),
+    buttonUrl:   getPortalUrl_(requestId, "review"),
     buttonLabel: "Open this request",
   });
 
-  sendBrandedEmail(recipient, subject, body, html);
-  Logger.log(`sendFullyApprovedToApprover(): Confirmation sent to ${recipient}`);
+  sendBrandedEmail_(recipient, subject, body, html);
+  Logger.log(`sendFullyApprovedToApprover_(): Confirmation sent to ${recipient}`);
 }
 
 
@@ -499,89 +499,89 @@ Open this request: ${getPortalUrl(requestId, "review")}`;
 // AppSheet equivalent: Fully Approved Bot → Process_Notify_Success
 // ============================================================
 /*
-  Function Name: sendFullyApprovedToRequestor
+  Function Name: sendFullyApprovedToRequestor_
   LAYMAN    : Email sa requestor: "Approved na lahat!" Kasama ang buong approval
               log (sino nag-sign at kailan) AT ang naka-attach na COC PDF. Dito na
               awtomatikong ginagawa ang Certificate of Completion — gagawa ng PDF
               at ikakabit sa email na ito.
-  TECHNICAL : TO: REQUESTOR column. Calls generateCOC(requestId) (Certificate.js)
+  TECHNICAL : TO: REQUESTOR column. Calls generateCOC_(requestId) (Certificate.js)
               and attaches the returned pdfBlob. COC generation is wrapped so a
               failure never blocks the approval email — it gracefully falls back to
-              "provided separately". Includes buildApprovalLog; links to the
+              "provided separately". Includes buildApprovalLog_; links to the
               requestor 'request' page.
   FIRES     : handleApprove (final step, newStatus === APPROVED). This is now the
               ONLY live path: registerTrigger() is deliberately disabled, so the
               legacy onSheetChange manual-edit route no longer runs (and would
-              fail generateCOC's identity guard anyway, since an installable
+              fail generateCOC_'s identity guard anyway, since an installable
               trigger resolves Session to the trigger owner). Generated once.
 
   STEPS
     Step 1 — Load request data
       Layman    : Kunin ang datos ng request; kung wala, huminto.
-      Technical : getRequestData(requestId) (31-col read) → { rowData, approvers }.
+      Technical : getRequestData_(requestId) (31-col read) → { rowData, approvers }.
     Step 2 — Generate the COC PDF (defensive)
       Layman    : Gawin ang COC PDF. Kung pumalpak, huwag i-block ang email.
-      Technical : try/catch generateCOC; keep pdfBlob on success, else log + null.
+      Technical : try/catch generateCOC_; keep pdfBlob on success, else log + null.
     Step 3 — Compose + send (attach if available)
       Layman    : Buuin ang email (text + branded HTML); ikabit ang PDF kung
                   meron; ipadala.
-      Technical : conditional body line + sendBrandedEmail(...) passing
+      Technical : conditional body line + sendBrandedEmail_(...) passing
                   { attachments:[cocBlob] } as extraOptions when present.
 */
-function sendFullyApprovedToRequestor(requestId) {
-  const data = getRequestData(requestId);
+function sendFullyApprovedToRequestor_(requestId) {
+  const data = getRequestData_(requestId);
   if (!data) return;
   const { rowData, approvers } = data;
 
   const requestor     = rowData[CR.REQUESTOR - 1];
   const controlNumber = rowData[CR.CONTROL_NUMBER - 1];
-  const approvalLog   = buildApprovalLog(rowData, approvers);
+  const approvalLog   = buildApprovalLog_(rowData, approvers);
 
   // Generate the COC PDF — a COC failure must NOT block the approval email.
   let cocBlob = null;
   try {
-    const coc = generateCOC(requestId);
+    const coc = generateCOC_(requestId);
     if (coc && coc.success) cocBlob = coc.pdfBlob;
-    else Logger.log(`sendFullyApprovedToRequestor(): COC generation failed — ${coc && coc.error}`);
+    else Logger.log(`sendFullyApprovedToRequestor_(): COC generation failed — ${coc && coc.error}`);
   } catch (e) {
-    Logger.log(`sendFullyApprovedToRequestor(): COC generation threw — ${e}`);
+    Logger.log(`sendFullyApprovedToRequestor_(): COC generation threw — ${e}`);
   }
 
   const cocLine = cocBlob
     ? "Your Certificate of Completion (PDF) is attached to this email."
     : "Your Certificate of Completion will be provided separately.";
 
-  const subject = emailSubject(controlNumber, "Approved", "REQUESTOR");
+  const subject = emailSubject_(controlNumber, "Approved", "REQUESTOR");
 
   const body = `Good day!
 
 Great news — your request has been fully approved.
 
-${buildInfoBlock(rowData)}
+${buildInfoBlock_(rowData)}
 
 Final Signatory Log:
 ${approvalLog}
 
 ${cocLine} Thank you for using the E-Certificate portal!
-Open this request: ${getPortalUrl(requestId, "request")}`;
+Open this request: ${getPortalUrl_(requestId, "request")}`;
 
   // HTML twin — green accent (the good-news email); COC note in a green box.
-  const html = emailLayout({
+  const html = emailLayout_({
     accent:   "green",
     bodyHtml:
-      emailP("Good day!") +
-      emailP("Great news &mdash; your request has been <strong>fully approved</strong>.") +
-      emailInfoTable(rowData) +
-      emailSection("Final Signatory Log", emailApprovalLog(rowData, approvers)) +
-      emailRemarkBox(null, cocLine, "green") +
-      emailP("Thank you for using the E-Certificate portal!"),
-    buttonUrl:   getPortalUrl(requestId, "request"),
+      emailP_("Good day!") +
+      emailP_("Great news &mdash; your request has been <strong>fully approved</strong>.") +
+      emailInfoTable_(rowData) +
+      emailSection_("Final Signatory Log", emailApprovalLog_(rowData, approvers)) +
+      emailRemarkBox_(null, cocLine, "green") +
+      emailP_("Thank you for using the E-Certificate portal!"),
+    buttonUrl:   getPortalUrl_(requestId, "request"),
     buttonLabel: "Open this request",
   });
 
   // PDF attachment rides in extraOptions — same single-send, same blob.
-  sendBrandedEmail(requestor, subject, body, html, cocBlob ? { attachments: [cocBlob] } : null);
-  Logger.log(`sendFullyApprovedToRequestor(): Approval email sent to ${requestor}${cocBlob ? " (COC attached)" : " (no COC)"}`);
+  sendBrandedEmail_(requestor, subject, body, html, cocBlob ? { attachments: [cocBlob] } : null);
+  Logger.log(`sendFullyApprovedToRequestor_(): Approval email sent to ${requestor}${cocBlob ? " (COC attached)" : " (no COC)"}`);
 }
 
 
@@ -590,7 +590,7 @@ Open this request: ${getPortalUrl(requestId, "request")}`;
 // No AppSheet equivalent — new with the expiry-notification feature.
 // ============================================================
 /*
-  Function Name: sendExpiryReminderToRequestor
+  Function Name: sendExpiryReminderToRequestor_
 
   LAYMAN (Tropang Ex):
   Paalala sa requestor na malapit nang (o lumipas na) mag-expire ang contract ng
@@ -600,7 +600,7 @@ Open this request: ${getPortalUrl(requestId, "request")}`;
 
   TECHNICAL:
   Fired by checkContractExpiries() (Triggers.js) only — not frontend-callable.
-  TO: REQUESTOR. Reuses emailSubject / buildInfoBlock / getPortalUrl, so it
+  TO: REQUESTOR. Reuses emailSubject_ / buildInfoBlock_ / getPortalUrl_, so it
   inherits the EMAIL_DEV_TAG audience prefix and the standard body shape. The
   subject label + lead line vary by daysUntil. No attachment (this is a nudge,
   not a certificate). Idempotency lives in the caller (Activity_Log flags), not
@@ -608,19 +608,19 @@ Open this request: ${getPortalUrl(requestId, "request")}`;
 
   PARAMS:
   - requestId — the COC request to remind about.
-  - daysUntil — whole days to contract end (from daysUntilContractEnd):
+  - daysUntil — whole days to contract end (from daysUntilContractEnd_):
                 >0 = "Expiring Soon", 0 = "Expires Today", <0 = "Expired".
 
   RETURNS:
   (void). No-op if the request row can't be loaded.
 
   EXAMPLE
-    sendExpiryReminderToRequestor("REQ-9b1", 3)   // "…| Expiring Soon", "in 3 days"
-    sendExpiryReminderToRequestor("REQ-9b1", 0)   // "…| Expires Today"
-    sendExpiryReminderToRequestor("REQ-9b1", -3)  // "…| Expired", "3 days ago"
+    sendExpiryReminderToRequestor_("REQ-9b1", 3)   // "…| Expiring Soon", "in 3 days"
+    sendExpiryReminderToRequestor_("REQ-9b1", 0)   // "…| Expires Today"
+    sendExpiryReminderToRequestor_("REQ-9b1", -3)  // "…| Expired", "3 days ago"
 */
-function sendExpiryReminderToRequestor(requestId, daysUntil) {
-  const data = getRequestData(requestId);
+function sendExpiryReminderToRequestor_(requestId, daysUntil) {
+  const data = getRequestData_(requestId);
   if (!data) return;
   const { rowData } = data;
 
@@ -641,33 +641,33 @@ function sendExpiryReminderToRequestor(requestId, daysUntil) {
               : daysUntil === -1 ? "The contract for this certificate expired yesterday."
               : `The contract for this certificate expired ${Math.abs(daysUntil)} days ago.`;
 
-  const subject = emailSubject(controlNumber, label, "REQUESTOR");
+  const subject = emailSubject_(controlNumber, label, "REQUESTOR");
 
   const body = `Good day!
 
 ${lead} If this contract is being renewed, please file a new e-certificate request for the renewed term.
 
-${buildInfoBlock(rowData)}
+${buildInfoBlock_(rowData)}
 Contract End Date: ${endStr}
 
-Open this request: ${getPortalUrl(requestId, "request")}`;
+Open this request: ${getPortalUrl_(requestId, "request")}`;
 
   // HTML twin — amber accent for all 3 stages (warning class); the stage-
   // specific lead line goes in an amber box so the deadline can't be missed.
-  const html = emailLayout({
+  const html = emailLayout_({
     accent:   "amber",
     bodyHtml:
-      emailP("Good day!") +
-      emailRemarkBox(label, lead, "amber") +
-      emailP("If this contract is being renewed, please file a new e-certificate request for the renewed term.") +
-      emailInfoTable(rowData) +
-      emailKeyValueRows([["Contract End Date", endStr]]),
-    buttonUrl:   getPortalUrl(requestId, "request"),
+      emailP_("Good day!") +
+      emailRemarkBox_(label, lead, "amber") +
+      emailP_("If this contract is being renewed, please file a new e-certificate request for the renewed term.") +
+      emailInfoTable_(rowData) +
+      emailKeyValueRows_([["Contract End Date", endStr]]),
+    buttonUrl:   getPortalUrl_(requestId, "request"),
     buttonLabel: "Open this request",
   });
 
-  sendBrandedEmail(requestor, subject, body, html);
-  Logger.log(`sendExpiryReminderToRequestor(): ${label} reminder sent to ${requestor} for ${controlNumber} (daysUntil=${daysUntil}).`);
+  sendBrandedEmail_(requestor, subject, body, html);
+  Logger.log(`sendExpiryReminderToRequestor_(): ${label} reminder sent to ${requestor} for ${controlNumber} (daysUntil=${daysUntil}).`);
 }
 
 
@@ -677,7 +677,7 @@ Open this request: ${getPortalUrl(requestId, "request")}`;
 // per daily sweep. NOT an event email — there is no handle* caller.
 // ============================================================
 /*
-  Function Name: sendPendingApprovalReminder
+  Function Name: sendPendingApprovalReminder_
 
   LAYMAN (Tropang Ex):
   Araw-araw na paalala sa isang approver: "May hinihintay pa pala sa'yo." Imbes na
@@ -691,9 +691,9 @@ Open this request: ${getPortalUrl(requestId, "request")}`;
   Digest sender. Receives the approver email + the list of pending request rows
   already bucketed for them by checkPendingApprovals (so this function does no
   filtering/auth — that's the caller's job). For EACH request it renders the same
-  full detail block as sendApprovalRequest — buildInfoBlock + buildAttachmentList +
-  buildApprovalLog(rowData, getApprovers(group)) + getPortalUrl(id, "review") — and
-  joins multiple requests with a divider. Reuses emailSubject so it inherits the
+  full detail block as sendApprovalRequest_ — buildInfoBlock_ + buildAttachmentList_ +
+  buildApprovalLog_(rowData, getApprovers_(group)) + getPortalUrl_(id, "review") — and
+  joins multiple requests with a divider. Reuses emailSubject_ so it inherits the
   EMAIL_DEV_TAG audience prefix. Singular/plural wording adapts to count.
 
   PARAMS:
@@ -706,39 +706,39 @@ Open this request: ${getPortalUrl(requestId, "request")}`;
   STEPS
     Step 1 — Render a full detail block per request
       Layman    : Bawat pending → kompletong detalye (parang normal approval email).
-      Technical : map over requestRows; buildInfoBlock + buildAttachmentList +
-                  buildApprovalLog(rowData, getApprovers(group)) + review deep-link.
+      Technical : map over requestRows; buildInfoBlock_ + buildAttachmentList_ +
+                  buildApprovalLog_(rowData, getApprovers_(group)) + review deep-link.
                   Join blocks with a divider when there's more than one.
     Step 2 — Subject + intro, then send
       Layman    : Bilangin ilan, gawing pang-isahan/maramihan, ipadala.
-      Technical : emailSubject("Reminder", "N Pending Approval(s)", "APPROVER");
-                  sendBrandedEmail (text + HTML digest); log the count.
+      Technical : emailSubject_("Reminder", "N Pending Approval(s)", "APPROVER");
+                  sendBrandedEmail_ (text + HTML digest); log the count.
 
   EXAMPLE
-    sendPendingApprovalReminder("boss@corp.com", [rowA, rowB])
+    sendPendingApprovalReminder_("boss@corp.com", [rowA, rowB])
     → "[COC Request]: Reminder | 2 Pending Approvals", two full detail blocks, divided.
-    sendPendingApprovalReminder("boss@corp.com", [rowA])
+    sendPendingApprovalReminder_("boss@corp.com", [rowA])
     → "…| 1 Pending Approval" (singular wording, one detail block).
 */
-function sendPendingApprovalReminder(approverEmail, requestRows) {
+function sendPendingApprovalReminder_(approverEmail, requestRows) {
   if (!approverEmail || !requestRows || !requestRows.length) return;
 
   const blocks = requestRows.map(function (row) {
     const requestId = row[CR.REQUEST_ID - 1];
-    const approvers = getApprovers(row[CR.GROUP - 1]);
-    return `${buildInfoBlock(row)}
+    const approvers = getApprovers_(row[CR.GROUP - 1]);
+    return `${buildInfoBlock_(row)}
 
 Supporting Documents:
-${buildAttachmentList(requestId)}
+${buildAttachmentList_(requestId)}
 
 Approval Progress:
-${buildApprovalLog(row, approvers)}
+${buildApprovalLog_(row, approvers)}
 
-Open this request: ${getPortalUrl(requestId, "review")}`;
+Open this request: ${getPortalUrl_(requestId, "review")}`;
   }).join("\n\n————————————————————\n\n");
 
   const n       = requestRows.length;
-  const subject = emailSubject("Reminder", n + " Pending Approval" + (n > 1 ? "s" : ""), "APPROVER");
+  const subject = emailSubject_("Reminder", n + " Pending Approval" + (n > 1 ? "s" : ""), "APPROVER");
 
   const body = `Good day!
 
@@ -753,26 +753,26 @@ Please review and act on ${n > 1 ? "each" : "the"} request in the portal. Thank 
   // Gmail's 102KB clipping threshold.
   const htmlBlocks = requestRows.map(function (row) {
     const requestId = row[CR.REQUEST_ID - 1];
-    const approvers = getApprovers(row[CR.GROUP - 1]);
-    return emailInfoTable(row) +
-      emailSection("Supporting Documents", emailAttachmentList(requestId)) +
-      emailSection("Approval Progress", emailApprovalLog(row, approvers)) +
-      emailButton(getPortalUrl(requestId, "review"), "Review this request");
-  }).join(emailDivider());
+    const approvers = getApprovers_(row[CR.GROUP - 1]);
+    return emailInfoTable_(row) +
+      emailSection_("Supporting Documents", emailAttachmentList_(requestId)) +
+      emailSection_("Approval Progress", emailApprovalLog_(row, approvers)) +
+      emailButton_(getPortalUrl_(requestId, "review"), "Review this request");
+  }).join(emailDivider_());
 
-  const html = emailLayout({
+  const html = emailLayout_({
     accent:   "navy", // action needed
     bodyHtml:
-      emailP("Good day!") +
-      emailP("This is a daily reminder that the following e-certificate request" +
+      emailP_("Good day!") +
+      emailP_("This is a daily reminder that the following e-certificate request" +
              (n > 1 ? "s are" : " is") + " <strong>awaiting your review and action</strong>:") +
       htmlBlocks +
-      emailP("Please review and act on " + (n > 1 ? "each" : "the") + " request in the portal. Thank you!"),
+      emailP_("Please review and act on " + (n > 1 ? "each" : "the") + " request in the portal. Thank you!"),
     // No layout-level button — each block carries its own review button.
   });
 
-  sendBrandedEmail(approverEmail, subject, body, html);
-  Logger.log("sendPendingApprovalReminder(): " + n + " request(s) -> " + approverEmail);
+  sendBrandedEmail_(approverEmail, subject, body, html);
+  Logger.log("sendPendingApprovalReminder_(): " + n + " request(s) -> " + approverEmail);
 }
 
 
@@ -781,7 +781,7 @@ Please review and act on ${n > 1 ? "each" : "the"} request in the portal. Thank 
 // Fired by adminSaveChain when an admin adds someone to a chain.
 // ============================================================
 /*
-  Function Name: sendNewApproverNotice
+  Function Name: sendNewApproverNotice_
 
   LAYMAN (Tropang Ex):
   Pag idinagdag ka ng admin bilang approver ng isang group, padadalhan ka kaagad
@@ -796,9 +796,9 @@ Please review and act on ${n > 1 ? "each" : "the"} request in the portal. Thank 
   display name, the recipient's sequence in the NEW chain (for the explicit
   "You are Approver N" line), and (already filtered by the caller) the pending
   request rows that NEWLY current-await this person. For each pending row it
-  renders the same full detail block as sendPendingApprovalReminder
-  (buildInfoBlock + buildAttachmentList + buildApprovalLog + review deep-link).
-  Reuses emailSubject so it inherits the EMAIL_DEV_TAG audience prefix. The ONLY
+  renders the same full detail block as sendPendingApprovalReminder_
+  (buildInfoBlock_ + buildAttachmentList_ + buildApprovalLog_ + review deep-link).
+  Reuses emailSubject_ so it inherits the EMAIL_DEV_TAG audience prefix. The ONLY
   email an admin action sends — recipients are computed by notifyChainChanges_
   (newly in the chain OR newly the current handler of an in-flight request).
 
@@ -817,21 +817,21 @@ Please review and act on ${n > 1 ? "each" : "the"} request in the portal. Thank 
   STEPS
     Step 1 — Render any immediately-inherited pending requests
       Layman    : Kung may agad na naghihintay, gawing kompletong detalye + link.
-      Technical : map pendingRows → buildInfoBlock + buildAttachmentList +
-                  buildApprovalLog(row, getApprovers(group)) + review deep-link.
+      Technical : map pendingRows → buildInfoBlock_ + buildAttachmentList_ +
+                  buildApprovalLog_(row, getApprovers_(group)) + review deep-link.
     Step 2 — Compose the lead line (added vs role-changed), append pending, send
       Layman    : Bago → "You have been added… Approver N." Reorder → "You were
                   Approver M, now Approver N." Idugtong ang listahan kung meron.
-      Technical : branch on previousStep; emailSubject suffix "Added as Approver"
-                  vs "Approver Role Changed"; sendBrandedEmail (text + HTML).
+      Technical : branch on previousStep; emailSubject_ suffix "Added as Approver"
+                  vs "Approver Role Changed"; sendBrandedEmail_ (text + HTML).
 
   EXAMPLE
-    sendNewApproverNotice("boss@corp.com", "Engineering", 1, null, [rowA])
+    sendNewApproverNotice_("boss@corp.com", "Engineering", 1, null, [rowA])
     → "…| Added as Approver"; "added… Your role: Approver 1"; one detail block.
-    sendNewApproverNotice("boss@corp.com", "Engineering", 1, 2, [rowA])
+    sendNewApproverNotice_("boss@corp.com", "Engineering", 1, 2, [rowA])
     → "…| Approver Role Changed"; "You were Approver 2; you are now Approver 1."; block.
 */
-function sendNewApproverNotice(approverEmail, groupName, approverStep, previousStep, pendingRows) {
+function sendNewApproverNotice_(approverEmail, groupName, approverStep, previousStep, pendingRows) {
   if (!approverEmail) return;
   const rows = pendingRows || [];
 
@@ -839,16 +839,16 @@ function sendNewApproverNotice(approverEmail, groupName, approverStep, previousS
   if (rows.length) {
     const blocks = rows.map(function (row) {
       const requestId = row[CR.REQUEST_ID - 1];
-      const approvers = getApprovers(row[CR.GROUP - 1]);
-      return `${buildInfoBlock(row)}
+      const approvers = getApprovers_(row[CR.GROUP - 1]);
+      return `${buildInfoBlock_(row)}
 
 Supporting Documents:
-${buildAttachmentList(requestId)}
+${buildAttachmentList_(requestId)}
 
 Approval Progress:
-${buildApprovalLog(row, approvers)}
+${buildApprovalLog_(row, approvers)}
 
-Open this request: ${getPortalUrl(requestId, "review")}`;
+Open this request: ${getPortalUrl_(requestId, "review")}`;
     }).join("\n\n————————————————————\n\n");
 
     const n = rows.length;
@@ -880,7 +880,7 @@ You'll be notified as requests are routed to you for approval.`;
     lead = `You are now the current approver for the group "${groupName}" (Approver ${approverStep}).`;
   }
 
-  const subject = emailSubject("Approver Assignment", statusLabel, "APPROVER");
+  const subject = emailSubject_("Approver Assignment", statusLabel, "APPROVER");
 
   const body = `Good day!
 
@@ -892,44 +892,44 @@ Thank you!`;
   // (the text `lead` embeds \n breaks); pending requests render as full blocks.
   let leadHtml;
   if (!previousStep) {
-    leadHtml = emailP("You have been <strong>added as an approver</strong> for the group: <strong>" +
-                 escapeHtml(groupName) + "</strong>.") +
-               (approverStep ? emailP("Your role: <strong>Approver " + escapeHtml(approverStep) + "</strong> in this group.") : "");
+    leadHtml = emailP_("You have been <strong>added as an approver</strong> for the group: <strong>" +
+                 escapeHtml_(groupName) + "</strong>.") +
+               (approverStep ? emailP_("Your role: <strong>Approver " + escapeHtml_(approverStep) + "</strong> in this group.") : "");
   } else if (previousStep !== approverStep) {
-    leadHtml = emailP("Your approver role for the group &quot;" + escapeHtml(groupName) + "&quot; has <strong>changed</strong>.") +
-               emailP("You were Approver " + escapeHtml(previousStep) +
-                      "; you are now <strong>Approver " + escapeHtml(approverStep) + "</strong>.");
+    leadHtml = emailP_("Your approver role for the group &quot;" + escapeHtml_(groupName) + "&quot; has <strong>changed</strong>.") +
+               emailP_("You were Approver " + escapeHtml_(previousStep) +
+                      "; you are now <strong>Approver " + escapeHtml_(approverStep) + "</strong>.");
   } else {
-    leadHtml = emailP("You are now the <strong>current approver</strong> for the group &quot;" +
-                 escapeHtml(groupName) + "&quot; (Approver " + escapeHtml(approverStep) + ").");
+    leadHtml = emailP_("You are now the <strong>current approver</strong> for the group &quot;" +
+                 escapeHtml_(groupName) + "&quot; (Approver " + escapeHtml_(approverStep) + ").");
   }
 
   let pendingHtml;
   if (rows.length) {
     const n = rows.length;
     pendingHtml =
-      emailP("The following request" + (n > 1 ? "s are" : " is") +
+      emailP_("The following request" + (n > 1 ? "s are" : " is") +
              " <strong>already awaiting your review and action</strong>:") +
       rows.map(function (row) {
         const requestId = row[CR.REQUEST_ID - 1];
-        const approvers = getApprovers(row[CR.GROUP - 1]);
-        return emailInfoTable(row) +
-          emailSection("Supporting Documents", emailAttachmentList(requestId)) +
-          emailSection("Approval Progress", emailApprovalLog(row, approvers)) +
-          emailButton(getPortalUrl(requestId, "review"), "Review this request");
-      }).join(emailDivider()) +
-      emailP("Please review and act on " + (n > 1 ? "each" : "the") + " request in the portal.");
+        const approvers = getApprovers_(row[CR.GROUP - 1]);
+        return emailInfoTable_(row) +
+          emailSection_("Supporting Documents", emailAttachmentList_(requestId)) +
+          emailSection_("Approval Progress", emailApprovalLog_(row, approvers)) +
+          emailButton_(getPortalUrl_(requestId, "review"), "Review this request");
+      }).join(emailDivider_()) +
+      emailP_("Please review and act on " + (n > 1 ? "each" : "the") + " request in the portal.");
   } else {
-    pendingHtml = emailP("You'll be notified as requests are routed to you for approval.");
+    pendingHtml = emailP_("You'll be notified as requests are routed to you for approval.");
   }
 
-  const html = emailLayout({
+  const html = emailLayout_({
     accent:   "navy",
-    bodyHtml: emailP("Good day!") + leadHtml + pendingHtml + emailP("Thank you!"),
+    bodyHtml: emailP_("Good day!") + leadHtml + pendingHtml + emailP_("Thank you!"),
   });
 
-  sendBrandedEmail(approverEmail, subject, body, html);
-  Logger.log("sendNewApproverNotice(): " + groupName + " -> " + approverEmail +
+  sendBrandedEmail_(approverEmail, subject, body, html);
+  Logger.log("sendNewApproverNotice_(): " + groupName + " -> " + approverEmail +
              " (step " + (previousStep || "-") + "→" + (approverStep || "?") + ", " + rows.length + " pending)");
 }
 
@@ -939,7 +939,7 @@ Thank you!`;
 // AppSheet equivalent: Return Bot → Process_NotifyReturn
 // ============================================================
 /*
-  Function Name: sendReturnToRequestor
+  Function Name: sendReturnToRequestor_
   LAYMAN    : Email sa requestor: "Ibinalik ang request mo — may baguhin pa."
               Kasama kung sino ang nagbalik (e.g. "Approver 2") at ang dahilan.
   TECHNICAL : TO: REQUESTOR. approverLabel param (captured in handleReturn before
@@ -947,51 +947,51 @@ Thank you!`;
   PARAMS    : requestId; approverLabel — e.g. "Approver 2" (optional, from handleReturn).
   FIRES     : handleReturn (on success).
 */
-function sendReturnToRequestor(requestId, approverLabel) {
-  const data = getRequestData(requestId);
+function sendReturnToRequestor_(requestId, approverLabel) {
+  const data = getRequestData_(requestId);
   if (!data) return;
   const { rowData } = data;
 
   const requestor     = rowData[CR.REQUESTOR - 1];
   const controlNumber = rowData[CR.CONTROL_NUMBER - 1];
   const actioner      = Session.getActiveUser().getEmail();
-  const reason        = getLatestRemark(rowData);
+  const reason        = getLatestRemark_(rowData);
   const returnerLine  = approverLabel ? `${approverLabel} (${actioner})` : actioner;
 
-  const subject = emailSubject(controlNumber, "Returned", "REQUESTOR");
+  const subject = emailSubject_(controlNumber, "Returned", "REQUESTOR");
 
   const body = `Good day!
 
 Your request has been sent back to you for updates.
 
-${buildInfoBlock(rowData)}
+${buildInfoBlock_(rowData)}
 
 Returned by: ${returnerLine}
-Return Date: ${nowFormatted()}
+Return Date: ${nowFormatted_()}
 Reason for Return: ${reason}
 
-Please review the comments, make the necessary changes, and resubmit your request.
-Open this request: ${getPortalUrl(requestId, "request")}`;
+Please review the comments, make the necessary changes, and resubmit_ your request.
+Open this request: ${getPortalUrl_(requestId, "request")}`;
 
   // HTML twin — amber accent; return reason in an amber callout box.
-  const html = emailLayout({
+  const html = emailLayout_({
     accent:   "amber",
     bodyHtml:
-      emailP("Good day!") +
-      emailP("Your request has been <strong>sent back to you for updates</strong>.") +
-      emailInfoTable(rowData) +
-      emailKeyValueRows([
+      emailP_("Good day!") +
+      emailP_("Your request has been <strong>sent back to you for updates</strong>.") +
+      emailInfoTable_(rowData) +
+      emailKeyValueRows_([
         ["Returned by", returnerLine],
-        ["Return Date", nowFormatted()],
+        ["Return Date", nowFormatted_()],
       ]) +
-      emailRemarkBox("Reason for Return", reason, "amber") +
-      emailP("Please review the comments, make the necessary changes, and resubmit your request."),
-    buttonUrl:   getPortalUrl(requestId, "request"),
-    buttonLabel: "Update and resubmit",
+      emailRemarkBox_("Reason for Return", reason, "amber") +
+      emailP_("Please review the comments, make the necessary changes, and resubmit_ your request."),
+    buttonUrl:   getPortalUrl_(requestId, "request"),
+    buttonLabel: "Update and resubmit_",
   });
 
-  sendBrandedEmail(requestor, subject, body, html);
-  Logger.log(`sendReturnToRequestor(): Return email sent to ${requestor}`);
+  sendBrandedEmail_(requestor, subject, body, html);
+  Logger.log(`sendReturnToRequestor_(): Return email sent to ${requestor}`);
 }
 
 
@@ -1000,15 +1000,15 @@ Open this request: ${getPortalUrl(requestId, "request")}`;
 // AppSheet equivalent: Return Bot → Confirm_Return_To_Approver
 // ============================================================
 /*
-  Function Name: sendReturnConfirmToApprover
+  Function Name: sendReturnConfirmToApprover_
   LAYMAN    : Resibo sa approver na nagbalik: "Naipadala na sa requestor ang
               pagbabalik." Kasama kung sino ang requestor at kailan.
   TECHNICAL : TO: Session.getActiveUser() (the returner). approverLabel in role note.
   PARAMS    : requestId; approverLabel — e.g. "Approver 2" (optional).
   FIRES     : handleReturn (on success).
 */
-function sendReturnConfirmToApprover(requestId, approverLabel) {
-  const data = getRequestData(requestId);
+function sendReturnConfirmToApprover_(requestId, approverLabel) {
+  const data = getRequestData_(requestId);
   if (!data) return;
   const { rowData } = data;
 
@@ -1017,94 +1017,94 @@ function sendReturnConfirmToApprover(requestId, approverLabel) {
   const controlNumber = rowData[CR.CONTROL_NUMBER - 1];
   const roleNote      = approverLabel ? ` as ${approverLabel}` : "";
 
-  const subject = emailSubject(controlNumber, "Returned", "APPROVER");
+  const subject = emailSubject_(controlNumber, "Returned", "APPROVER");
 
   const body = `Good day!
 
 This confirms that you have returned the following request${roleNote} for further updates.
 
-${buildInfoBlock(rowData)}
+${buildInfoBlock_(rowData)}
 
 Returned to: ${requestor}
-Date of Action: ${nowFormatted()}
+Date of Action: ${nowFormatted_()}
 
 The requestor has been notified to review your comments and take the necessary next steps.
-Open this request: ${getPortalUrl(requestId, "review")}`;
+Open this request: ${getPortalUrl_(requestId, "review")}`;
 
   // HTML twin — amber accent (return receipt).
-  const html = emailLayout({
+  const html = emailLayout_({
     accent:   "amber",
     bodyHtml:
-      emailP("Good day!") +
-      emailP("This confirms that you have <strong>returned</strong> the following request" +
-             escapeHtml(roleNote) + " for further updates.") +
-      emailInfoTable(rowData) +
-      emailKeyValueRows([
+      emailP_("Good day!") +
+      emailP_("This confirms that you have <strong>returned</strong> the following request" +
+             escapeHtml_(roleNote) + " for further updates.") +
+      emailInfoTable_(rowData) +
+      emailKeyValueRows_([
         ["Returned to",    requestor],
-        ["Date of Action", nowFormatted()],
+        ["Date of Action", nowFormatted_()],
       ]) +
-      emailP("The requestor has been notified to review your comments and take the necessary next steps."),
-    buttonUrl:   getPortalUrl(requestId, "review"),
+      emailP_("The requestor has been notified to review your comments and take the necessary next steps."),
+    buttonUrl:   getPortalUrl_(requestId, "review"),
     buttonLabel: "Open this request",
   });
 
-  sendBrandedEmail(actioner, subject, body, html);
-  Logger.log(`sendReturnConfirmToApprover(): Confirmation sent to ${actioner}`);
+  sendBrandedEmail_(actioner, subject, body, html);
+  Logger.log(`sendReturnConfirmToApprover_(): Confirmation sent to ${actioner}`);
 }
 
 
 // ============================================================
 // EMAIL 8 — Confirm intermediate approval to the approver who just approved
-// Closes the symmetry gap: decline/return both confirm to actioner; now approve does too.
-// Only fires on intermediate steps — final approval uses sendFullyApprovedToApprover.
+// Closes the symmetry gap: decline_/return both confirm to actioner; now approve_ does too.
+// Only fires on intermediate steps — final approval uses sendFullyApprovedToApprover_.
 // ============================================================
 /*
-  Function Name: sendApproveConfirmToApprover
-  LAYMAN    : Resibo sa approver na na-approve ng intermediate step: "Nai-approve
-              mo, forwarded na sa next approver." Tinapos ang asymmetry — decline
-              at return ay may confirm, dapat approve din.
+  Function Name: sendApproveConfirmToApprover_
+  LAYMAN    : Resibo sa approver na na-approve_ ng intermediate step: "Nai-approve_
+              mo, forwarded na sa next approver." Tinapos ang asymmetry — decline_
+              at return ay may confirm, dapat approve_ din.
   TECHNICAL : TO: Session.getActiveUser() (the actioner). Symmetric twin of
-              sendDeclineToApprover/sendReturnConfirmToApprover.
+              sendDeclineToApprover_/sendReturnConfirmToApprover_.
   NOTE      : Only fires on INTERMEDIATE approvals. Final step uses
-              sendFullyApprovedToApprover instead.
+              sendFullyApprovedToApprover_ instead.
   FIRES     : handleApprove (intermediate step only, in the else branch).
 */
-function sendApproveConfirmToApprover(requestId) {
-  const data = getRequestData(requestId);
+function sendApproveConfirmToApprover_(requestId) {
+  const data = getRequestData_(requestId);
   if (!data) return;
   const { rowData } = data;
 
   const actioner      = Session.getActiveUser().getEmail();
   const controlNumber = rowData[CR.CONTROL_NUMBER - 1];
 
-  const subject = emailSubject(controlNumber, "Approved", "APPROVER");
+  const subject = emailSubject_(controlNumber, "Approved", "APPROVER");
 
   const body = `Good day!
 
 This confirms that you have approved the following request.
 
-${buildInfoBlock(rowData)}
+${buildInfoBlock_(rowData)}
 
-Date of Action: ${nowFormatted()}
+Date of Action: ${nowFormatted_()}
 
 The request has been forwarded to the next approver. You will be notified once the full process is complete.
-Open this request: ${getPortalUrl(requestId, "review")}`;
+Open this request: ${getPortalUrl_(requestId, "review")}`;
 
   // HTML twin — green accent (approval receipt).
-  const html = emailLayout({
+  const html = emailLayout_({
     accent:   "green",
     bodyHtml:
-      emailP("Good day!") +
-      emailP("This confirms that you have <strong>approved</strong> the following request.") +
-      emailInfoTable(rowData) +
-      emailKeyValueRows([["Date of Action", nowFormatted()]]) +
-      emailP("The request has been forwarded to the next approver. You will be notified once the full process is complete."),
-    buttonUrl:   getPortalUrl(requestId, "review"),
+      emailP_("Good day!") +
+      emailP_("This confirms that you have <strong>approved</strong> the following request.") +
+      emailInfoTable_(rowData) +
+      emailKeyValueRows_([["Date of Action", nowFormatted_()]]) +
+      emailP_("The request has been forwarded to the next approver. You will be notified once the full process is complete."),
+    buttonUrl:   getPortalUrl_(requestId, "review"),
     buttonLabel: "Open this request",
   });
 
-  sendBrandedEmail(actioner, subject, body, html);
-  Logger.log(`sendApproveConfirmToApprover(): Confirmation sent to ${actioner}`);
+  sendBrandedEmail_(actioner, subject, body, html);
+  Logger.log(`sendApproveConfirmToApprover_(): Confirmation sent to ${actioner}`);
 }
 
 
@@ -1112,38 +1112,38 @@ Open this request: ${getPortalUrl(requestId, "review")}`;
 // EMAIL 9 — Notify requestor of progress after each intermediate approval
 // Fires on each intermediate step so the requestor isn't left in the dark mid-chain.
 // N/M count uses AppN_DATE columns + configured approver slots (not Step number)
-// because approve() skips blank slots — counting dates is gap-proof.
+// because approve_() skips blank slots — counting dates is gap-proof.
 // ============================================================
 /*
-  Function Name: sendProgressUpdateToRequestor
+  Function Name: sendProgressUpdateToRequestor_
   LAYMAN    : Mid-chain progress email sa requestor: "Cleared mo na N of M steps."
               Para hindi sila naghihintay sa dilim kung ilang approver pa kailangan.
   TECHNICAL : TO: REQUESTOR. N = count of non-empty APP dates; M = count of
               non-null approver slots (gap-proof; Step count would be wrong if
-              approver slots are skipped). Includes buildApprovalLog.
+              approver slots are skipped). Includes buildApprovalLog_.
   NOTE      : Only fires on INTERMEDIATE approvals — not final (that sends #4+#5).
   FIRES     : handleApprove (intermediate step only, in the else branch).
 */
-function sendProgressUpdateToRequestor(requestId) {
-  const data = getRequestData(requestId);
+function sendProgressUpdateToRequestor_(requestId) {
+  const data = getRequestData_(requestId);
   if (!data) return;
   const { rowData, approvers } = data;
 
   const requestor     = rowData[CR.REQUESTOR - 1];
   const controlNumber = rowData[CR.CONTROL_NUMBER - 1];
-  const approvalLog   = buildApprovalLog(rowData, approvers);
+  const approvalLog   = buildApprovalLog_(rowData, approvers);
 
-  const completed = getApprovalView(requestId).approvedCount;  // approvals this cycle (from timeline)
+  const completed = getApprovalView_(requestId).approvedCount;  // approvals this cycle (from timeline)
   const total = [approvers.approver1, approvers.approver2, approvers.approver3]
     .filter(function (a) { return !!a; }).length;
 
-  const subject = emailSubject(controlNumber, "Update", "REQUESTOR");
+  const subject = emailSubject_(controlNumber, "Update", "REQUESTOR");
 
   const body = `Good day!
 
 Good news — your request has cleared ${completed} of ${total} approval steps and is now awaiting the next approver.
 
-${buildInfoBlock(rowData)}
+${buildInfoBlock_(rowData)}
 
 Approval Progress So Far:
 ${approvalLog}
@@ -1151,96 +1151,96 @@ ${approvalLog}
 You will be notified once the remaining steps are complete. Thank you for your patience.
 
 ${REQUESTOR_PORTAL_NOTE}
-Open this request: ${getPortalUrl(requestId, "request")}`;
+Open this request: ${getPortalUrl_(requestId, "request")}`;
 
   // HTML twin — navy accent (informational progress, no action needed).
-  const html = emailLayout({
+  const html = emailLayout_({
     accent:   "navy",
     bodyHtml:
-      emailP("Good day!") +
-      emailP("Good news &mdash; your request has cleared <strong>" + completed + " of " + total +
+      emailP_("Good day!") +
+      emailP_("Good news &mdash; your request has cleared <strong>" + completed + " of " + total +
              "</strong> approval steps and is now awaiting the next approver.") +
-      emailInfoTable(rowData) +
-      emailSection("Approval Progress So Far", emailApprovalLog(rowData, approvers)) +
-      emailP("You will be notified once the remaining steps are complete. Thank you for your patience.") +
-      emailRemarkBox(null, REQUESTOR_PORTAL_NOTE, "blue"),
-    buttonUrl:   getPortalUrl(requestId, "request"),
+      emailInfoTable_(rowData) +
+      emailSection_("Approval Progress So Far", emailApprovalLog_(rowData, approvers)) +
+      emailP_("You will be notified once the remaining steps are complete. Thank you for your patience.") +
+      emailRemarkBox_(null, REQUESTOR_PORTAL_NOTE, "blue"),
+    buttonUrl:   getPortalUrl_(requestId, "request"),
     buttonLabel: "Open this request",
   });
 
-  sendBrandedEmail(requestor, subject, body, html);
-  Logger.log(`sendProgressUpdateToRequestor(): Progress email sent to ${requestor} (${completed}/${total})`);
+  sendBrandedEmail_(requestor, subject, body, html);
+  Logger.log(`sendProgressUpdateToRequestor_(): Progress email sent to ${requestor} (${completed}/${total})`);
 }
 
 
 // ============================================================
 // EMAIL 10 — Notify prior approvers when a request they approved gets returned
-// Takes previousApprovals + reason as params — getRequestData() only reads 31 cols
+// Takes previousApprovals + reason as params — getRequestData_() only reads 31 cols
 // and Previous_Approvals lives in col 34 (AH). The array is already built in
 // handleReturn's scope and is guaranteed fresh when passed here.
 // Empty array (Approver 1 returned before anyone else approved) → no-op.
 // The returner is never in previousApprovals so there is no double-send risk.
 // ============================================================
 /*
-  Function Name: sendReturnedChainNotification
-  LAYMAN    : Email sa mga DATING approver na nag-approve noon, para ipaalam
+  Function Name: sendReturnedChainNotification_
+  LAYMAN    : Email sa mga DATING approver na nag-approve_ noon, para ipaalam
               na ibinalik ang request na dati nilang pinirmahan — at kapag
-              na-resubmit, kailangan nila ulit mag-approve. Kapag walang dating
+              na-resubmit_, kailangan nila ulit mag-approve_. Kapag walang dating
               approver (e.g. Approver 1 agad nagbalik), walang pinapadala.
   TECHNICAL : TO: each entry.email in previousApprovals (BCC-style loop, one
               send per recipient). previousApprovals is passed from handleReturn
-              (NOT from getRequestData — col 34 is out of the 31-col read range).
+              (NOT from getRequestData_ — col 34 is out of the 31-col read range).
               The returner is never in the array → no double-send risk.
   PARAMS    : requestId; previousApprovals — [{step,email,date}]; reason — return
               reason; approverLabel — e.g. "Approver 2".
   FIRES     : handleReturn (on success).
 */
-function sendReturnedChainNotification(requestId, previousApprovals, reason, approverLabel) {
+function sendReturnedChainNotification_(requestId, previousApprovals, reason, approverLabel) {
   if (!previousApprovals || previousApprovals.length === 0) return;
 
-  const data = getRequestData(requestId);
+  const data = getRequestData_(requestId);
   if (!data) return;
   const { rowData } = data;
 
   const controlNumber = rowData[CR.CONTROL_NUMBER - 1];
   const returnerLine  = approverLabel || "a later approver";
 
-  const subject = emailSubject(controlNumber, "Returned", "APPROVER");
+  const subject = emailSubject_(controlNumber, "Returned", "APPROVER");
 
   const body = `Good day!
 
 A request you had previously approved has been returned to the requestor for further updates.
 
-${buildInfoBlock(rowData)}
+${buildInfoBlock_(rowData)}
 
 Returned by: ${returnerLine}
 Reason for Return: ${reason || "No reason provided."}
-Date: ${nowFormatted()}
+Date: ${nowFormatted_()}
 
 When the requestor resubmits, the request will route through the full approval chain again and will require your approval once more. You will receive a new action request at that time.
-Open this request: ${getPortalUrl(requestId, "review")}`;
+Open this request: ${getPortalUrl_(requestId, "review")}`;
 
   // HTML twin — built ONCE before the loop (same body for every prior approver).
-  const html = emailLayout({
+  const html = emailLayout_({
     accent:   "amber",
     bodyHtml:
-      emailP("Good day!") +
-      emailP("A request you had previously approved has been <strong>returned to the requestor</strong> for further updates.") +
-      emailInfoTable(rowData) +
-      emailKeyValueRows([
+      emailP_("Good day!") +
+      emailP_("A request you had previously approved has been <strong>returned to the requestor</strong> for further updates.") +
+      emailInfoTable_(rowData) +
+      emailKeyValueRows_([
         ["Returned by", returnerLine],
-        ["Date",        nowFormatted()],
+        ["Date",        nowFormatted_()],
       ]) +
-      emailRemarkBox("Reason for Return", reason || "No reason provided.", "amber") +
-      emailP("When the requestor resubmits, the request will route through the full approval chain again and will require your approval once more. You will receive a new action request at that time."),
-    buttonUrl:   getPortalUrl(requestId, "review"),
+      emailRemarkBox_("Reason for Return", reason || "No reason provided.", "amber") +
+      emailP_("When the requestor resubmits, the request will route through the full approval chain again and will require your approval once more. You will receive a new action request at that time."),
+    buttonUrl:   getPortalUrl_(requestId, "review"),
     buttonLabel: "Open this request",
   });
 
   previousApprovals.forEach(function (entry) {
     if (!entry.email) return;
-    sendBrandedEmail(entry.email, subject, body, html);
-    Logger.log(`sendReturnedChainNotification(): Notified prior approver ${entry.email} for ${requestId}`);
+    sendBrandedEmail_(entry.email, subject, body, html);
+    Logger.log(`sendReturnedChainNotification_(): Notified prior approver ${entry.email} for ${requestId}`);
   });
 }
 
@@ -1249,20 +1249,20 @@ Open this request: ${getPortalUrl(requestId, "review")}`;
 // EMAIL 11 — Confirm resubmission to the requestor
 // Fires when a requestor resubmits a returned request.
 // returnReason + resubmitCount are passed from handleResubmit —
-// captured BEFORE resubmit() clears the remark columns.
+// captured BEFORE resubmit_() clears the remark columns.
 // ============================================================
 /*
-  Function Name: sendResubmitConfirmToRequestor
-  LAYMAN    : Resibo sa requestor: "Na-resubmit na, naghihintay na sa Approver 1."
+  Function Name: sendResubmitConfirmToRequestor_
+  LAYMAN    : Resibo sa requestor: "Na-resubmit_ na, naghihintay na sa Approver 1."
               Kasama ang dating dahilan ng pagbabalik para reference.
   TECHNICAL : TO: REQUESTOR. resubmitCount > 1 adds "(Resubmission #N)" to subject.
-              returnReason and resubmitCount MUST be captured before resubmit()
+              returnReason and resubmitCount MUST be captured before resubmit_()
               clears the remark columns.
   PARAMS    : requestId; returnReason — the prior return reason; resubmitCount — new count.
   FIRES     : handleResubmit (on success).
 */
-function sendResubmitConfirmToRequestor(requestId, returnReason, resubmitCount) {
-  const data = getRequestData(requestId);
+function sendResubmitConfirmToRequestor_(requestId, returnReason, resubmitCount) {
+  const data = getRequestData_(requestId);
   if (!data) return;
   const { rowData } = data;
 
@@ -1271,108 +1271,108 @@ function sendResubmitConfirmToRequestor(requestId, returnReason, resubmitCount) 
   // Always show which resubmission this is (1st, 2nd, …) — clearer for non-devs.
   const countNote     = ` (Resubmission #${resubmitCount})`;
 
-  const subject = emailSubject(controlNumber, "Resubmitted", "REQUESTOR");
+  const subject = emailSubject_(controlNumber, "Resubmitted", "REQUESTOR");
 
   const body = `Good day!
 
 Your request has been successfully resubmitted${countNote} and is now awaiting Approver 1.
 
-${buildInfoBlock(rowData)}
+${buildInfoBlock_(rowData)}
 
-Resubmitted on: ${nowFormatted()}
+Resubmitted on: ${nowFormatted_()}
 Previous Return Reason: ${returnReason || "No reason provided."}
 
 You will be notified as the request progresses through the approval chain.
 
 ${REQUESTOR_PORTAL_NOTE}
-Open this request: ${getPortalUrl(requestId, "request")}`;
+Open this request: ${getPortalUrl_(requestId, "request")}`;
 
   // HTML twin — navy accent (receipt/informational).
-  const html = emailLayout({
+  const html = emailLayout_({
     accent:   "navy",
     bodyHtml:
-      emailP("Good day!") +
-      emailP("Your request has been successfully <strong>resubmitted" + escapeHtml(countNote) +
+      emailP_("Good day!") +
+      emailP_("Your request has been successfully <strong>resubmitted" + escapeHtml_(countNote) +
              "</strong> and is now awaiting Approver 1.") +
-      emailInfoTable(rowData) +
-      emailKeyValueRows([["Resubmitted on", nowFormatted()]]) +
-      emailRemarkBox("Previous Return Reason", returnReason || "No reason provided.", "amber") +
-      emailP("You will be notified as the request progresses through the approval chain.") +
-      emailRemarkBox(null, REQUESTOR_PORTAL_NOTE, "blue"),
-    buttonUrl:   getPortalUrl(requestId, "request"),
+      emailInfoTable_(rowData) +
+      emailKeyValueRows_([["Resubmitted on", nowFormatted_()]]) +
+      emailRemarkBox_("Previous Return Reason", returnReason || "No reason provided.", "amber") +
+      emailP_("You will be notified as the request progresses through the approval chain.") +
+      emailRemarkBox_(null, REQUESTOR_PORTAL_NOTE, "blue"),
+    buttonUrl:   getPortalUrl_(requestId, "request"),
     buttonLabel: "Open this request",
   });
 
-  sendBrandedEmail(requestor, subject, body, html);
-  Logger.log(`sendResubmitConfirmToRequestor(): Confirmation sent to ${requestor}`);
+  sendBrandedEmail_(requestor, subject, body, html);
+  Logger.log(`sendResubmitConfirmToRequestor_(): Confirmation sent to ${requestor}`);
 }
 
 
 // ============================================================
 // EMAIL 12 — Notify Approver 1 of a resubmitted request
-// Replaces the generic sendApprovalRequest when a request is
+// Replaces the generic sendApprovalRequest_ when a request is
 // resubmitted (not first-time submitted). Explicitly surfaces
-// the resubmit context and the original return reason so the
+// the resubmit_ context and the original return reason so the
 // approver knows what was supposedly fixed.
-// returnReason + resubmitCount captured before resubmit() clears remarks.
+// returnReason + resubmitCount captured before resubmit_() clears remarks.
 // ============================================================
 /*
-  Function Name: sendResubmitApprovalRequest
+  Function Name: sendResubmitApprovalRequest_
   LAYMAN    : Email sa Approver 1: "Ito ay RESUBMISSION — ito ang dating dahilan
               ng pagbabalik, paki-review kung na-ayos na." Mas informative kaysa
-              sa generic #1 sendApprovalRequest, para alam ng approver ang context.
-  TECHNICAL : TO: getCurrentApprover(step, group) — always Approver 1 after resubmit.
+              sa generic #1 sendApprovalRequest_, para alam ng approver ang context.
+  TECHNICAL : TO: getCurrentApprover_(step, group) — always Approver 1 after resubmit_.
               countNote adds "#N" to the subject if resubmitCount > 1. Includes
               the prior returnReason prominently in the body.
   PARAMS    : requestId; returnReason — prior return reason; resubmitCount — new count.
   NOTE      : Only fires if newStatus === PENDING_1. If SYNCING (attachments needed),
-              this email is deferred until checkAttachmentSync fires #1 instead.
+              this email is deferred until checkAttachmentSync_ fires #1 instead.
   FIRES     : handleResubmit (on success AND newStatus === PENDING_1).
 */
-function sendResubmitApprovalRequest(requestId, returnReason, resubmitCount) {
-  const data = getRequestData(requestId);
+function sendResubmitApprovalRequest_(requestId, returnReason, resubmitCount) {
+  const data = getRequestData_(requestId);
   if (!data) return;
   const { rowData, approvers } = data;
 
   const step            = rowData[CR.STEP - 1];
-  const currentApprover = getCurrentApprover(step, rowData[CR.GROUP - 1]);
+  const currentApprover = getCurrentApprover_(step, rowData[CR.GROUP - 1]);
   if (!currentApprover) return;
 
   const controlNumber  = rowData[CR.CONTROL_NUMBER - 1];
-  const attachmentList = buildAttachmentList(requestId);
+  const attachmentList = buildAttachmentList_(requestId);
   const countNote      = ` #${resubmitCount}`;   // always show which resubmission (1st, 2nd, …)
 
-  const subject = emailSubject(controlNumber, `Resubmission${countNote} — Action Needed`, "APPROVER");
+  const subject = emailSubject_(controlNumber, `Resubmission${countNote} — Action Needed`, "APPROVER");
 
   const body = `Good day!
 
 A previously returned request has been resubmitted${countNote} and requires your review.
 
-${buildInfoBlock(rowData)}
+${buildInfoBlock_(rowData)}
 
 Previous Return Reason: ${returnReason || "No reason provided."}
 
 Supporting Documents:
 ${attachmentList}
 
-Please review the updates made by the requestor and act on this request (approve, decline, or return).
-Open this request: ${getPortalUrl(requestId, "review")}`;
+Please review the updates made by the requestor and act on this request (approve_, decline_, or return).
+Open this request: ${getPortalUrl_(requestId, "review")}`;
 
   // HTML twin — resubmission context up top, prior return reason in an amber box.
-  const html = emailLayout({
+  const html = emailLayout_({
     accent:   "navy", // action needed
     bodyHtml:
-      emailP("Good day!") +
-      emailP("A previously returned request has been <strong>resubmitted" + escapeHtml(countNote) +
+      emailP_("Good day!") +
+      emailP_("A previously returned request has been <strong>resubmitted" + escapeHtml_(countNote) +
              "</strong> and requires your review.") +
-      emailInfoTable(rowData) +
-      emailRemarkBox("Previous Return Reason", returnReason || "No reason provided.", "amber") +
-      emailSection("Supporting Documents", emailAttachmentList(requestId)) +
-      emailP("Please review the updates made by the requestor and act on this request (approve, decline, or return)."),
-    buttonUrl:   getPortalUrl(requestId, "review"),
+      emailInfoTable_(rowData) +
+      emailRemarkBox_("Previous Return Reason", returnReason || "No reason provided.", "amber") +
+      emailSection_("Supporting Documents", emailAttachmentList_(requestId)) +
+      emailP_("Please review the updates made by the requestor and act on this request (approve_, decline_, or return)."),
+    buttonUrl:   getPortalUrl_(requestId, "review"),
     buttonLabel: "Review this resubmission",
   });
 
-  sendBrandedEmail(currentApprover, subject, body, html);
-  Logger.log(`sendResubmitApprovalRequest(): Emailed ${currentApprover} for resubmission of ${requestId}`);
+  sendBrandedEmail_(currentApprover, subject, body, html);
+  Logger.log(`sendResubmitApprovalRequest_(): Emailed ${currentApprover} for resubmission of ${requestId}`);
 }

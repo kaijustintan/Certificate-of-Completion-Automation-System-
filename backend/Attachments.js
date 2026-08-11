@@ -13,29 +13,33 @@
   nalilikha. Kapalit ito ng lumang "honor-system" na Syncing Files flow.
 
   TECHNICAL:
-  Phase 8 upload path: validateAttachmentPayload → uploadAttachmentFile (per
-  file, throws on failure) → writeAttachmentRows (batched setValues). Called
-  exclusively from submitNewRequest() in WebApp.js. The legacy sync-finisher
-  path (checkAttachmentSync / addAttachment → checkAttachmentSync) remains in
-  place but is deprecated-by-Phase-8; the new submit flow bypasses addAttachment
-  entirely, so checkAttachmentSync is no longer on any live code path.
+  Phase 8 upload path: validateAttachmentPayload_ → uploadAttachmentFile_ (per
+  file, throws on failure) → writeAttachmentRows_ (batched setValues). Called
+  exclusively from submitNewRequest() in WebApp.js. Both carry a trailing
+  underscore: they are internal primitives, and as bare globals they were
+  reachable via google.script.run — uploadAttachmentFile_ writing arbitrary
+  files into the corporate folder, writeAttachmentRows_ writing a
+  caller-supplied Drive ID into RA.FILE_LINK that downloadAttachment then
+  trusts. Only checkAttachmentSync_ (a documented permanent no-op) remains of
+  the legacy sync-finisher path; addAttachment was removed outright.
 
   ────────────────────────────────────────────────────────────
   OUTLINE
   ────────────────────────────────────────────────────────────
   PHASE 8 — SUBMIT-TIME UPLOAD + GATED SERVING (new)
-    - validateAttachmentPayload(files, requireAtLeastOne)  server-side payload guard
-    - sanitizeAttachmentFilename(name)    strip unsafe chars from uploaded filenames
-    - uploadAttachmentFile(file, driveName)  base64 → private DriveApp.createFile → {fileId, url}
-    - buildAttachmentDriveName(ctrl, n, fn)  "{control}__r{N}__{filename}" Drive name convention
-    - writeAttachmentRows(id, uploaded)   batch-write RA.* child rows (FILE = filename)
-    - extractDriveId(link)                pull a Drive file ID from a URL or bare id
+    - validateAttachmentPayload_(files, requireAtLeastOne)  server-side payload guard
+    - sanitizeAttachmentFilename_(name)    strip unsafe chars from uploaded filenames
+    - uploadAttachmentFile_(file, driveName)  base64 → private DriveApp.createFile → {fileId, url}
+    - buildAttachmentDriveName_(ctrl, n, fn)  "{control}__r{N}__{filename}" Drive name convention
+    - writeAttachmentRows_(id, uploaded)   batch-write RA.* child rows (FILE = filename)
+    - extractDriveId_(link)                pull a Drive file ID from a URL or bare id
     - downloadAttachment(attachmentId)    identity-gated file serving (base64) — no public link
 
   LEGACY SYNC-FINISHER (deprecated by Phase 8 — kept dormant)
-    - checkAttachmentSync(id)             [DEPRECATED] unlock SYNCING → PENDING_1
-    - addAttachment(id, link, desc)       [DEPRECATED] write row + call checkAttachmentSync
-    - deleteAttachment(attachId)          remove attachment row (owner-only); still active
+    - checkAttachmentSync_(id)             [DEPRECATED] permanent no-op; SYNCING is gone
+    - deleteAttachment_(attachId)          remove attachment row (owner-only); still active
+    (addAttachment + testDomainSharing were REMOVED — see the notes at their old
+     locations below. addAttachment let a caller supply a raw Drive ID.)
 */
 
 
@@ -47,7 +51,7 @@
 // ============================================================
 
 /*
-  Function Name: validateAttachmentPayload
+  Function Name: validateAttachmentPayload_
   LAYMAN    : Bago mag-upload ng kahit ano sa Drive, sinisiguro muna natin na
               valid ang lahat ng files: may laman, may description bawat isa,
               hindi sobrang laki. Ito ang "bouncer" bago pumasok sa Drive.
@@ -56,19 +60,19 @@
               Returns { ok: true } or { ok: false, error: string }.
   PARAMS    : files — Array<{ base64, filename, mimeType, description }>.
               requireAtLeastOne — bool (default true). New-request submit requires
-              ≥1 file; resubmit passes false (added files are optional there).
+              ≥1 file; resubmit_ passes false (added files are optional there).
   RETURNS   : { ok: true } or { ok: false, error: string }.
 
   EXAMPLE
-    validateAttachmentPayload([])
+    validateAttachmentPayload_([])
     → { ok: false, error: "At least one supporting document is required." }
-    validateAttachmentPayload([], false)   // resubmit, no new files
+    validateAttachmentPayload_([], false)   // resubmit_, no new files
     → { ok: true }
-    validateAttachmentPayload([{ base64:"...", filename:"PO.pdf",
+    validateAttachmentPayload_([{ base64:"...", filename:"PO.pdf",
                                  mimeType:"application/pdf", description:"PO" }])
     → { ok: true }
 */
-function validateAttachmentPayload(files, requireAtLeastOne) {
+function validateAttachmentPayload_(files, requireAtLeastOne) {
   if (requireAtLeastOne === undefined) requireAtLeastOne = true;
   const MAX_FILE_BYTES  = 5  * 1024 * 1024;   // 5 MB per file (decoded)
   const MAX_TOTAL_BYTES = 15 * 1024 * 1024;   // 15 MB total across all files
@@ -108,7 +112,7 @@ function validateAttachmentPayload(files, requireAtLeastOne) {
 
 
 /*
-  Function Name: sanitizeAttachmentFilename
+  Function Name: sanitizeAttachmentFilename_
   LAYMAN    : Tinatanggal ang mga "mapanganib" na karakter sa filename para
               hindi magcause ng problema sa Drive o sa sheet.
   TECHNICAL : Strips OS-unsafe characters (path separators, control chars,
@@ -116,7 +120,7 @@ function validateAttachmentPayload(files, requireAtLeastOne) {
   PARAMS    : name — raw filename string from the browser.
   RETURNS   : Safe filename string.
 */
-function sanitizeAttachmentFilename(name) {
+function sanitizeAttachmentFilename_(name) {
   return String(name)
     .replace(/[\/\\<>:"|?*\x00-\x1f]/g, "_")
     .trim() || "attachment";
@@ -124,7 +128,7 @@ function sanitizeAttachmentFilename(name) {
 
 
 /*
-  Function Name: uploadAttachmentFile
+  Function Name: uploadAttachmentFile_
   LAYMAN    : I-upload ang isang file sa Google Drive. Ginagamit yung base64
               na napadala ng browser, gine-convert sa bytes, tapos ginagawa
               isang Drive file. Kapag may error, lumalabas ang exception para
@@ -140,16 +144,16 @@ function sanitizeAttachmentFilename(name) {
               Mirrors the DriveApp.createFile idiom in Certificate.js:257.
   PARAMS    : file — { base64, filename, mimeType } (one element of formData.files).
               driveName — optional Drive file name (e.g. the naming-convention
-              name from buildAttachmentDriveName). Falls back to the sanitized
+              name from buildAttachmentDriveName_). Falls back to the sanitized
               original filename when omitted.
   RETURNS   : { fileId: string, url: string }.
 
   EXAMPLE
-    uploadAttachmentFile({ base64:"JVBERi0...", filename:"PO.pdf",
+    uploadAttachmentFile_({ base64:"JVBERi0...", filename:"PO.pdf",
                            mimeType:"application/pdf" }, "EC-2026-00042-9B1__r0__PO.pdf")
     → { fileId: "1abc...", url: "https://drive.google.com/…" }
 */
-function uploadAttachmentFile(file, driveName) {
+function uploadAttachmentFile_(file, driveName) {
   // Resolved via Script Property with the Constants.js literal as fallback.
   // config_() throws a named error when neither is set — correct here, because
   // this function is documented to throw so submitNewRequest can roll back.
@@ -158,8 +162,8 @@ function uploadAttachmentFile(file, driveName) {
   // Strip data:...;base64, prefix defensively — client should have done this already
   var base64Clean = file.base64.replace(/^data:[^;]+;base64,/, "");
   var bytes    = Utilities.base64Decode(base64Clean);
-  var name     = driveName ? sanitizeAttachmentFilename(driveName)
-                           : sanitizeAttachmentFilename(file.filename);
+  var name     = driveName ? sanitizeAttachmentFilename_(driveName)
+                           : sanitizeAttachmentFilename_(file.filename);
   var blob     = Utilities.newBlob(bytes, file.mimeType, name);
   var drv      = DriveApp.getFolderById(folderId).createFile(blob);
 
@@ -172,28 +176,28 @@ function uploadAttachmentFile(file, driveName) {
 
 
 /*
-  Function Name: buildAttachmentDriveName
+  Function Name: buildAttachmentDriveName_
   LAYMAN    : Gumagawa ng pangalan ng file sa Drive na may control number at
-              resubmit cycle, para kapag tiningnan sa raw na Drive folder,
+              resubmit_ cycle, para kapag tiningnan sa raw na Drive folder,
               madaling makita kung aling request at aling cycle galing — lalo
-              na pag may luma at bagong kopya pagkatapos mag-resubmit.
+              na pag may luma at bagong kopya pagkatapos mag-resubmit_.
   TECHNICAL : Returns "{controlNumber}__r{N}__{sanitized filename}". The display
               name in the sheet (RA.FILE) stays the friendly original filename;
               this convention is only the Drive object name for browsability.
   PARAMS    : controlNumber — request control number (e.g. EC-2026-00042-9B1).
-              resubmitN — resubmit cycle (0 = first submit, 1+ = resubmits).
+              resubmitN — resubmit_ cycle (0 = first submit, 1+ = resubmits).
               filename — original filename.
   RETURNS   : Convention-formatted Drive file name string.
 
   EXAMPLE
-    buildAttachmentDriveName("EC-2026-00042-9B1", 0, "Quotation.pdf")
+    buildAttachmentDriveName_("EC-2026-00042-9B1", 0, "Quotation.pdf")
     → "EC-2026-00042-9B1__Original__Quotation.pdf"
-    buildAttachmentDriveName("EC-2026-00042-9B1", 2, "Quotation.pdf")
+    buildAttachmentDriveName_("EC-2026-00042-9B1", 2, "Quotation.pdf")
     → "EC-2026-00042-9B1__Resubmit-2__Quotation.pdf"
 */
-function buildAttachmentDriveName(controlNumber, resubmitN, filename) {
-  var safeCtrl = sanitizeAttachmentFilename(controlNumber || "EC");
-  var safeName = sanitizeAttachmentFilename(filename || "attachment");
+function buildAttachmentDriveName_(controlNumber, resubmitN, filename) {
+  var safeCtrl = sanitizeAttachmentFilename_(controlNumber || "EC");
+  var safeName = sanitizeAttachmentFilename_(filename || "attachment");
   var n = parseInt(resubmitN) || 0;
   // Human-readable cycle label instead of a cryptic "r2": "Original" for the
   // first submission, "Resubmit-N" for the Nth resubmission.
@@ -203,7 +207,7 @@ function buildAttachmentDriveName(controlNumber, resubmitN, filename) {
 
 
 /*
-  Function Name: writeAttachmentRows
+  Function Name: writeAttachmentRows_
   LAYMAN    : Isulat ang lahat ng attachment rows sa Request_Attachments sheet
               sa isang lakad — hindi isa-isa. Mas mabilis at mas atomic kaysa
               N na appendRow calls.
@@ -211,22 +215,22 @@ function buildAttachmentDriveName(controlNumber, resubmitN, filename) {
               sheet.getRange(...).setValues(rows2D). FILE stores the friendly
               original filename (for display); FILE_LINK stores the Drive URL
               (server-side only — never sent to the frontend; downloadAttachment
-              extracts the fileId from it). APPENDS at getLastRow()+1, so resubmit
+              extracts the fileId from it). APPENDS at getLastRow()+1, so resubmit_
               re-uploads keep the existing rows.
   PARAMS    : requestId — the parent request ID.
               uploaded  — Array<{ fileId, url, filename, description }>.
-              cycle     — resubmit cycle the files belong to (0 = first submit).
+              cycle     — resubmit_ cycle the files belong to (0 = first submit).
   RETURNS   : (void).
 */
-function writeAttachmentRows(requestId, uploaded, cycle) {
+function writeAttachmentRows_(requestId, uploaded, cycle) {
   if (!uploaded || uploaded.length === 0) return;
-  var sheet         = getSheet(SHEET_NAMES.REQUEST_ATTACHMENTS);
+  var sheet         = getSheet_(SHEET_NAMES.REQUEST_ATTACHMENTS);
   var uploader      = Session.getActiveUser().getEmail();
   var now           = new Date();
   var resubmitCycle = parseInt(cycle, 10) || 0;
   var rows2D = uploaded.map(function(u) {
     var r = new Array(8).fill("");
-    r[RA.ATTACHMENT_ID  - 1] = generateRequestId() + "-ATT";
+    r[RA.ATTACHMENT_ID  - 1] = generateRequestId_() + "-ATT";
     r[RA.REQUEST_ID     - 1] = requestId;
     r[RA.FILE           - 1] = String(u.filename || "attachment");  // friendly name for display
     r[RA.FILE_LINK      - 1] = u.url;                               // Drive URL — server-side only
@@ -238,12 +242,12 @@ function writeAttachmentRows(requestId, uploaded, cycle) {
   });
   var startRow = sheet.getLastRow() + 1;
   sheet.getRange(startRow, 1, rows2D.length, 8).setValues(rows2D);
-  Logger.log("writeAttachmentRows(): Wrote " + rows2D.length + " attachment rows for " + requestId);
+  Logger.log("writeAttachmentRows_(): Wrote " + rows2D.length + " attachment rows for " + requestId);
 }
 
 
 /*
-  Function Name: extractDriveId
+  Function Name: extractDriveId_
   LAYMAN    : Kinukuha ang Drive file ID mula sa isang URL (o ibinabalik mismo
               kung ID na). Ginagamit para mahanap ang file kapag may magdo-download.
   TECHNICAL : Matches the first 25+ char [-\w] run — works for both a full Drive
@@ -251,7 +255,7 @@ function writeAttachmentRows(requestId, uploaded, cycle) {
   PARAMS    : link — a Drive URL or bare file ID.
   RETURNS   : The file ID string, or "" if not found.
 */
-function extractDriveId(link) {
+function extractDriveId_(link) {
   var m = String(link || "").match(/[-\w]{25,}/);
   return m ? m[0] : "";
 }
@@ -266,7 +270,7 @@ function extractDriveId(link) {
               na private ang mga sensitive documents (e.g. NDAs).
   TECHNICAL : Identity-gated file serving. Scans Request_Attachments for the
               attachmentId, resolves the parent request, applies the SAME gate as
-              getRequestDetail (requestor OR isChainApprover OR isAdmin), then returns the
+              getRequestDetail (requestor OR isChainApprover_ OR isAdmin_), then returns the
               file as base64 + mimeType + display filename. The 5 MB upload cap
               keeps the base64 payload within google.script.run limits.
   PARAMS    : attachmentId — the ATTACHMENT_ID value (e.g. "A3F-ATT").
@@ -276,13 +280,13 @@ function extractDriveId(link) {
   STEPS
     Step 1 — Locate the attachment row
       Layman    : Hanapin ang attachment sa sheet gamit ang ID.
-      Technical : getAllData(REQUEST_ATTACHMENTS) loop matching ATTACHMENT_ID.
+      Technical : getAllData_(REQUEST_ATTACHMENTS) loop matching ATTACHMENT_ID.
     Step 2 — Authorize via parent request
       Layman    : Requestor ka ba, approver ng request, o admin? Kung hindi → Unauthorized.
-      Technical : getRequestRowData(REQUEST_ID); sameEmail(REQUESTOR) || isChainApprover || isAdmin.
+      Technical : getRequestRowData_(REQUEST_ID); sameEmail_(REQUESTOR) || isChainApprover_ || isAdmin_.
     Step 3 — Return the file bytes
       Layman    : Kunin ang file sa Drive, ibalik bilang base64.
-      Technical : extractDriveId(FILE_LINK) → DriveApp.getFileById().getBlob().
+      Technical : extractDriveId_(FILE_LINK) → DriveApp.getFileById().getBlob().
 
   EXAMPLE
     downloadAttachment("A3F-ATT")
@@ -292,20 +296,20 @@ function extractDriveId(link) {
 */
 function downloadAttachment(attachmentId) {
   const caller  = Session.getActiveUser().getEmail();
-  const allData = getAllData(SHEET_NAMES.REQUEST_ATTACHMENTS);
+  const allData = getAllData_(SHEET_NAMES.REQUEST_ATTACHMENTS);
 
   for (let i = 1; i < allData.length; i++) {
     if (allData[i][RA.ATTACHMENT_ID - 1] === attachmentId) {
       const requestId = allData[i][RA.REQUEST_ID - 1];
 
       // Same gate as getRequestDetail: requestor, any chain approver, or admin.
-      const parentRow = getRequestRowData(requestId);
+      const parentRow = getRequestRowData_(requestId);
       if (!parentRow) return { success: false, error: "Request not found." };
-      if (!sameEmail(parentRow[CR.REQUESTOR - 1], caller) && !isChainApprover(parentRow, caller) && !isAdmin(caller)) {
+      if (!sameEmail_(parentRow[CR.REQUESTOR - 1], caller) && !isChainApprover_(parentRow, caller) && !isAdmin_(caller)) {
         return { success: false, error: "Unauthorized" };
       }
 
-      const fileId = extractDriveId(allData[i][RA.FILE_LINK - 1]);
+      const fileId = extractDriveId_(allData[i][RA.FILE_LINK - 1]);
       if (!fileId) return { success: false, error: "Attachment file reference is invalid." };
 
       try {
@@ -333,11 +337,11 @@ function downloadAttachment(attachmentId) {
 // where a request could sit in SYNCING status until files were attached.
 // Phase 8 replaced this with mandatory upload-before-submit: every new
 // request goes directly to PENDING_1 and arrives with all files already
-// in Drive. checkAttachmentSync and the SYNCING branch are no longer
+// in Drive. checkAttachmentSync_ and the SYNCING branch are no longer
 // on any live code path (submitNewRequest bypasses addAttachment entirely).
 // They remain here for reference and will be removed in a future cleanup PR.
 // The onSheetChange trigger (Triggers.js) is also DORMANT (unregistered);
-// handleAttachmentChange → checkAttachmentSync is therefore never called.
+// handleAttachmentChange → checkAttachmentSync_ is therefore never called.
 // ============================================================
 
 // ============================================================
@@ -347,7 +351,7 @@ function downloadAttachment(attachmentId) {
 // If yes — unlocks the parent request and starts approval routing.
 // ============================================================
 /*
-  Function Name: checkAttachmentSync
+  Function Name: checkAttachmentSync_
   ⚠️ DEPRECATED by Phase 8 — no longer on any live code path. submitNewRequest()
   now uploads all files BEFORE creating the request row (no SYNCING state ever
   written). This function remains dormant pending a cleanup PR.
@@ -357,31 +361,31 @@ function downloadAttachment(attachmentId) {
               ibig sabihin nagsisimula na ang approval routing at inemail ang
               unang approver. Kapalit ng AppSheet Sync Finisher Bot.
   TECHNICAL : Reads currentStatus and expectedAttachments; no-ops if status ≠
-              SYNCING; otherwise compares countAttachments() vs expected and on
-              threshold sets STATUS=PENDING_1, STEP=1, triggers sendApprovalRequest.
+              SYNCING; otherwise compares countAttachments_() vs expected and on
+              threshold sets STATUS=PENDING_1, STEP=1, triggers sendApprovalRequest_.
   PARAMS    : requestId — the parent request to check.
   RETURNS   : (void)
 
   STEPS
     Step 1 — Locate parent row
       Layman    : Hanapin ang request; kung wala → log at exit.
-      Technical : getRowNumberByRequestId; -1 → return.
+      Technical : getRowNumberByRequestId_; -1 → return.
     Step 2 — Guard: only act on SYNCING requests
       Layman    : Kung hindi "Syncing Files" ang status, wala na tayong gagawin.
       Technical : currentStatus !== STATUS.SYNCING → return.
     Step 3 — Compare actual vs expected
       Layman    : Bilang ng naka-upload vs bilang na kailangan.
-      Technical : countAttachments(requestId) vs expectedAttachments.
+      Technical : countAttachments_(requestId) vs expectedAttachments.
     Step 4 — Unlock if threshold met
       Layman    : Sapat na → Pending Approver 1; padala ng email sa approver.
-      Technical : setValue STATUS=PENDING_1, STEP=1; sendApprovalRequest.
+      Technical : setValue STATUS=PENDING_1, STEP=1; sendApprovalRequest_.
 
   EXAMPLE
     // Request expects 2 files; 1 uploaded already; 2nd just added
-    checkAttachmentSync("REQ-9b1")
+    checkAttachmentSync_("REQ-9b1")
     // → STATUS flips to "Pending Approver 1"; Approver 1 gets an email
 */
-function checkAttachmentSync(requestId) {
+function checkAttachmentSync_(requestId) {
   // PERMANENT NO-OP (schema normalization). The SYNCING status and the
   // Expected_Attachments column no longer exist — attachments are uploaded
   // before submit (Phase 8), and the request goes straight to PENDING_1. This
@@ -397,63 +401,22 @@ function checkAttachmentSync(requestId) {
 // Called when a requestor uploads a file through the portal.
 // Replaces AppSheet's automatic child row creation on file upload.
 // ============================================================
-/*
-  Function Name: addAttachment
-  ⚠️ DEPRECATED by Phase 8 — submitNewRequest() no longer calls this; it
-  writes attachment rows directly via writeAttachmentRows(). This function
-  remains available for any future post-submit attachment editing flow and
-  pending cleanup. Do NOT call it from the new submit path.
-
-  LAYMAN    : Idagdag ang isang file sa request. Requestor lang ng request
-              ang pwede. Pagkatapos idagdag, agad ino-trigger ang sync check —
-              baka ito na ang panghuli at makakapagsimula na ng approval.
-  TECHNICAL : Owner-guard (session caller === REQUESTOR); appends a row to
-              Request_Attachments; immediately calls checkAttachmentSync.
-  PARAMS    : requestId — parent request; fileLink — Drive URL/ID;
-              description — human label for the file.
-  RETURNS   : { success:false, error } on guard failure; (void) on success.
-
-  STEPS
-    Step 1 — Authorize (owner-only)
-      Layman    : Requestor ka ba ng request na ito? Kung hindi → Unauthorized.
-      Technical : getRequestRowData; sameEmail(REQUESTOR, caller) gate.
-    Step 2 — Build and append the attachment row
-      Layman    : Gumawa ng bagong ID, isulat ang row sa Request_Attachments.
-      Technical : attachmentId = generateRequestId() + "-ATT"; appendRow with RA.*
-    Step 3 — Trigger sync check
-      Layman    : Baka sapat na ang lahat — suriin agad.
-      Technical : checkAttachmentSync(requestId).
-
-  EXAMPLE
-    addAttachment("REQ-9b1", "https://drive.google.com/…", "Purchase Order PDF")
-    // → new row written; if this was the last required file, approval routing starts
-*/
-function addAttachment(requestId, fileLink, description) {
-  // Only the requestor who owns the parent request may attach files to it.
-  const caller    = Session.getActiveUser().getEmail();
-  const parentRow = getRequestRowData(requestId);
-  if (!parentRow) return { success: false, error: "Request not found." };
-  if (!sameEmail(parentRow[CR.REQUESTOR - 1], caller)) {
-    return { success: false, error: "Unauthorized" };
-  }
-
-  const sheet       = getSheet(SHEET_NAMES.REQUEST_ATTACHMENTS);
-  const attachmentId = generateRequestId() + "-ATT"; // e.g. A3F-ATT
-
-  const newRow = [];
-  newRow[RA.ATTACHMENT_ID - 1] = attachmentId;
-  newRow[RA.REQUEST_ID    - 1] = requestId;
-  newRow[RA.FILE          - 1] = fileLink;   // Google Drive file ID or URL
-  newRow[RA.FILE_LINK     - 1] = fileLink;
-  newRow[RA.DESCRIPTION   - 1] = description;
-
-  sheet.appendRow(newRow);
-
-  Logger.log(`addAttachment(): Added ${attachmentId} for request ${requestId}`);
-
-  // After adding the row, immediately check if sync is complete
-  checkAttachmentSync(requestId);
-}
+// REMOVED: addAttachment(requestId, fileLink, description).
+//
+// Deprecated by Phase 8 (submitNewRequest writes rows via writeAttachmentRows_)
+// and confirmed to have zero callers. Removed rather than kept-for-later because
+// it was an active privilege-escalation path, not merely dead weight:
+//
+//   Its owner guard was correct — but it wrote the CALLER-SUPPLIED fileLink into
+//   both RA.FILE and RA.FILE_LINK with no check that the ID points inside
+//   ATTACHMENTS_FOLDER_ID. downloadAttachment() authorizes the *request*, then
+//   trusts FILE_LINK. So on your OWN request you passed the guard and could then
+//   read ANY file in the script owner's Drive, served with the owner's full
+//   auth/drive scope. Ownership of a request is not ownership of a file.
+//
+// If a post-submit attachment flow is ever needed, reinstate it going through
+// uploadAttachmentFile_ (which creates the file in the correct folder) — never by
+// accepting a Drive ID from the client. Recover from git history for reference.
 
 
 // ============================================================
@@ -462,10 +425,10 @@ function addAttachment(requestId, fileLink, description) {
 // Called if a requestor removes a file before resubmitting.
 // ============================================================
 /*
-  Function Name: deleteAttachment
+  Function Name: deleteAttachment_
   LAYMAN    : I-delete ang isang attachment. Para lang sa requestor ng parent
               request nito — ibang tao hindi pwede. Ginagamit pag nag-aalis
-              ng file bago mag-resubmit.
+              ng file bago mag-resubmit_.
   TECHNICAL : Scans Request_Attachments for the attachmentId, resolves its
               parent request, owner-guards, then deletes the row (+1 offset
               because sheet rows are 1-based).
@@ -476,56 +439,45 @@ function addAttachment(requestId, fileLink, description) {
   STEPS
     Step 1 — Scan for the attachment row
       Layman    : Hanapin ang attachment row sa sheet.
-      Technical : getAllData loop matching ATTACHMENT_ID; i → Sheet row i+1.
+      Technical : getAllData_ loop matching ATTACHMENT_ID; i → Sheet row i+1.
     Step 2 — Authorize via parent request
       Layman    : Kunin ang parent request; requestor ka ba? Kung hindi → Unauthorized.
-      Technical : getRequestRowData(REQUEST_ID); sameEmail(REQUESTOR, caller) gate.
+      Technical : getRequestRowData_(REQUEST_ID); sameEmail_(REQUESTOR, caller) gate.
     Step 3 — Delete the row
       Layman    : Burahin ang row ng attachment.
       Technical : sheet.deleteRow(i + 1).
 
   EXAMPLE
-    deleteAttachment("A3F-ATT")
+    deleteAttachment_("A3F-ATT")
     → { success:true }   // row deleted
-    deleteAttachment("A3F-ATT")  // called by wrong user
+    deleteAttachment_("A3F-ATT")  // called by wrong user
     → { success:false, error:"Unauthorized" }
 */
-function deleteAttachment(attachmentId) {
+function deleteAttachment_(attachmentId) {
   const caller  = Session.getActiveUser().getEmail();
-  const sheet   = getSheet(SHEET_NAMES.REQUEST_ATTACHMENTS);
-  const allData = getAllData(SHEET_NAMES.REQUEST_ATTACHMENTS);
+  const sheet   = getSheet_(SHEET_NAMES.REQUEST_ATTACHMENTS);
+  const allData = getAllData_(SHEET_NAMES.REQUEST_ATTACHMENTS);
 
   for (let i = 1; i < allData.length; i++) {
     if (allData[i][RA.ATTACHMENT_ID - 1] === attachmentId) {
       // Only the requestor who owns the parent request may delete its files.
-      const parentRow = getRequestRowData(allData[i][RA.REQUEST_ID - 1]);
-      if (!parentRow || !sameEmail(parentRow[CR.REQUESTOR - 1], caller)) {
+      const parentRow = getRequestRowData_(allData[i][RA.REQUEST_ID - 1]);
+      if (!parentRow || !sameEmail_(parentRow[CR.REQUESTOR - 1], caller)) {
         return { success: false, error: "Unauthorized" };
       }
       sheet.deleteRow(i + 1); // +1 because sheet rows are 1-based
-      Logger.log(`deleteAttachment(): Removed ${attachmentId}`);
+      Logger.log(`deleteAttachment_(): Removed ${attachmentId}`);
       return { success: true };
     }
   }
 
-  Logger.log(`deleteAttachment(): Attachment ID not found — ${attachmentId}`);
+  Logger.log(`deleteAttachment_(): Attachment ID not found — ${attachmentId}`);
   return { success: false, message: "Attachment not found." };
 }
 
-function testDomainSharing() {
-  var testBlob = Utilities.newBlob("test", "text/plain", "sharing-test.txt");
-  var folder   = DriveApp.getFolderById(config_("ATTACHMENTS_FOLDER_ID"));
-  var file     = folder.createFile(testBlob);
-
-  try {
-    file.setSharing(DriveApp.Access.DOMAIN_WITH_LINK, DriveApp.Permission.VIEW);
-    Logger.log("✅ DOMAIN_WITH_LINK works — org-confidential sharing is available on this account.");
-  } catch (e) {
-    Logger.log("❌ DOMAIN_WITH_LINK failed: " + e.message);
-    Logger.log("→ Files will fall back to ANYONE_WITH_LINK (anyone with the link can view).");
-    Logger.log("→ Confirm with supervisor if this is acceptable for supporting documents.");
-  } finally {
-    file.setTrashed(true);
-    Logger.log("Test file cleaned up.");
-  }
-}
+// REMOVED: testDomainSharing() — a one-off diagnostic left over from the Phase 8
+// sharing investigation. It had zero callers, no doc block, and as a callable
+// global it let any authenticated user create + share + trash a file inside the
+// production attachments folder on demand. The question it answered (does
+// DOMAIN_WITH_LINK work on this account?) is now settled and recorded in the
+// go-live runbook. Recover from git history if it is ever needed again.

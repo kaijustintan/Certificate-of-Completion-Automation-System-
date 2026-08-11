@@ -46,7 +46,7 @@
 /*
   SHEET_NAMES — exact sheet tab names.
   LAYMAN    : Para hindi mamali ng spelling ng tab name kapag tumatawag.
-  TECHNICAL : Pass these to getSheet()/getDataRows(). The bound spreadsheet's
+  TECHNICAL : Pass these to getSheet_()/getDataRows_(). The bound spreadsheet's
               tabs MUST be named exactly these strings.
 */
 const SHEET_NAMES = {
@@ -70,7 +70,7 @@ const SHEET_NAMES = {
   TECHNICAL : 1-based. STATUS(3)/STEP(4)/RESUBMIT_COUNT(25) are denormalized
               read-cache, kept current by the record* write-accessors. GROUP(9)
               stores a group_id (FK → GRP.GROUP_ID). The per-approver columns,
-              previous-approvals, last-action-by, resubmit-history, and
+              previous-approvals, last-action-by, resubmit_-history, and
               expected-attachments are GONE — they live in Approval_Actions.
 */
 const CR = {
@@ -98,14 +98,14 @@ const CR = {
   CONTRACT_END:         22,  // V
   SUPPLIER_NAME:        23,  // W
   REQUESTOR_REMARK:     24,  // X
-  RESUBMIT_COUNT:       25,  // Y  ← cache (count of resubmit cycles)
+  RESUBMIT_COUNT:       25,  // Y  ← cache (count of resubmit_ cycles)
 };
 
 
 /*
   ACT — Activity_Log column map (append-only timeline; the audit log).
-  LAYMAN    : Bawat galaw sa isang request — submit, approve, decline, return,
-              resubmit — ay isang row dito. Hindi kailanman binubura o
+  LAYMAN    : Bawat galaw sa isang request — submit, approve_, decline_, return,
+              resubmit_ — ay isang row dito. Hindi kailanman binubura o
               binabago. Dito kinukuha ang buong kasaysayan. Tab name: "Activity_Log".
   TECHNICAL : 1-based, 9 cols. One row per action, append-only. GROUP_ID is
               denormalized here so the log is self-sufficient for audit (which
@@ -118,11 +118,11 @@ const ACT = {
   ACTION_ID:      1,  // A  ← KEY
   REQUEST_ID:     2,  // B  ← FK → CR.REQUEST_ID
   GROUP_ID:       3,  // C  ← FK → GRP.GROUP_ID (denormalized for standalone audit)
-  RESUBMIT_CYCLE: 4,  // D  (0 = first cycle, 1+ after each resubmit)
-  APPROVER_STEP:  5,  // E  (approver position 1/2/3; blank for submit/resubmit)
+  RESUBMIT_CYCLE: 4,  // D  (0 = first cycle, 1+ after each resubmit_)
+  APPROVER_STEP:  5,  // E  (approver position 1/2/3; blank for submit/resubmit_)
   ACTOR_EMAIL:    6,  // F  (who performed the action)
   ACTION:         7,  // G  ← ACTION enum
-  REMARK:         8,  // H  (comment / decline reason / return reason)
+  REMARK:         8,  // H  (comment / decline_ reason / return reason)
   TIMESTAMP:      9,  // I  (server time)
 };
 
@@ -132,7 +132,7 @@ const ACT = {
   LAYMAN    : Tuwing ma-generate ang COC PDF (pag fully approved), may row dito —
               link sa PDF, Drive file id, at kailan ginawa. Naka-refer sa request.
               Hiwalay na table para kung mag-re-issue/regenerate, may kasaysayan.
-  TECHNICAL : 1-based. Appended by generateCOC() on full approval. 1:many-capable
+  TECHNICAL : 1-based. Appended by generateCOC_() on full approval. 1:many-capable
               (re-issuance) — request_id is the FK, not unique.
 */
 const COCPDF = {
@@ -182,7 +182,7 @@ const GAP = {
 /*
   RA — Request_Attachments column map.
   LAYMAN    : Mga naka-attach na supporting documents bawat request, kasama
-              kung aling resubmit cycle at sino ang nag-upload.
+              kung aling resubmit_ cycle at sino ang nag-upload.
   TECHNICAL : 1-based. FILE(3) holds the friendly filename (Phase 8); FILE_LINK(4)
               the Drive URL (server-side only). RESUBMIT_CYCLE/UPLOADED_BY/
               UPLOADED_AT added during normalization.
@@ -219,9 +219,9 @@ const ADM = {
               aling group, ano ang nabago, at kailan. Hindi binubura. Hiwalay
               ito sa Activity_Log dahil iba ang klase (config-scoped, walang
               request_id). Tab name: "Admins_Log".
-  TECHNICAL : 1-based, 6 cols, append-only. Written ONLY via appendAdminLog()
+  TECHNICAL : 1-based, 6 cols, append-only. Written ONLY via appendAdminLog_()
               from the admin* mutations. Deliberately NOT in Activity_Log
-              (request-scoped; getApprovalView walks it). ACTION = ADMIN_ACTION.
+              (request-scoped; getApprovalView_ walks it). ACTION = ADMIN_ACTION.
 */
 const ADL = {
   LOG_ID:       1,  // A  ← KEY
@@ -261,7 +261,7 @@ const STATUS = {
               timeline. The three EXPIRY_* values are SYSTEM-written idempotency
               flags (#10) — appended by checkContractExpiries() when each renewal
               reminder is emailed (T-3 / day-of / overdue), so the daily sweep
-              never double-notifies for the same stage. getApprovalView() ignores
+              never double-notifies for the same stage. getApprovalView_() ignores
               them (it only branches on approved/declined/returned/resubmitted),
               so history reconstruction is unaffected.
 */
@@ -281,7 +281,7 @@ const ACTION = {
   ADMIN_ACTION — the Admins_Log.action enum (ADL.ACTION values).
   LAYMAN    : Anong klaseng galaw ng admin — gumawa ng group, nagpangalan,
               nag-activate/deactivate, o nagpalit ng approver chain.
-  TECHNICAL : Stored lowercase in ADL.ACTION. Written by appendAdminLog() from
+  TECHNICAL : Stored lowercase in ADL.ACTION. Written by appendAdminLog_() from
               the admin* mutations in Admin.js. Config-scoped audit — separate
               from the request-scoped ACTION enum.
 */
@@ -306,7 +306,7 @@ const ADMIN_ACTION = {
   COC — Certificate of Completion (Phase 9) + supporting-docs upload (Phase 8).
   LAYMAN    : Tatlong "address": (1) ang Google Docs template, (2) folder ng
               na-generate na COC PDF, (3) folder ng supporting documents.
-  TECHNICAL : Used by generateCOC() (Certificate.js) and uploadAttachmentFile()
+  TECHNICAL : Used by generateCOC_() (Certificate.js) and uploadAttachmentFile_()
               (Attachments.js). Keep ATTACHMENTS_FOLDER_ID separate from
               ARCHIVE_FOLDER_ID. Both folders should be Restricted in Drive.
   ⚠️ SETUP  : Swap folder IDs to the Megaworld prod folders at go-live.
@@ -330,7 +330,7 @@ const COC = {
   personal/DLSU account.
 
   TECHNICAL:
-  Deployment-scoped allowlist, checked server-side by isAllowedDomain()
+  Deployment-scoped allowlist, checked server-side by isAllowedDomain_()
   (WebApp.js) at the app entry point (getCurrentUser) and at request creation
   (submitNewRequest). This is DEFENCE IN DEPTH, not the primary gate — the
   real gate is the Apps Script deployment setting "Who has access: Anyone
@@ -511,8 +511,17 @@ function _testConfig() {
   });
   Logger.log("EMAIL_DEV_TAG = " + configFlag_("EMAIL_DEV_TAG", EMAIL_DEV_TAG) +
              "   (source literal = " + EMAIL_DEV_TAG + ")");
-  Logger.log("ORG.ALLOWED_DOMAINS = " + JSON.stringify(ORG.ALLOWED_DOMAINS) +
+  // ⚠️ This control FAILS OPEN by design (empty array = allow every domain), which
+  // is correct for dev and wrong for production. Because a forgotten setting here
+  // is silent — everyone simply keeps working — the smoke test has to shout.
+  const domains = (typeof ORG !== "undefined" && ORG.ALLOWED_DOMAINS) || [];
+  Logger.log("ORG.ALLOWED_DOMAINS = " + JSON.stringify(domains) +
              "   [source only — deliberately NOT a Script Property]");
+  Logger.log(domains.length
+    ? "  → domain gate ACTIVE: only these domains may sign in."
+    : "  → ⚠️ DOMAIN GATE OFF — ANY Google account that can open the app is allowed. " +
+      "Correct for dev. BEFORE GO-LIVE set ORG.ALLOWED_DOMAINS in Constants.js " +
+      "(e.g. [\"megaworldcorp.com\"]). See GO_LIVE_RUNBOOK Phase D1b.");
   // Fail-loud proof, using a key that can never hold a real value.
   try {
     config_("NO_SUCH_KEY_SMOKE_TEST");

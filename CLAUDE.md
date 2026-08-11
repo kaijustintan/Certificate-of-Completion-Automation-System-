@@ -21,7 +21,7 @@ The database is **normalized into 8 sheets**. Use the column-map constants from 
 - `Requests` (`CR.*`) — 25 cols (A–Y). The core request row. Key: STATUS(3), STEP(4), GROUP(9 = a **group_id** FK → Groups, not a name), RESUBMIT_COUNT(25). ⚠️ STATUS / STEP / RESUBMIT_COUNT are a denormalized **read-cache** — the source of truth is `Activity_Log`. They're kept current only via `setRequestCache()` in `Accessors.js`.
 - `Activity_Log` (`ACT.*`) — 9 cols. The **append-only** action timeline (submit / approve / decline / return / resubmit). Never updated or deleted. Replaces the old flat App1/2/3 date+remark, Previous_Approvals, Last_Action_By, Resubmit_History columns.
 - `Groups` (`GRP.*`) — registry; surrogate `group_id` PK (e.g. `G001`) so a group can be renamed without breaking routing.
-- `Group_Approvers` (`GAP.*`) — the normalized approver chain. Composite key (group_id, sequence). **Unlimited** approvers (no more 3-slot cap); `ACTIVE` soft-disables a slot.
+- `Group_Approvers` (`GAP.*`) — the normalized approver chain. Composite key (group_id, sequence). `ACTIVE` soft-disables a slot. ⚠️ **The schema stores N approvers, but routing is still hard-capped at 3.** `getApprovers()` only reads sequences 1–3, `approve()` only branches steps 1–3, and `isChainApprover()` only checks slots 1–3. A hand-added `sequence = 4` row resolves in `getCurrentApprover()` but **fails `isChainApprover()`, silently locking that request out permanently.** Lifting the cap is a real (unstarted) change to those three functions — do not describe the chain as "unlimited."
 - `Request_Attachments` (`RA.*`) — 8 cols. Adds RESUBMIT_CYCLE(6), UPLOADED_BY(7), UPLOADED_AT(8).
 - `Admins` (`ADM.*`) — allowlist for the admin role (managed by hand — no UI).
 - `Admins_Log` (`ADL.*`) — 6 cols. **Append-only** audit of admin group/chain actions (`log_id | admin_email | action | target_group | details | timestamp`). Written only via `appendAdminLog()`. Separate from `Activity_Log` because admin actions are config-scoped (no `request_id`) and must not pollute `getApprovalView`.
@@ -45,7 +45,7 @@ The database is **normalized into 8 sheets**. Use the column-map constants from 
 
 `ACTION.*` from `Constants.js`: `SUBMITTED | APPROVED | DECLINED | RETURNED | RESUBMITTED` (stored lowercase). The timeline's action drives derived status, history, who-acted, and N-of-M.
 
-> Two **system** action values also exist: `EXPIRY_WARNING | EXPIRY_NOTICE` (#10). They are idempotency flags written by `checkContractExpiries()` when a contract-expiry reminder is emailed — NOT approval events. `getApprovalView()` ignores them (it only branches on the five workflow actions), so history reconstruction is unaffected. Don't treat them as approval history.
+> Three **system** action values also exist: `EXPIRY_WARNING | EXPIRY_NOTICE | EXPIRY_OVERDUE` (#10). They are idempotency flags written by `checkContractExpiries()` when a contract-expiry reminder is emailed — NOT approval events. `getApprovalView()` ignores them (it only branches on the five workflow actions), so history reconstruction is unaffected. Don't treat them as approval history.
 
 ## Authorization pattern (backend)
 
@@ -54,7 +54,28 @@ Every sensitive callable must:
 2. Load the row: `const row = getRequestRowData(requestId);`
 3. Guard BEFORE any sheet write: `if (!isCurrentApprover(row, caller)) return { success:false, error:"Unauthorized" };`
 
-Auth helpers in `WebApp.js`: `normalizeEmail`, `sameEmail`, `getRequestRowData`, `isCurrentApprover`, `isChainApprover`.
+Auth helpers in `WebApp.js`: `normalizeEmail`, `sameEmail`, `isAllowedDomain`, `isOwnerContext_`, `getRequestRowData`, `isCurrentApprover`, `isChainApprover`.
+
+### ⚠️ Every top-level function is a public endpoint
+
+There is no route table. **Any** top-level function in **any** `.js` file is directly invocable from a user's browser console via `google.script.run.fnName(args)`. Hiding a button, gating a page, or never calling something from the frontend provides **zero** security. This is the single most important thing to know about this codebase.
+
+The only mechanism that removes a function from that surface is a **trailing underscore** (`fnName_`), which Apps Script refuses to expose while keeping it callable server-side. A **leading** underscore (`_fnName`) does **nothing** — `_testConfig` and `_testGenerateCOC` are both reachable.
+
+So, when adding a backend function, pick one:
+1. **Internal helper** → name it `fnName_`. This is the default; prefer it.
+2. **Genuinely called by the frontend** → keep the bare name AND guard it: resolve identity from `Session`, then authorize before the first side effect.
+3. **Trigger handler / editor-run helper** (cannot take an underscore) → guard with `isOwnerContext_()`, which compares `getActiveUser()` to `getEffectiveUser()` and so passes only for the owner or a trigger run.
+
+Guarding a wrapper is not enough if the primitive underneath is also callable — that was the gap behind the `Approvals.js` hardening: the mutators were guarded while `setRequestCache`/`appendAction` were not.
+
+### Domain allowlist — `ORG.ALLOWED_DOMAINS` (`Constants.js`)
+
+Server-side backstop behind the deployment's "Anyone within &lt;domain&gt;" setting, enforced by `isAllowedDomain()` in `getCurrentUser()` and `submitNewRequest()`.
+
+⚠️ **It FAILS OPEN: an empty array allows every domain.** That is correct for dev and wrong for production, and because the failure is silent (everyone just keeps working) it will not surface on its own. It ships as `[]`. Set it to `["megaworldcorp.com"]` at go-live — `_testConfig` prints a loud warning while it is empty. A blank email is rejected regardless of this setting.
+
+Deliberately kept in source, **not** a Script Property: it is a security control, so it should be version-controlled, diffable and code-reviewed rather than silently editable with no audit trail.
 
 ### Email comparison — always `sameEmail()`, never `===`
 
@@ -72,7 +93,7 @@ Never use `===` to compare emails. Always use `sameEmail(a, b)` from `WebApp.js`
 - **HTML layer = `backend/EmailHtml.js`** — `emailLayout({accent, bodyHtml, buttonUrl, buttonLabel})` (table-based, inline styles, 600px centered, per-status accent band: navy=action-needed, green=approved, red=declined, amber=returned/expiry), `emailButton` (always navy — the band carries the status signal, never the CTA), plus `emailInfoTable`/`emailSection`/`emailKeyValueRows`/`emailAttachmentList`/`emailApprovalLog`/`emailRemarkBox`/`emailDivider`. **Every `email*` helper escapes its own inputs** via the server-side `escapeHtml()` (EmailHtml.js — distinct from the frontend one, different runtimes); any value interpolated directly into HTML must be escaped at the call site.
 - Subject via `emailSubject(controlNumber, statusLabel, audience)` → `[COC Request]: <ctrl> | <Status>`
 - Body: greeting → `buildInfoBlock(rowData)` → sections → `getPortalUrl(requestId, page)` deep-link
-- `EMAIL_DEV_TAG = true` in `Emails.js` — **flip to `false` before production go-live**
+- `EMAIL_DEV_TAG` — **flip to `false` before production go-live.** Resolution is **Script Property → the `Emails.js` source literal**, via `emailDevTag_()` → `configFlag_()`. Preferred: set the `EMAIL_DEV_TAG` Script Property to `false`. ⚠️ The property **overrides** the literal, so editing `Emails.js` while a stale property exists silently does nothing. Fail-soft: defaults to `true`, so a forgotten setting sends visibly-test mail rather than silently-production mail.
 - Deep-links use query params (`?page=review&id=XXX`), NOT hash fragments (iframe can't read hash)
 - `getPortalUrl()` uses `ScriptApp.getService().getUrl()` — confirmed to return the `/exec` URL, not `/dev`
 
@@ -160,7 +181,7 @@ The admin side lives in **`backend/Admin.js`** (callables) + **`frontend/pages/A
 
 There are **two** daily ~8am time-based triggers (no longer just one). The second, `checkPendingApprovals()` (`Triggers.js`), nudges whoever is **currently** holding up a pending request, because approvers sometimes miss the original "needs your approval" email (it gets buried). It sweeps all `PENDING_1/2/3` rows, resolves the responsible approver per row via `getCurrentApprover(step, group)`, **buckets by `normalizeEmail()`**, and sends `sendPendingApprovalReminder()` — **one digest email per approver** listing all their pending requests with `?page=review` deep-links.
 
-⚠️ **Idempotency is the schedule itself, NOT an `Activity_Log` flag** — deliberately the opposite of the expiry sweep. A daily nudge is *meant* to repeat, so the once-a-day trigger run is the only guard; the function writes **nothing** to `Activity_Log` and adds **no `ACTION` enum value** (logging one row per pending request per day would bloat the append-only timeline). Purely additive, backend-only — no DTO/column/frontend change. ⚠️ Register manually **once per Google account** via `registerApproverReminderTrigger()` (not created by `clasp push`); it's the **3rd** per-account trigger registration alongside `registerTrigger()` and `registerExpiryTrigger()`.
+⚠️ **Idempotency is the schedule itself, NOT an `Activity_Log` flag** — deliberately the opposite of the expiry sweep. A daily nudge is *meant* to repeat, so the once-a-day trigger run is the only guard; the function writes **nothing** to `Activity_Log` and adds **no `ACTION` enum value** (logging one row per pending request per day would bloat the append-only timeline). Purely additive, backend-only — no DTO/column/frontend change. ⚠️ Register manually **once per Google account** via `registerApproverReminderTrigger()` (not created by `clasp push`). There are exactly **TWO** per-account registrations: this one and `registerExpiryTrigger()`. `registerTrigger()` is **not** a third — it is intentionally disabled and throws, because registering the legacy `onSheetChange` path would double-send every workflow email.
 
 ## Documentation standard
 

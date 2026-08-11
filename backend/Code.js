@@ -16,6 +16,6 @@
   or manual admin utilities.
 */
 
-function myFunction() {
-
-}
+// (No functions here. The auto-generated myFunction() stub was removed — it was
+// empty, unreferenced, and every top-level function is exposed to
+// google.script.run, so an empty global is pure surface with no purpose.)

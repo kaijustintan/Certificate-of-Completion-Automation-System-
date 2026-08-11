@@ -14,7 +14,7 @@
   Emails.js calls these with no imports. Table-based layout (Outlook's Word
   engine ignores div max-width; <table align="center" width="600"> is the
   only universal centering). ALL styles inline (email constraint). Every
-  email* helper escapes its own inputs via escapeHtml() — send functions can
+  email* helper escapes its own inputs via escapeHtml_() — send functions can
   compose helpers blindly; any value interpolated directly into a template
   must be escaped at the interpolation site. Colors hardcoded hex (email has
   no CSS vars), mirroring the frontend :root palette.
@@ -22,21 +22,21 @@
   OUTLINE:
     THEME + ESCAPING
       - EMAIL_THEME                         hex palette + font stack const
-      - escapeHtml(value)                   server-side HTML entity escaper
+      - escapeHtml_(value)                   server-side HTML entity escaper
     LAYOUT
-      - emailLayout(opts)                   full document wrapper (header/band/body/button/footer)
-      - emailButton(url, label)             bulletproof navy CTA button
-      - emailDivider()                      full-width separator row (digest blocks)
+      - emailLayout_(opts)                   full document wrapper (header/band/body/button/footer)
+      - emailButton_(url, label)             bulletproof navy CTA button
+      - emailDivider_()                      full-width separator row (digest blocks)
     CONTENT BLOCKS
-      - emailP(html)                        one styled paragraph
-      - emailSection(title, innerHtml)      uppercase mini-heading + content
-      - emailKeyValueRows(pairs)            2-col label/value table from [[k,v],...]
-      - emailInfoTable(rowData)             HTML twin of buildInfoBlock()
-      - emailAttachmentList(requestId)      HTML twin of buildAttachmentList()
-      - emailApprovalLog(rowData, approvers) HTML twin of buildApprovalLog()
-      - emailRemarkBox(label, text, tone)   tinted callout (red/amber/blue/green)
+      - emailP_(html)                        one styled paragraph
+      - emailSection_(title, innerHtml)      uppercase mini-heading + content
+      - emailKeyValueRows_(pairs)            2-col label/value table from [[k,v],...]
+      - emailInfoTable_(rowData)             HTML twin of buildInfoBlock_()
+      - emailAttachmentList_(requestId)      HTML twin of buildAttachmentList_()
+      - emailApprovalLog_(rowData, approvers) HTML twin of buildApprovalLog_()
+      - emailRemarkBox_(label, text, tone)   tinted callout (red/amber/blue/green)
     SEND
-      - sendBrandedEmail(recipient, subject, textBody, htmlBody, extraOptions)
+      - sendBrandedEmail_(recipient, subject, textBody, htmlBody, extraOptions)
 */
 
 
@@ -69,7 +69,7 @@ const EMAIL_THEME = {
 };
 
 /*
-  Function Name: escapeHtml
+  Function Name: escapeHtml_
 
   LAYMAN (Tropang Ex):
   Pang-ligtas bago isingit ang user-typed na text (project title, remarks,
@@ -77,7 +77,7 @@ const EMAIL_THEME = {
   lalabas itong harmless na text imbes na tumakbo bilang code.
 
   TECHNICAL:
-  Server-side HTML entity escaper (& < > " '). The frontend escapeHtml in
+  Server-side HTML entity escaper (& < > " '). The frontend escapeHtml_ in
   JavaScript.html is browser-scope only and unreachable from server code —
   no collision (different runtimes). null/undefined → "".
 
@@ -87,7 +87,7 @@ const EMAIL_THEME = {
   RETURNS:
   Escaped string safe for HTML interpolation.
 */
-function escapeHtml(value) {
+function escapeHtml_(value) {
   return String(value == null ? "" : value)
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
@@ -100,7 +100,7 @@ function escapeHtml(value) {
 // ─── LAYOUT ─────────────────────────────────────────────────
 
 /*
-  Function Name: emailLayout
+  Function Name: emailLayout_
 
   LAYMAN (Tropang Ex):
   Ito ang "frame" ng bawat email — yung Megaworld header sa taas, yung
@@ -118,8 +118,8 @@ function escapeHtml(value) {
 
   PARAMS:
   - opts.accent      — 'navy' | 'green' | 'red' | 'amber' (default 'navy').
-  - opts.bodyHtml    — inner HTML (compose from emailP/emailSection/etc).
-  - opts.buttonUrl   — optional; renders emailButton when present.
+  - opts.bodyHtml    — inner HTML (compose from emailP_/emailSection_/etc).
+  - opts.buttonUrl   — optional; renders emailButton_ when present.
   - opts.buttonLabel — optional; button text (default "Open this request").
 
   RETURNS:
@@ -138,14 +138,14 @@ function escapeHtml(value) {
       Layman    : Ilagay ang laman sa puting card, idagdag ang button kung
                   meron, tapos ang footer sa dulo.
       Technical : White content td (24px padding) renders bodyHtml; button
-                  row via emailButton(); footer td in 12px muted text.
+                  row via emailButton_(); footer td in 12px muted text.
 
   EXAMPLE
-    emailLayout({ accent: 'green', bodyHtml: emailP('Good day!'),
-                  buttonUrl: getPortalUrl(id, 'request') })
+    emailLayout_({ accent: 'green', bodyHtml: emailP_('Good day!'),
+                  buttonUrl: getPortalUrl_(id, 'request') })
     → '<table width="100%" ...>…MEGAWORLD…Good day!…Open this request…</table>'
 */
-function emailLayout(opts) {
+function emailLayout_(opts) {
   opts = opts || {};
   const accentMap = {
     navy:  EMAIL_THEME.navy,
@@ -158,7 +158,7 @@ function emailLayout(opts) {
   const buttonRow = opts.buttonUrl
     ? '<tr><td align="center" bgcolor="#ffffff" ' +
         'style="background-color: #ffffff; padding: 8px 24px 28px;">' +
-        emailButton(opts.buttonUrl, opts.buttonLabel || "Open this request") +
+        emailButton_(opts.buttonUrl, opts.buttonLabel || "Open this request") +
       "</td></tr>"
     : "";
 
@@ -204,7 +204,7 @@ function emailLayout(opts) {
 }
 
 /*
-  Function Name: emailButton
+  Function Name: emailButton_
 
   LAYMAN (Tropang Ex):
   Yung "Open this request" na button sa email — totoong button na navy,
@@ -214,25 +214,25 @@ function emailLayout(opts) {
   Bulletproof button: single-cell table with bgcolor + padded inline-styled
   <a> (display:inline-block) — survives Outlook. ALWAYS navy: a red/amber
   CTA reads as a warning and suppresses clicks; the header accent band
-  carries the status signal instead. URL passed through escapeHtml (it's
+  carries the status signal instead. URL passed through escapeHtml_ (it's
   encodeURIComponent-built upstream, but uniform escaping is free).
 
   PARAMS:
-  - url   — href (use getPortalUrl(); never hand-build deep links).
+  - url   — href (use getPortalUrl_(); never hand-build deep links).
   - label — button text.
 
   RETURNS:
   HTML string — a one-cell table wrapping the styled anchor.
 */
-function emailButton(url, label) {
+function emailButton_(url, label) {
   return (
     '<table cellpadding="0" cellspacing="0" border="0" align="center"><tr>' +
       '<td bgcolor="' + EMAIL_THEME.navy + '" style="background-color:' + EMAIL_THEME.navy + "; " +
         'border-radius: 6px;">' +
-        '<a href="' + escapeHtml(url) + '" ' +
+        '<a href="' + escapeHtml_(url) + '" ' +
           'style="display: inline-block; padding: 12px 28px; font-family:' + EMAIL_THEME.fontStack + "; " +
           'font-size: 14px; font-weight: 600; color: #ffffff; text-decoration: none;">' +
-          escapeHtml(label) +
+          escapeHtml_(label) +
         "</a>" +
       "</td>" +
     "</tr></table>"
@@ -240,14 +240,14 @@ function emailButton(url, label) {
 }
 
 /*
-  Function Name: emailDivider
+  Function Name: emailDivider_
   LAYMAN    : Manipis na linya na naghihiwalay ng mga request blocks sa
               digest email (yung isang email na maraming requests).
   TECHNICAL : Full-width border-top div; spacing above/below.
   PARAMS    : (none)
   RETURNS   : HTML string.
 */
-function emailDivider() {
+function emailDivider_() {
   return '<div style="border-top: 1px solid ' + EMAIL_THEME.border + '; margin: 20px 0;"></div>';
 }
 
@@ -255,7 +255,7 @@ function emailDivider() {
 // ─── CONTENT BLOCKS ─────────────────────────────────────────
 
 /*
-  Function Name: emailP
+  Function Name: emailP_
   LAYMAN    : Isang paragraph na may tamang font at spacing para sa email.
   TECHNICAL : <p> with inline styles. Caller passes PRE-ESCAPED content
               (or composed helper output) — this does NOT escape, so
@@ -263,13 +263,13 @@ function emailDivider() {
   PARAMS    : html — inner HTML (escape user values at the call site!).
   RETURNS   : HTML string.
 */
-function emailP(html) {
+function emailP_(html) {
   return '<p style="margin: 0 0 16px; font-family:' + EMAIL_THEME.fontStack + "; " +
     "font-size: 14px; line-height: 1.5; color:" + EMAIL_THEME.text + ';">' + html + "</p>";
 }
 
 /*
-  Function Name: emailSection
+  Function Name: emailSection_
   LAYMAN    : May maliit na uppercase na title (hal. "SUPPORTING DOCUMENTS")
               tapos yung laman sa ilalim — kapalit ng mga "Label:" sa
               plain-text emails.
@@ -278,13 +278,13 @@ function emailP(html) {
   PARAMS    : title — section label; innerHtml — section content HTML.
   RETURNS   : HTML string.
 */
-function emailSection(title, innerHtml) {
+function emailSection_(title, innerHtml) {
   return (
     '<div style="margin: 0 0 16px;">' +
       '<div style="font-family:' + EMAIL_THEME.fontStack + "; font-size: 11px; font-weight: 600; " +
         "text-transform: uppercase; letter-spacing: 0.06em; color:" + EMAIL_THEME.muted + "; " +
         "padding-bottom: 6px; border-bottom: 1px solid " + EMAIL_THEME.border + '; margin-bottom: 8px;">' +
-        escapeHtml(title) +
+        escapeHtml_(title) +
       "</div>" +
       innerHtml +
     "</div>"
@@ -292,7 +292,7 @@ function emailSection(title, innerHtml) {
 }
 
 /*
-  Function Name: emailKeyValueRows
+  Function Name: emailKeyValueRows_
 
   LAYMAN (Tropang Ex):
   Gumagawa ng maliit na two-column table: label sa kaliwa (kulay gray),
@@ -309,12 +309,12 @@ function emailSection(title, innerHtml) {
   RETURNS:
   HTML string — a full-width borderless table.
 */
-function emailKeyValueRows(pairs) {
+function emailKeyValueRows_(pairs) {
   const rows = (pairs || []).map(function (p) {
-    const val = (p[1] == null || p[1] === "") ? "&mdash;" : escapeHtml(p[1]);
+    const val = (p[1] == null || p[1] === "") ? "&mdash;" : escapeHtml_(p[1]);
     return "<tr>" +
       '<td style="font-family:' + EMAIL_THEME.fontStack + "; font-size: 13px; color:" + EMAIL_THEME.muted + "; " +
-        'padding: 4px 16px 4px 0; vertical-align: top; white-space: nowrap;">' + escapeHtml(p[0]) + "</td>" +
+        'padding: 4px 16px 4px 0; vertical-align: top; white-space: nowrap;">' + escapeHtml_(p[0]) + "</td>" +
       '<td style="font-family:' + EMAIL_THEME.fontStack + "; font-size: 13px; color:" + EMAIL_THEME.text + "; " +
         'padding: 4px 0; vertical-align: top;">' + val + "</td>" +
     "</tr>";
@@ -323,44 +323,44 @@ function emailKeyValueRows(pairs) {
 }
 
 /*
-  Function Name: emailInfoTable
-  LAYMAN    : HTML na kapatid ng buildInfoBlock() — yung apat na laging
+  Function Name: emailInfoTable_
+  LAYMAN    : HTML na kapatid ng buildInfoBlock_() — yung apat na laging
               kasama sa bawat email: title, control number, requestor, group.
-  TECHNICAL : Same CR reads as buildInfoBlock (Emails.js); values escaped
-              by emailKeyValueRows. Group id resolved via getGroupNameById.
+  TECHNICAL : Same CR reads as buildInfoBlock_ (Emails.js); values escaped
+              by emailKeyValueRows_. Group id resolved via getGroupNameById_.
   PARAMS    : rowData — the 25-col Requests row array (0-based reads).
   RETURNS   : HTML string — key/value table.
 */
-function emailInfoTable(rowData) {
-  return emailKeyValueRows([
+function emailInfoTable_(rowData) {
+  return emailKeyValueRows_([
     ["E-Certificate Title", rowData[CR.PROJECT_TITLE - 1]],
     ["E-Certificate ID",    rowData[CR.CONTROL_NUMBER - 1]],
     ["Requestor",           rowData[CR.REQUESTOR - 1]],
-    ["Group",               getGroupNameById(rowData[CR.GROUP - 1])],
+    ["Group",               getGroupNameById_(rowData[CR.GROUP - 1])],
   ]);
 }
 
 /*
-  Function Name: emailAttachmentList
+  Function Name: emailAttachmentList_
   LAYMAN    : HTML na listahan ng mga supporting documents — filename at
               description bawat isa. WALANG links sa files — sadyang ganoon,
               kasi gated ang file serving (dapat dumaan sa portal).
-  TECHNICAL : HTML twin of buildAttachmentList() (Emails.js). Same source
-              (getAttachmentsForRequest) + same empty-state copy. Filenames
+  TECHNICAL : HTML twin of buildAttachmentList_() (Emails.js). Same source
+              (getAttachmentsForRequest_) + same empty-state copy. Filenames
               and descriptions escaped. Deliberately NO file URLs.
   PARAMS    : requestId — the request id.
   RETURNS   : HTML string — <ul> of items, or a muted empty-state line.
 */
-function emailAttachmentList(requestId) {
-  const attachments = getAttachmentsForRequest(requestId);
+function emailAttachmentList_(requestId) {
+  const attachments = getAttachmentsForRequest_(requestId);
   if (attachments.length === 0) {
     return '<div style="font-family:' + EMAIL_THEME.fontStack + "; font-size: 13px; color:" + EMAIL_THEME.muted + ';">' +
       "No supporting documents uploaded.</div>";
   }
   const items = attachments.map(function (row) {
     return '<li style="margin: 0 0 4px;">' +
-      "<strong>" + escapeHtml(row[RA.FILE - 1]) + "</strong>" +
-      (row[RA.DESCRIPTION - 1] ? " &mdash; " + escapeHtml(row[RA.DESCRIPTION - 1]) : "") +
+      "<strong>" + escapeHtml_(row[RA.FILE - 1]) + "</strong>" +
+      (row[RA.DESCRIPTION - 1] ? " &mdash; " + escapeHtml_(row[RA.DESCRIPTION - 1]) : "") +
     "</li>";
   }).join("");
   return '<ul style="font-family:' + EMAIL_THEME.fontStack + "; font-size: 13px; color:" + EMAIL_THEME.text + "; " +
@@ -368,17 +368,17 @@ function emailAttachmentList(requestId) {
 }
 
 /*
-  Function Name: emailApprovalLog
+  Function Name: emailApprovalLog_
   LAYMAN    : HTML na bersyon ng approval history — sino-sinong approver na
               ang pumirma at kailan. Galing pa rin sa Activity_Log timeline.
-  TECHNICAL : HTML twin of buildApprovalLog() (Emails.js) — same
-              getApprovalView() per-step reads + same slot resolution +
+  TECHNICAL : HTML twin of buildApprovalLog_() (Emails.js) — same
+              getApprovalView_() per-step reads + same slot resolution +
               same "No approvals recorded yet." fallback. Emails escaped.
-  PARAMS    : rowData — Requests row array; approvers — getApprovers() shape.
+  PARAMS    : rowData — Requests row array; approvers — getApprovers_() shape.
   RETURNS   : HTML string — key/value rows per acted step, or fallback line.
 */
-function emailApprovalLog(rowData, approvers) {
-  const view = getApprovalView(rowData[CR.REQUEST_ID - 1]);
+function emailApprovalLog_(rowData, approvers) {
+  const view = getApprovalView_(rowData[CR.REQUEST_ID - 1]);
   const slot = function (n) {
     return n === 1 ? approvers.approver1 : n === 2 ? approvers.approver2 : approvers.approver3;
   };
@@ -386,21 +386,21 @@ function emailApprovalLog(rowData, approvers) {
   [1, 2, 3].forEach(function (n) {
     const s = view.byStep[n];
     if (s && s.date) {
-      pairs.push(["Approver " + n, (slot(n) || "—") + " · " + formatPHTime(new Date(s.date))]);
+      pairs.push(["Approver " + n, (slot(n) || "—") + " · " + formatPHTime_(new Date(s.date))]);
     }
   });
   if (pairs.length === 0) {
     return '<div style="font-family:' + EMAIL_THEME.fontStack + "; font-size: 13px; color:" + EMAIL_THEME.muted + ';">' +
       "No approvals recorded yet.</div>";
   }
-  return emailKeyValueRows(pairs);
+  return emailKeyValueRows_(pairs);
 }
 
 /*
-  Function Name: emailRemarkBox
+  Function Name: emailRemarkBox_
 
   LAYMAN (Tropang Ex):
-  Makulay na kahon para sa mga importanteng mensahe — dahilan ng decline
+  Makulay na kahon para sa mga importanteng mensahe — dahilan ng decline_
   (pula), dahilan ng return (amber), paalala (blue), good news (green).
   Para agad makita ng mata kahit mabilis lang binasa ang email.
 
@@ -409,14 +409,14 @@ function emailApprovalLog(rowData, approvers) {
   pairs survive dark-mode inversion legibly). Label and text escaped here.
 
   PARAMS:
-  - label — small bold lead-in (e.g. "Reason for decline"); optional.
+  - label — small bold lead-in (e.g. "Reason for decline_"); optional.
   - text  — the message body (user-typed remarks go here — escaped).
   - tone  — 'red' | 'amber' | 'blue' | 'green' (default 'blue').
 
   RETURNS:
   HTML string — the tinted box.
 */
-function emailRemarkBox(label, text, tone) {
+function emailRemarkBox_(label, text, tone) {
   const tones = {
     red:   { bg: EMAIL_THEME.redTint,   fg: EMAIL_THEME.red },
     amber: { bg: EMAIL_THEME.amberTint, fg: EMAIL_THEME.amber },
@@ -428,9 +428,9 @@ function emailRemarkBox(label, text, tone) {
     '<div style="background-color:' + t.bg + "; border-radius: 6px; padding: 12px 16px; margin: 0 0 16px; " +
       "font-family:" + EMAIL_THEME.fontStack + '; font-size: 13px; line-height: 1.5;">' +
       (label
-        ? '<div style="font-weight: 600; color:' + t.fg + '; margin-bottom: 4px;">' + escapeHtml(label) + "</div>"
+        ? '<div style="font-weight: 600; color:' + t.fg + '; margin-bottom: 4px;">' + escapeHtml_(label) + "</div>"
         : "") +
-      '<div style="color:' + EMAIL_THEME.text + ';">' + escapeHtml(text) + "</div>" +
+      '<div style="color:' + EMAIL_THEME.text + ';">' + escapeHtml_(text) + "</div>" +
     "</div>"
   );
 }
@@ -439,7 +439,7 @@ function emailRemarkBox(label, text, tone) {
 // ─── SEND ───────────────────────────────────────────────────
 
 /*
-  Function Name: sendBrandedEmail
+  Function Name: sendBrandedEmail_
 
   LAYMAN (Tropang Ex):
   Isang pinto para sa lahat ng padala ng branded email. Binibigay mo yung
@@ -456,19 +456,19 @@ function emailRemarkBox(label, text, tone) {
 
   PARAMS:
   - recipient    — email address.
-  - subject      — from emailSubject() (EMAIL_DEV_TAG logic untouched).
+  - subject      — from emailSubject_() (EMAIL_DEV_TAG logic untouched).
   - textBody     — existing plain-text body (fallback).
-  - htmlBody     — emailLayout() output.
+  - htmlBody     — emailLayout_() output.
   - extraOptions — optional object merged into options (attachments, etc).
 
   RETURNS:
   (nothing) — sends the email.
 
   EXAMPLE
-    sendBrandedEmail(requestor, subject, body, html, { attachments: [pdf] })
+    sendBrandedEmail_(requestor, subject, body, html, { attachments: [pdf] })
     → one email; HTML in Gmail, plain text in text-only clients, PDF attached.
 */
-function sendBrandedEmail(recipient, subject, textBody, htmlBody, extraOptions) {
+function sendBrandedEmail_(recipient, subject, textBody, htmlBody, extraOptions) {
   const options = Object.assign({ htmlBody: htmlBody }, extraOptions || {});
   // Non-fatal by design: a send failure (Gmail quota, transient error, bad
   // address) is logged but never thrown. The workflow state is already committed
@@ -478,7 +478,7 @@ function sendBrandedEmail(recipient, subject, textBody, htmlBody, extraOptions) 
     GmailApp.sendEmail(recipient, subject, textBody, options);
     return true;
   } catch (e) {
-    Logger.log("sendBrandedEmail(): send to " + recipient + " failed — " + e);
+    Logger.log("sendBrandedEmail_(): send to " + recipient + " failed — " + e);
     return false;
   }
 }

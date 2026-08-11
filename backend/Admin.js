@@ -15,12 +15,12 @@
   TECHNICAL:
   Tier-2 admin callables (oversight + group/chain CRUD; NO request
   intervention). Every callable resolves the caller via
-  Session.getActiveUser().getEmail() and guards with isAdmin() BEFORE any
+  Session.getActiveUser().getEmail() and guards with isAdmin_() BEFORE any
   read/write — list getters return [] on failure, mutations return
   { success:false, error:"Unauthorized" }. All sheet access goes through the
-  Accessors.js seam (getAllGroups/getGroupChain/createGroup/updateGroupFields/
-  replaceGroupChain/appendAdminLog); this file owns validation + policy only.
-  Every mutation is audited to Admins_Log (appendAdminLog). One email path
+  Accessors.js seam (getAllGroups_/getGroupChain_/createGroup_/updateGroupFields_/
+  replaceGroupChain_/appendAdminLog_); this file owns validation + policy only.
+  Every mutation is audited to Admins_Log (appendAdminLog_). One email path
   exists: a chain change notifies whoever NEWLY becomes the current handler of
   an in-flight request (notifyChainChanges_) — covers add / replace / reorder;
   create / rename / activate are silent.
@@ -54,13 +54,13 @@
 /*
   adminGuard_ — resolve the caller and verify admin status.
   LAYMAN    : Sino ang tumatawag, at admin ba siya? Email kung oo, null kung hindi.
-  TECHNICAL : Session identity + isAdmin() (Accessors.js). Every callable in
+  TECHNICAL : Session identity + isAdmin_() (Accessors.js). Every callable in
               this file starts here — frontend visibility is NOT authority.
   RETURNS   : caller email string, or null if not an active admin.
 */
 function adminGuard_() {
   const caller = Session.getActiveUser().getEmail();
-  return isAdmin(caller) ? caller : null;
+  return isAdmin_(caller) ? caller : null;
 }
 
 /*
@@ -76,7 +76,7 @@ function validGroupName_(name, excludeId) {
   const trimmed = String(name || "").trim();
   if (!trimmed) return { ok: false, error: "Group name is required." };
   const lower = trimmed.toLowerCase();
-  const clash = getAllGroups().some(function (g) {
+  const clash = getAllGroups_().some(function (g) {
     return g.id !== excludeId && String(g.name).trim().toLowerCase() === lower;
   });
   if (clash) return { ok: false, error: 'A group named "' + trimmed + '" already exists.' };
@@ -91,7 +91,7 @@ function validGroupName_(name, excludeId) {
 function pendingRowsForGroup_(groupId) {
   const pending = [STATUS.PENDING_1, STATUS.PENDING_2, STATUS.PENDING_3];
   const target  = String(groupId);
-  return getDataRows(SHEET_NAMES.REQUESTS).filter(function (row) {
+  return getDataRows_(SHEET_NAMES.REQUESTS).filter(function (row) {
     return String(row[CR.GROUP - 1]) === target && pending.includes(row[CR.STATUS - 1]);
   });
 }
@@ -111,7 +111,7 @@ function pendingRowsForGroup_(groupId) {
   Current-approver-change trigger, not membership. Recipients =
   {emails newly in the chain} ∪ {new current-approver of any PENDING_* request
   whose current-approver changed}. oldCurrentByReq is captured BEFORE
-  replaceGroupChain; new current-approver is read AFTER. Each recipient gets
+  replaceGroupChain_; new current-approver is read AFTER. Each recipient gets
   their sequence in the NEW chain ("You are Approver N") + the rows they newly
   hold. This is the only email path from an admin action; the caller wraps it in
   try/catch so an email failure never reports the committed save as failed.
@@ -127,22 +127,22 @@ function pendingRowsForGroup_(groupId) {
   (void).
 */
 function notifyChainChanges_(groupId, oldSeqByEmail, oldCurrentByReq) {
-  const groupName = getGroupNameById(groupId);
-  const newChain  = getGroupChain(groupId);
+  const groupName = getGroupNameById_(groupId);
+  const newChain  = getGroupChain_(groupId);
 
   // sequence lookup by normalized email (for the "You are Approver N" line)
   const seqByEmail = {};
-  newChain.forEach(function (slot) { seqByEmail[normalizeEmail(slot.email)] = slot.sequence; });
+  newChain.forEach(function (slot) { seqByEmail[normalizeEmail_(slot.email)] = slot.sequence; });
 
   // Bucket the now-current pending rows by the approver who NEWLY holds them.
   const rowsByRecipient = {};   // normalizedEmail -> [rows]
   const emailByKey      = {};   // normalizedEmail -> display email
   pendingRowsForGroup_(groupId).forEach(function (row) {
     const reqId      = String(row[CR.REQUEST_ID - 1]);
-    const newCurrent = getCurrentApprover(row[CR.STEP - 1], groupId);
+    const newCurrent = getCurrentApprover_(row[CR.STEP - 1], groupId);
     if (!newCurrent) return;
-    if (sameEmail(newCurrent, oldCurrentByReq[reqId])) return; // same handler — no change
-    const key = normalizeEmail(newCurrent);
+    if (sameEmail_(newCurrent, oldCurrentByReq[reqId])) return; // same handler — no change
+    const key = normalizeEmail_(newCurrent);
     (rowsByRecipient[key] = rowsByRecipient[key] || []).push(row);
     emailByKey[key] = newCurrent;
   });
@@ -150,7 +150,7 @@ function notifyChainChanges_(groupId, oldSeqByEmail, oldCurrentByReq) {
   // Recipients: anyone newly in the chain, OR anyone who newly became a current handler.
   const recipients = {};
   newChain.forEach(function (slot) {
-    const key = normalizeEmail(slot.email);
+    const key = normalizeEmail_(slot.email);
     if (oldSeqByEmail[key] === undefined) recipients[key] = slot.email; // brand-new to the chain
   });
   Object.keys(rowsByRecipient).forEach(function (key) { recipients[key] = emailByKey[key]; });
@@ -162,7 +162,7 @@ function notifyChainChanges_(groupId, oldSeqByEmail, oldCurrentByReq) {
     // Per-recipient isolation: one failed notice (bad address, transient error)
     // must not suppress the notices to the other new approvers.
     try {
-      sendNewApproverNotice(email, groupName, newStep, prevStep, rowsByRecipient[key] || []);
+      sendNewApproverNotice_(email, groupName, newStep, prevStep, rowsByRecipient[key] || []);
     } catch (e) {
       Logger.log("notifyChainChanges_(): notice to " + email + " failed — " + e);
     }
@@ -176,7 +176,7 @@ function notifyChainChanges_(groupId, oldSeqByEmail, oldCurrentByReq) {
               dagdag, tanggal, o reorder).
   TECHNICAL : Renders each chain as "N. email (designation)" lines joined by
               " | ", then "before → after". Pure formatting; no side-effects.
-  PARAMS    : oldChain, newChain — getGroupChain() shapes ([{sequence,email,designation}]).
+  PARAMS    : oldChain, newChain — getGroupChain_() shapes ([{sequence,email,designation}]).
   RETURNS   : string.
 */
 function chainDiffDetails_(oldChain, newChain) {
@@ -195,15 +195,15 @@ function chainDiffDetails_(oldChain, newChain) {
               binawasan (approver_removed), pinalitan (approver_replaced), o
               inayos lang ang pagkakasunod (chain_reordered)? Kung designation
               lang o halo-halo, chain_changed.
-  TECHNICAL : Compares old vs new approver SETS (by normalizeEmail) to pick the
+  TECHNICAL : Compares old vs new approver SETS (by normalizeEmail_) to pick the
               most specific ADMIN_ACTION. Same set + different order → reordered.
               Same set + same order (designation-only) → CHAIN_CHANGED fallback.
-  PARAMS    : oldChain, newChain — getGroupChain() shapes.
+  PARAMS    : oldChain, newChain — getGroupChain_() shapes.
   RETURNS   : an ADMIN_ACTION.* value.
 */
 function chainChangeAction_(oldChain, newChain) {
-  const oldE = oldChain.map(function (s) { return normalizeEmail(s.email); });
-  const newE = newChain.map(function (s) { return normalizeEmail(s.email); });
+  const oldE = oldChain.map(function (s) { return normalizeEmail_(s.email); });
+  const newE = newChain.map(function (s) { return normalizeEmail_(s.email); });
   const oldSet = {}; oldE.forEach(function (e) { oldSet[e] = true; });
   const newSet = {}; newE.forEach(function (e) { newSet[e] = true; });
   const added   = newE.filter(function (e) { return !oldSet[e]; });
@@ -249,7 +249,7 @@ function chainChangeAction_(oldChain, newChain) {
       Technical : adminGuard_() → null ⇒ return [].
     Step 2 — Project every row
       Layman    : Bawat request row, gawing DTO; petsa naka-PH format.
-      Technical : getDataRows(REQUESTS).map — identical projection to
+      Technical : getDataRows_(REQUESTS).map — identical projection to
                   getPendingApprovals() minus the filter.
 
   EXAMPLE
@@ -261,13 +261,13 @@ function chainChangeAction_(oldChain, newChain) {
 function adminGetAllRequests() {
   if (!adminGuard_()) return [];
 
-  return getDataRows(SHEET_NAMES.REQUESTS).map(function (row) {
+  return getDataRows_(SHEET_NAMES.REQUESTS).map(function (row) {
     return {
       requestId:     row[CR.REQUEST_ID - 1],
       controlNumber: row[CR.CONTROL_NUMBER - 1],
       projectTitle:  row[CR.PROJECT_TITLE - 1],
       requestor:     row[CR.REQUESTOR - 1],
-      group:         getGroupNameById(row[CR.GROUP - 1]),
+      group:         getGroupNameById_(row[CR.GROUP - 1]),
       status:        row[CR.STATUS - 1],
       step:          row[CR.STEP - 1],
       dateFiled:     row[CR.DATE_OF_FILING - 1]
@@ -276,7 +276,7 @@ function adminGetAllRequests() {
       contractEnd:   row[CR.CONTRACT_END - 1]
         ? Utilities.formatDate(new Date(row[CR.CONTRACT_END - 1]), "Asia/Manila", "MMM dd, yyyy")
         : "",
-      isExpired:     isContractExpired(row[CR.CONTRACT_END - 1]),
+      isExpired:     isContractExpired_(row[CR.CONTRACT_END - 1]),
     };
   });
 }
@@ -292,7 +292,7 @@ function adminGetAllRequests() {
   nang walang request na maiipit.
 
   TECHNICAL:
-  getAllGroups() + two single-pass aggregations: approverCount from
+  getAllGroups_() + two single-pass aggregations: approverCount from
   Group_Approvers (active rows), pendingCount/maxPendingStep from Requests
   (status ∈ PENDING_1/2/3, bucketed by group_id). maxPendingStep is the guard
   input for adminSaveChain's shrink check and the UI's pre-save warning.
@@ -308,7 +308,7 @@ function adminGetAllRequests() {
     Step 1 — Guard
     Step 2 — Count active approvers per group
       Layman    : Isang pass sa Group_Approvers: ilan ang buhay na slot kada group.
-      Technical : getDataRows(GROUP_APPROVERS) → counts map keyed by group_id.
+      Technical : getDataRows_(GROUP_APPROVERS) → counts map keyed by group_id.
     Step 3 — Count pending requests + max step per group
       Layman    : Isang pass sa Requests: ilan ang pending kada group, at anong
                   pinakamataas na step ang inuupuan ngayon.
@@ -324,7 +324,7 @@ function adminGetGroups() {
   if (!adminGuard_()) return [];
 
   const approverCounts = {};
-  getDataRows(SHEET_NAMES.GROUP_APPROVERS).forEach(function (r) {
+  getDataRows_(SHEET_NAMES.GROUP_APPROVERS).forEach(function (r) {
     if (String(r[GAP.ACTIVE - 1]).toUpperCase() === "FALSE") return;
     const gid = String(r[GAP.GROUP_ID - 1]);
     approverCounts[gid] = (approverCounts[gid] || 0) + 1;
@@ -332,7 +332,7 @@ function adminGetGroups() {
 
   const pendingStats = {};
   const pending = [STATUS.PENDING_1, STATUS.PENDING_2, STATUS.PENDING_3];
-  getDataRows(SHEET_NAMES.REQUESTS).forEach(function (row) {
+  getDataRows_(SHEET_NAMES.REQUESTS).forEach(function (row) {
     if (!pending.includes(row[CR.STATUS - 1])) return;
     const gid  = String(row[CR.GROUP - 1]);
     const step = parseInt(row[CR.STEP - 1], 10) || 0;
@@ -341,7 +341,7 @@ function adminGetGroups() {
     if (step > pendingStats[gid].maxStep) pendingStats[gid].maxStep = step;
   });
 
-  return getAllGroups().map(function (g) {
+  return getAllGroups_().map(function (g) {
     const stats = pendingStats[String(g.id)] || { count: 0, maxStep: 0 };
     return {
       id:             g.id,
@@ -361,13 +361,13 @@ function adminGetGroups() {
   adminGetGroupChain — the editable chain for one group.
   LAYMAN    : Yung kasalukuyang approver chain ng group para sa editor —
               kasunod-sunod, active lang.
-  TECHNICAL : Thin guarded pass-through to getGroupChain() (Accessors.js).
+  TECHNICAL : Thin guarded pass-through to getGroupChain_() (Accessors.js).
   PARAMS    : groupId — the group to load.
   RETURNS   : [{ id, sequence, email, designation, active }] or [] if not admin.
 */
 function adminGetGroupChain(groupId) {
   if (!adminGuard_()) return [];
-  return getGroupChain(groupId);
+  return getGroupChain_(groupId);
 }
 
 
@@ -382,7 +382,7 @@ function adminGetGroupChain(groupId) {
               nalalagyan ng chain. (*Lalabas siya sa dropdown pero hindi
               makaka-submit nang maayos ang request kung walang approver — kaya
               ang UI ang magpapaalala na lagyan agad ng chain.)
-  TECHNICAL : Guard → validGroupName_ → createGroup() accessor. New groups are
+  TECHNICAL : Guard → validGroupName_ → createGroup_() accessor. New groups are
               ACTIVE=TRUE immediately; the admin UI nudges chain setup next.
   PARAMS    : name — display name.
   RETURNS   : { success:true, group:{id, name} } or { success:false, error }.
@@ -392,8 +392,8 @@ function adminCreateGroup(name) {
   if (!caller) return { success: false, error: "Unauthorized" };
   const check = validGroupName_(name, null);
   if (!check.ok) return { success: false, error: check.error };
-  const group = createGroup(check.name);
-  try { appendAdminLog(caller, ADMIN_ACTION.GROUP_CREATED, group.id, 'Created group "' + group.name + '"'); }
+  const group = createGroup_(check.name);
+  try { appendAdminLog_(caller, ADMIN_ACTION.GROUP_CREATED, group.id, 'Created group "' + group.name + '"'); }
   catch (e) { Logger.log("adminCreateGroup(): admin-log failed: " + e); }
   return { success: true, group: group };
 }
@@ -403,7 +403,7 @@ function adminCreateGroup(name) {
   LAYMAN    : Palitan ang pangalan. Safe ito kahit may mga lumang request —
               naka-link sila sa group_id (G001), hindi sa pangalan, kaya lahat
               ng lists/details ay magpapakita na lang ng bagong pangalan.
-  TECHNICAL : Guard → validGroupName_ (excluding self) → updateGroupFields().
+  TECHNICAL : Guard → validGroupName_ (excluding self) → updateGroupFields_().
   PARAMS    : groupId; name — new display name.
   RETURNS   : { success:true } or { success:false, error }.
 */
@@ -412,11 +412,11 @@ function adminRenameGroup(groupId, name) {
   if (!caller) return { success: false, error: "Unauthorized" };
   const check = validGroupName_(name, groupId);
   if (!check.ok) return { success: false, error: check.error };
-  const oldName = getGroupNameById(groupId);
-  if (!updateGroupFields(groupId, { name: check.name })) {
+  const oldName = getGroupNameById_(groupId);
+  if (!updateGroupFields_(groupId, { name: check.name })) {
     return { success: false, error: "Group not found." };
   }
-  try { appendAdminLog(caller, ADMIN_ACTION.GROUP_RENAMED, groupId, '"' + oldName + '" → "' + check.name + '"'); }
+  try { appendAdminLog_(caller, ADMIN_ACTION.GROUP_RENAMED, groupId, '"' + oldName + '" → "' + check.name + '"'); }
   catch (e) { Logger.log("adminRenameGroup(): admin-log failed: " + e); }
   return { success: true };
 }
@@ -427,21 +427,21 @@ function adminRenameGroup(groupId, name) {
               ang mga request na NASA LOOB na ng group, tuloy pa rin ang daloy —
               hindi ito nakakaapekto sa routing (verified: ang chain reads ay
               hindi tumitingin sa group active flag). Reversible — i-on ulit anumang oras.
-  TECHNICAL : Guard → updateGroupFields(). Deliberately NO pending-request
+  TECHNICAL : Guard → updateGroupFields_(). Deliberately NO pending-request
               block: GRP.ACTIVE only gates getApproverGroups() (the form
-              dropdown); getGroupApprovers()/getCurrentApprover() ignore it.
+              dropdown); getGroupApprovers_()/getCurrentApprover_() ignore it.
   PARAMS    : groupId; active — boolean.
   RETURNS   : { success:true } or { success:false, error }.
 */
 function adminSetGroupActive(groupId, active) {
   const caller = adminGuard_();
   if (!caller) return { success: false, error: "Unauthorized" };
-  if (!updateGroupFields(groupId, { active: !!active })) {
+  if (!updateGroupFields_(groupId, { active: !!active })) {
     return { success: false, error: "Group not found." };
   }
   try {
-    appendAdminLog(caller, active ? ADMIN_ACTION.GROUP_ACTIVATED : ADMIN_ACTION.GROUP_DEACTIVATED,
-                   groupId, (active ? "Reactivated" : "Deactivated") + ' "' + getGroupNameById(groupId) + '"');
+    appendAdminLog_(caller, active ? ADMIN_ACTION.GROUP_ACTIVATED : ADMIN_ACTION.GROUP_DEACTIVATED,
+                   groupId, (active ? "Reactivated" : "Deactivated") + ' "' + getGroupNameById_(groupId) + '"');
   } catch (e) { Logger.log("adminSetGroupActive(): admin-log failed: " + e); }
   return { success: true };
 }
@@ -466,13 +466,13 @@ function adminSetGroupActive(groupId, active) {
   Kapag pinalitan o ni-reorder ang approver kaya nagbago kung sino ang humahawak
   ng isang nakabinbin na request, ang BAGONG humahawak agad ang aaksyon — live ang
   pagbasa ng chain. Padadalhan siya agad ng "ikaw na ang approver" email (tingnan
-  notifyChainChanges_). Ang bawat galaw ay naitatala rin sa Admins_Log (appendAdminLog).
+  notifyChainChanges_). Ang bawat galaw ay naitatala rin sa Admins_Log (appendAdminLog_).
 
   TECHNICAL:
   Guard → validate (group exists; 1–3 slots; emails non-blank, well-formed,
-  unique via normalizeEmail; slots.length ≥ maxPendingStep of the group's
+  unique via normalizeEmail_; slots.length ≥ maxPendingStep of the group's
   PENDING_1/2/3 rows — violation returns the blocking control numbers) →
-  replaceGroupChain() (Accessors.js: lock + soft-delete + batch append).
+  replaceGroupChain_() (Accessors.js: lock + soft-delete + batch append).
   Sequences are server-assigned 1..N from array order; client numbering is
   never trusted. Designation is optional (blank allowed — it only feeds the
   COC signatory block and email labels).
@@ -488,14 +488,14 @@ function adminSetGroupActive(groupId, active) {
   STEPS
     Step 1 — Guard + group existence
       Layman    : Admin ka ba, at totoo bang group ito?
-      Technical : adminGuard_(); getGroupById() → null ⇒ "Group not found."
+      Technical : adminGuard_(); getGroupById_() → null ⇒ "Group not found."
     Step 2 — Shape + length validation
       Layman    : Listahan ba talaga, may 1–3 laman?
       Technical : Array.isArray; 0 ⇒ "deactivate instead" error; >3 ⇒ engine cap
-                  (approve() only branches steps 1–3; STATUS has only PENDING_1/2/3).
+                  (approve_() only branches steps 1–3; STATUS has only PENDING_1/2/3).
     Step 3 — Per-slot + duplicate validation
       Layman    : Bawat slot may maayos na email; walang inuulit na tao.
-      Technical : trim; /\S+@\S+\.\S+/ shape check; normalizeEmail() set for dupes.
+      Technical : trim; /\S+@\S+\.\S+/ shape check; normalizeEmail_() set for dupes.
     Step 4 — In-flight shrink guard
       Layman    : May request bang nakaupo sa step na mawawala? Kung meron,
                   bawal — isama sa error ang control numbers para alam ng admin
@@ -506,8 +506,8 @@ function adminSetGroupActive(groupId, active) {
       Layman    : Isagawa ang palit; itala sa Admins_Log; padalhan ng email ang
                   bagong humahawak; ibalik ang bagong chain para i-refresh ng UI.
       Technical : capture old chain + old current-approver-per-pending-row →
-                  replaceGroupChain() → appendAdminLog(chainDiffDetails_) →
-                  notifyChainChanges_() (each try/catch) → getGroupChain() re-read.
+                  replaceGroupChain_() → appendAdminLog_(chainDiffDetails_) →
+                  notifyChainChanges_() (each try/catch) → getGroupChain_() re-read.
 
   EXAMPLE
     adminSaveChain("G001", [{email:"a@mw.com", designation:"Manager"},
@@ -519,7 +519,7 @@ function adminSetGroupActive(groupId, active) {
 function adminSaveChain(groupId, slots) {
   const caller = adminGuard_();
   if (!caller) return { success: false, error: "Unauthorized" };
-  if (!getGroupById(groupId)) return { success: false, error: "Group not found." };
+  if (!getGroupById_(groupId)) return { success: false, error: "Group not found." };
 
   if (!Array.isArray(slots)) return { success: false, error: "Invalid chain payload." };
   if (slots.length === 0) {
@@ -537,7 +537,7 @@ function adminSaveChain(groupId, slots) {
     if (!email || !/^\S+@\S+\.\S+$/.test(email)) {
       return { success: false, error: "Approver " + (i + 1) + " needs a valid email address." };
     }
-    const key = normalizeEmail(email);
+    const key = normalizeEmail_(email);
     if (seen[key]) {
       return { success: false, error: "The same person cannot appear twice in one chain (" + email + ")." };
     }
@@ -546,12 +546,12 @@ function adminSaveChain(groupId, slots) {
   }
 
   // In-flight shrink guard: a pending request sitting at a step beyond the new
-  // chain length would vanish from every pending list (getCurrentApprover →
+  // chain length would vanish from every pending list (getCurrentApprover_ →
   // null) with no way to recover short of editing the sheet. Hard-block it.
   const pending = [STATUS.PENDING_1, STATUS.PENDING_2, STATUS.PENDING_3];
   const target  = String(groupId);
   const blockers = [];
-  getDataRows(SHEET_NAMES.REQUESTS).forEach(function (row) {
+  getDataRows_(SHEET_NAMES.REQUESTS).forEach(function (row) {
     if (String(row[CR.GROUP - 1]) !== target) return;
     if (!pending.includes(row[CR.STATUS - 1])) return;
     const step = parseInt(row[CR.STEP - 1], 10) || 0;
@@ -570,21 +570,21 @@ function adminSaveChain(groupId, slots) {
   //  - oldChain      : for the audit diff
   //  - oldSeqByEmail : { normalizedEmail: oldSequence } — membership + prior position
   //  - oldCurrent    : { requestId: currentApproverEmail } per in-flight request
-  const oldChain = getGroupChain(groupId);
+  const oldChain = getGroupChain_(groupId);
   const oldSeqByEmail = {};
-  oldChain.forEach(function (s) { oldSeqByEmail[normalizeEmail(s.email)] = s.sequence; });
+  oldChain.forEach(function (s) { oldSeqByEmail[normalizeEmail_(s.email)] = s.sequence; });
   const oldCurrent = {};
   pendingRowsForGroup_(groupId).forEach(function (row) {
-    oldCurrent[String(row[CR.REQUEST_ID - 1])] = getCurrentApprover(row[CR.STEP - 1], groupId);
+    oldCurrent[String(row[CR.REQUEST_ID - 1])] = getCurrentApprover_(row[CR.STEP - 1], groupId);
   });
 
-  replaceGroupChain(groupId, cleaned);
-  const newChain = getGroupChain(groupId);
+  replaceGroupChain_(groupId, cleaned);
+  const newChain = getGroupChain_(groupId);
 
   // Audit (best-effort — never fail the committed save over logging). The action
   // is classified (added / removed / replaced / reordered) so the log is specific.
   try {
-    appendAdminLog(caller, chainChangeAction_(oldChain, newChain), groupId,
+    appendAdminLog_(caller, chainChangeAction_(oldChain, newChain), groupId,
                    chainDiffDetails_(oldChain, newChain));
   } catch (e) {
     Logger.log("adminSaveChain(): admin-log failed: " + e);

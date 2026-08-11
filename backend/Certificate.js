@@ -12,7 +12,7 @@
   Ito ang Apps Script na kapalit ng dating AppSheet auto-generate-PDF na bot.
 
   TECHNICAL:
-  Phase 9 COC generator. Single public entry point generateCOC(requestId):
+  Phase 9 COC generator. Single public entry point generateCOC_(requestId):
   makeCopy() the template Doc → replaceText() each token via an ordered rules array
   → conditionally clear unused approver signatory cells → export application/pdf →
   archive to COC.ARCHIVE_FOLDER_ID → trash the temp copy → return { success, url,
@@ -23,9 +23,9 @@
   formatting, IF ISNOTBLANK → "N/A", UTCNOW()+offset, <<If>> approver blocks) is
   ported here as plain JS. The signatory table is taken as the LAST table in the
   doc, and its approver-2/3 columns are cleared when those slots are unconfigured.
-  Reads via getRequestRowData() (25-col Requests row) + getApprovers() (the
-  Group_Approvers join) + getApprovalView() (action dates from Activity_Log).
-  Identity IS re-checked here: generateCOC guards on isChainApprover || isAdmin
+  Reads via getRequestRowData_() (25-col Requests row) + getApprovers_() (the
+  Group_Approvers join) + getApprovalView_() (action dates from Activity_Log).
+  Identity IS re-checked here: generateCOC_ guards on isChainApprover_ || isAdmin_
   plus status === APPROVED, because any server function is reachable directly
   via google.script.run, not only through the approval flow that calls it.
 
@@ -36,7 +36,7 @@
   OUTLINE
   ────────────────────────────────────────────────────────────
   PUBLIC
-    - generateCOC(requestId)              copy template → fill → PDF → archive
+    - generateCOC_(requestId)              copy template → fill → PDF → archive
   TEST
     - _testGenerateCOC()                  editor-run smoke test, logs the PDF URL
   HELPERS (private, coc_ prefix)
@@ -51,7 +51,7 @@
 // =========================================================================================================
 
 /*
-  Function Name: generateCOC
+  Function Name: generateCOC_
 
   LAYMAN (Tropang Ex):
   Bigyan mo ng requestId ng isang fully-approved na request, gagawa ito ng
@@ -84,7 +84,7 @@
                   setup hint. Avoids a cryptic Drive error.
     Step 2 — Load the request row + approvers
       Layman    : Kunin ang datos ng request at kung sinong approver(s) ng group.
-      Technical : getRequestRowData (25-col Requests row) + getApprovers(group).
+      Technical : getRequestRowData_ (25-col Requests row) + getApprovers_(group).
                   Missing row → { success:false }. Approvers default to {} so
                   token reads are null-safe.
     Step 3 — Copy the template Doc
@@ -103,7 +103,7 @@
       Technical : Ordered [pattern, value] array. Each field has an AppSheet-syntax
                   RE2 pattern (e.g. <<TEXT(\[Date of Filing\]…>>) AND a {{token}}
                   pattern. Dates via coc_fmtDate_; PRISM/PO/IHelp via coc_orNA_;
-                  generated_at via formatPHTime(new Date()) (ports UTCNOW()+offset).
+                  generated_at via formatPHTime_(new Date()) (ports UTCNOW()+offset).
     Step 6 — Apply rules + strip leftover wrappers
       Layman    : Palitan ang bawat placeholder ng tamang value; tanggalin ang
                   natirang AppSheet <<If>>/<<EndIf>> sa signatory.
@@ -118,16 +118,16 @@
       Technical : folder.createFile(pdfBlob); copy.setTrashed(true).
 
   EXAMPLE
-    generateCOC("REQ-9b1")
+    generateCOC_("REQ-9b1")
     → { success:true, fileId:"1AbC…", url:"https://drive.google.com/…",
         fileName:"COC - EC-2026-00042-9B1.pdf", pdfBlob:Blob }
-    generateCOC("REQ-9b1")  // before COC.TEMPLATE_DOC_ID is set
+    generateCOC_("REQ-9b1")  // before COC.TEMPLATE_DOC_ID is set
     → { success:false, error:"COC.TEMPLATE_DOC_ID is not set …" }
 */
-function generateCOC(requestId) {
+function generateCOC_(requestId) {
   // Step 1 — Guard: template configured. Resolved via Script Property with the
   // Constants.js literal as fallback. config_() THROWS when neither is set, but
-  // this line sits outside the try below and generateCOC is documented never to
+  // this line sits outside the try below and generateCOC_ is documented never to
   // throw, so catch locally and return the established { success:false, error }
   // shape instead.
   let templateDocId;
@@ -142,14 +142,14 @@ function generateCOC(requestId) {
   }
 
   // Step 2 — Load the request row + approvers
-  const row = getRequestRowData(requestId);
+  const row = getRequestRowData_(requestId);
   if (!row) return { success: false, error: "Request not found: " + requestId };
 
   // Guard: only a chain approver of this request or an admin may generate or
   // re-issue its certificate, and only once it is fully approved. In the normal
-  // flow the final approver triggers this via sendFullyApprovedToRequestor.
+  // flow the final approver triggers this via sendFullyApprovedToRequestor_.
   const cocCaller = Session.getActiveUser().getEmail();
-  if (!(isChainApprover(row, cocCaller) || isAdmin(cocCaller))) {
+  if (!(isChainApprover_(row, cocCaller) || isAdmin_(cocCaller))) {
     return { success: false, error: "Unauthorized" };
   }
   if (row[CR.STATUS - 1] !== STATUS.APPROVED) {
@@ -157,14 +157,14 @@ function generateCOC(requestId) {
   }
 
   const group         = row[CR.GROUP - 1];           // group_id
-  const groupName     = getGroupNameById(group);     // display name for the COC
-  const approvers     = getApprovers(group) || {};
+  const groupName     = getGroupNameById_(group);     // display name for the COC
+  const approvers     = getApprovers_(group) || {};
   const controlNumber = row[CR.CONTROL_NUMBER - 1] || requestId;
   const copyName      = "COC - " + controlNumber;
 
   // Per-step approval dates come from the Approval_Actions timeline (the request
   // is fully approved when this runs, so every configured step has an approved action).
-  const _view   = getApprovalView(requestId);
+  const _view   = getApprovalView_(requestId);
   const appDate = function (n) { return (_view.byStep[n] && _view.byStep[n].date) || ""; };
 
   // Step 3 — Copy the template Doc (inside the try so a bad or inaccessible
@@ -207,7 +207,7 @@ function generateCOC(requestId) {
       ["<<\\[Control Number\\]>>",                  controlNumber],
       ["<<TEXT\\(\\[Date of Filing\\][^>]*MMMM[^>]*>>",       coc_fmtDate_(row[CR.DATE_OF_FILING - 1], "MMMM dd, yyyy", "")],
       ["<<TEXT\\(\\[Date of Filing\\][^>]*MM-dd-yyyy[^>]*>>", coc_fmtDate_(row[CR.DATE_OF_FILING - 1], "MM-dd-yyyy", "")],
-      ["<<UTCNOW\\(\\)[^>]*>>",                     formatPHTime(new Date())],
+      ["<<UTCNOW\\(\\)[^>]*>>",                     formatPHTime_(new Date())],
       ["<<\\[Project Title\\]>>",                   row[CR.PROJECT_TITLE - 1]],
       ["<<\\[Requestor.s Designation\\]>>",         row[CR.REQUESTOR_DESIG - 1]],
       ["<<\\[Requestor\\]>>",                       row[CR.REQUESTOR - 1]],
@@ -236,7 +236,7 @@ function generateCOC(requestId) {
       ["\\{\\{group\\}\\}",               group],
       ["\\{\\{control_number\\}\\}",      controlNumber],
       ["\\{\\{date_of_filing_long\\}\\}", coc_fmtDate_(row[CR.DATE_OF_FILING - 1], "MMMM dd, yyyy", "")],
-      ["\\{\\{generated_at\\}\\}",        formatPHTime(new Date())],
+      ["\\{\\{generated_at\\}\\}",        formatPHTime_(new Date())],
       ["\\{\\{project_title\\}\\}",       row[CR.PROJECT_TITLE - 1]],
       ["\\{\\{requestor\\}\\}",           row[CR.REQUESTOR - 1]],
       ["\\{\\{requestor_desig\\}\\}",     row[CR.REQUESTOR_DESIG - 1]],
@@ -292,9 +292,9 @@ function generateCOC(requestId) {
     // Step 9 — Record the generated certificate in COC_PDFs (one row per issue).
     // Defensive: a logging failure must never block the COC/email side-effects.
     try {
-      const cocSheet = getSheet(SHEET_NAMES.COC_PDFS);
+      const cocSheet = getSheet_(SHEET_NAMES.COC_PDFS);
       const cocRow = new Array(6).fill("");
-      cocRow[COCPDF.COC_ID - 1]         = generateCocId();
+      cocRow[COCPDF.COC_ID - 1]         = generateCocId_();
       cocRow[COCPDF.REQUEST_ID - 1]     = requestId;
       cocRow[COCPDF.CONTROL_NUMBER - 1] = controlNumber;
       cocRow[COCPDF.PDF_LINK - 1]       = pdfFile.getUrl();
@@ -302,7 +302,7 @@ function generateCOC(requestId) {
       cocRow[COCPDF.GENERATED_AT - 1]   = new Date();
       cocSheet.appendRow(cocRow);
     } catch (e) {
-      Logger.log("generateCOC(): COC_PDFs log failed — " + e.message);
+      Logger.log("generateCOC_(): COC_PDFs log failed — " + e.message);
     }
 
     return {
@@ -315,7 +315,11 @@ function generateCOC(requestId) {
   } catch (err) {
     // Best-effort cleanup of the temp copy so failures don't orphan Docs
     if (copyId) { try { DriveApp.getFileById(copyId).setTrashed(true); } catch (e) {} }
-    return { success: false, error: String(err) };
+    // Log the real exception server-side, return a generic message. Drive/Document
+    // exceptions echo the offending resource id, which would leak the template Doc
+    // ID or an archive folder ID to any caller (generateCOC_ is a callable global).
+    Logger.log("generateCOC_(): failed — " + err);
+    return { success: false, error: "Certificate generation failed. Please contact the administrator." };
   }
 }
 
@@ -330,15 +334,23 @@ function generateCOC(requestId) {
               sa baba ng totoong Request ID, i-Run ito (walang argument na kailangan
               kasi hindi makakapagpasa ng argument ang editor), tapos buksan ang
               naka-log na PDF link para tingnan kung tama lahat ng fields.
-  TECHNICAL : No-arg wrapper around generateCOC so the Apps Script editor's Run
+  TECHNICAL : No-arg wrapper around generateCOC_ so the Apps Script editor's Run
               button works (Run cannot pass arguments). Edit TEST_REQUEST_ID, then
               run. Logs only the serializable fields (pdfBlob omitted).
   PARAMS    : (none) — edit the TEST_REQUEST_ID constant below.
-  RETURNS   : The raw generateCOC result (incl. pdfBlob).
+  RETURNS   : The raw generateCOC_ result (incl. pdfBlob).
 */
 function _testGenerateCOC() {
+  // ⚠️ A LEADING underscore does NOT hide a function from google.script.run (only a
+  // TRAILING one does). Without this guard any chain approver of TEST_REQUEST_ID —
+  // or any admin — could loop this to mint unlimited duplicate COC PDFs into the
+  // archive folder and unlimited COC_PDFs rows. Editor runs pass; visitors do not.
+  if (!isOwnerContext_()) {
+    throw new Error("_testGenerateCOC() may only be run by the script owner from the Apps Script editor.");
+  }
+
   const TEST_REQUEST_ID = "578"; // ← edit this, then Run
-  const res = generateCOC(TEST_REQUEST_ID);
+  const res = generateCOC_(TEST_REQUEST_ID);
   Logger.log(JSON.stringify({ success: res.success, url: res.url, fileName: res.fileName, error: res.error }, null, 2));
   return res;
 }

@@ -52,7 +52,7 @@ State transitions (`Status` set by / triggers):
 
 **Flow 8 — View a request (read + permission).** `getRequestDetail(requestId)`: 🔒 if caller is **neither** the requestor **nor** a chain approver **nor** an admin → returns **`null`** → renderer shows empty state. `null` = both "not found" and "no access", on purpose.
 
-**Flow 9 — Background trigger.** `onSheetChange(e)` (installable, registered once via `registerTrigger()`) routes by changed tab → `handleCertificateRequestChange` watches the Status column and fires the matching email pair (the ported AppSheet bots). Runs **in parallel** to the `handle*` paths — see the double-send caveat below. Currently dormant/unregistered.
+**Flow 9 — Background trigger (DORMANT, cannot be registered).** `onSheetChange(e)` routes by changed tab → `handleCertificateRequestChange` watches the Status column and fires the matching email pair (the ported AppSheet bots). It runs **in parallel** to the `handle*` paths, which is why `registerTrigger()` now **throws** rather than registering it — see the double-send caveat below. Kept as readable reference code only.
 
 ## 3. Three patterns that repeat everywhere
 
@@ -103,4 +103,6 @@ Two daily ~8am (Asia/Manila) time-based triggers. Each must be registered **once
 | Contract-expiry sweep (#10) | `checkContractExpiries()` | `registerExpiryTrigger()` | **`Activity_Log` system flags** (`expiry_warning/notice/overdue`) — once-each per stage |
 | Pending-approval nudge | `checkPendingApprovals()` | `registerApproverReminderTrigger()` | **the daily schedule itself** — writes NOTHING to `Activity_Log` (a nudge is *meant* to repeat) |
 
-> `.atHour(8)` = *sometime in the 8–9am window*, not 8:00:00. The expiry warning + overdue stages use self-healing ranges (a skipped run catches up); the day-of stage is exact (a missed day-of is caught next day by "Has Expired"). The third per-account registration is `registerTrigger()` (the dormant `onSheetChange`).
+> `.atHour(8)` = *sometime in the 8–9am window*, not 8:00:00. The expiry warning + overdue stages use self-healing ranges (a skipped run catches up); the day-of stage is exact (a missed day-of is caught next day by "Has Expired"). There are only **two** per-account registrations — `registerTrigger()` is intentionally disabled and throws, so do not run it.
+>
+> Both sweeps are guarded by `isOwnerContext_()`: they are top-level globals and would otherwise be callable via `google.script.run` by any user. That matters most for `checkPendingApprovals()`, whose idempotency *is* the daily schedule — without the guard it could be looped to mass-mail every approver and exhaust the account's Gmail quota.
