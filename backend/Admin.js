@@ -324,7 +324,7 @@ function adminGetGroups() {
   if (!adminGuard_()) return [];
 
   const approverCounts = {};
-  getDataRows_(SHEET_NAMES.GROUP_APPROVERS).forEach(function (r) {
+  groupApproverRows_().forEach(function (r) {
     if (String(r[GAP.ACTIVE - 1]).toUpperCase() === "FALSE") return;
     const gid = String(r[GAP.GROUP_ID - 1]);
     approverCounts[gid] = (approverCounts[gid] || 0) + 1;

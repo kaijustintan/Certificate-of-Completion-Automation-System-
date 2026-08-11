@@ -47,7 +47,7 @@
      - isChainApprover_(row, caller)   is caller any approver for the group?
 
   D. READ-ONLY GETTERS  (return DTOs for the frontend)
-     - getCurrentUser()               { email, role, isAdmin_ }
+     - getCurrentUser()               { email, role, isAdmin }
      - getMyRequests()                requestor dashboard list
      - getPendingApprovals()          approver "awaiting" list
      - getMyActionedRequests()        approver "actioned" list
@@ -304,9 +304,17 @@ function isChainApprover_(row, callerEmail) {
               app sa simula para malaman kung saang dashboard dadalhin.
   TECHNICAL : Reads the session email and classifies it via detectRole_().
   PARAMS    : (none) — identity from Session.
-  RETURNS   : { email, role, isAdmin_ }. isAdmin_ is ADDITIVE — role semantics
+  RETURNS   : { email, role, isAdmin }. isAdmin is ADDITIVE: role semantics
               are unchanged (an admin who is also an approver keeps role
               "approver"); the flag only adds the Admin nav link + page.
+
+  ⚠️ THE DTO KEY IS `isAdmin`, THE FUNCTION IS `isAdmin_()`. They differ on
+     purpose and must not be "made consistent". The trailing underscore is a
+     security boundary (it hides the function from google.script.run); the DTO
+     key is a frozen frontend contract read as state.user.isAdmin in
+     JavaScript.html (refreshNavbar) and Admin.html (renderAdminPage). A rename
+     sweep once renamed the key along with the function, which silently made the
+     whole Admin console unreachable for every user, including real admins.
 */
 function getCurrentUser() {
   const email = Session.getActiveUser().getEmail();
@@ -324,11 +332,13 @@ function getCurrentUser() {
       ? String(email).split("@").pop()
       : "(unidentified)";
     Logger.log("getCurrentUser(): rejected caller outside allowed domain — domain '" + rejectedDomain + "'");
-    return { email: "", role: "requestor", isAdmin_: false };
+    return { email: "", role: "requestor", isAdmin: false };
   }
 
   const role = detectRole_(email);
-  return { email, role, isAdmin_: isAdmin_(email) };
+  // Key `isAdmin` (frozen frontend contract), value from `isAdmin_()` (hidden
+  // server helper). See the warning in the doc block above before renaming either.
+  return { email, role, isAdmin: isAdmin_(email) };
 }
 
 

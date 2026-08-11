@@ -70,6 +70,21 @@ google.script.run.uploadAttachmentFile({base64:"",filename:"x",mimeType:"text/pl
 20. Decline/return with a >2000-char remark → rejected.
 21. Submit with contract end **earlier than** contract start → rejected. (Previously accepted, and the row was born expired, immediately tripping the expiry sweep.)
 
+### 🔴 Also re-test (admin-key regression + hardening batch, 2026-08-11)
+
+> A full read-through for the cross-repo system profile found that the callable-surface sweep had also renamed the **DTO property key** `isAdmin` → `isAdmin_` in `getCurrentUser()`, while the frontend still read `state.user.isAdmin`. The Admin console was therefore unreachable for every user, including real admins, for the entire life of commit `bf20b31`. Fixed, together with three gaps a DCS cross-repo review surfaced. **Static checks already passed**: 152 defined / 113 hidden / 0 unresolved, callable surface unchanged at 39, no property key ends in `_`, and the magic-byte logic was unit-tested against real file headers.
+
+**Do these FIRST, before items 13-21 — item 22 is a two-second check that gates the whole admin section.**
+
+22. **Admin link is back.** Sign in as an account listed in the `Admins` sheet → the **Admin** link appears in the sidebar, and both tiles (View Records / View Groups) load. Sign in as a non-admin → the link is still absent. *(This is the regression fix; if it fails, nothing else in the admin section is testable.)*
+23. **Decline/return reasons are mandatory.** Open a pending request as its current approver → Decline. Empty box: Confirm stays disabled. Type 9 characters: still disabled, counter reads `9 / 20 characters minimum`. Type 20+: enables, submits, and the reason appears in the requestor's email and on the detail page. Repeat for Return.
+24. **Upload type validation.** ⚠️ *Both halves matter and they test different things.*
+    - a. Try to attach a `.txt` or `.zip` in the file picker → skipped with a red toast. **This is only the client-side convenience check.**
+    - b. **Rename a `.txt` file to `PO.pdf` and attach it** → the picker accepts it, but submit is rejected server-side with *"PO.pdf does not appear to be a valid PDF file."* **This is the actual control.** If (a) passes and (b) does not, the validation is worthless.
+    - c. Attach a real `.docx` and a real `.png` → both accepted.
+    - d. Repeat (b) on the **resubmit** picker in `RequestDetail`, which shares the same handler.
+25. **Group-lookup cache invalidation.** In Admin → View Groups, open a chain with 2+ approvers, **reorder** it, Save. The editor must redraw showing the **new** order immediately (a stale order means an `invalidateGroupCaches_()` call was missed). Confirm an `Admins_Log` row was written and the newly-current approver got the "Approver Role Changed" email. Then load both dashboards and confirm group names and pending lists are still correct.
+
 ### ⚠️ Two things this sweep deliberately did NOT change
 - **`include()` stays callable.** It is invoked from `Index.html` scriptlets; if underscore-hiding broke scriptlet resolution, no page would render at all. Too much blast radius for a Low finding that cannot be verified locally. Revisit with a live `/dev` to test against.
 - **`ORG.ALLOWED_DOMAINS` still ships as `[]` (allow-all).** Correct for dev, wrong for production — see Phase D1b. `_testConfig` now prints a loud warning while it is empty.
@@ -88,7 +103,7 @@ google.script.run.uploadAttachmentFile({base64:"",filename:"x",mimeType:"text/pl
 - [ ] **T9. Config via Script Properties, not source edits.** Move `COC.*` folder IDs + `EMAIL_DEV_TAG` into `PropertiesService` so prod/dev differ by deployment, not a forgettable source edit. Rename/guard `registerTrigger()` so it can't be run by mistake (it double-sends every email). Add `ensureAdminsLogTab()` so the audit sheet can't be silently missing.
 
 ### Tier 3 — hardening (low)
-Shrink-guard TOCTOU (re-validate inside the lock), a `rebuildCacheFromTimeline()` reconciler, per-recipient try/catch in `notifyChainChanges_`, lock on `createGroup`, expiry flag-before-send, server-side non-blank remark check, move `makeCopy` inside `generateCOC`'s try, decide whether newly-added approvers should see historical requests.
+Shrink-guard TOCTOU (re-validate inside the lock), a `rebuildCacheFromTimeline()` reconciler, per-recipient try/catch in `notifyChainChanges_`, lock on `createGroup`, expiry flag-before-send, ~~server-side non-blank remark check~~ (**done 2026-08-11**, see items 22-25 below), move `makeCopy` inside `generateCOC`'s try, decide whether newly-added approvers should see historical requests.
 
 ---
 
@@ -98,7 +113,7 @@ You answered "not sure if prod is ready." Confirm these exist before doing anyth
 
 - [ ] **A Megaworld Workspace account** you can log into and that is allowed to own Apps Script projects + Google Sheets. (Layman: the company Google account this will run under, instead of your DLSU one.)
 - [ ] **The production Google Spreadsheet** — either the real Megaworld COC workbook, or a copy you'll make. It must end up with **8 tabs** (Phase C).
-- [ ] **The COC template Google Doc** — the certificate layout with `{{tokens}}` / `<<...>>` placeholders. The prod account must be able to **read** it. (Current dev ID in `Constants.js`: `COC.TEMPLATE_DOC_ID`.)
+- [x] ~~**The COC template Google Doc**~~ — **NO LONGER NEEDED (2026-08-11).** The certificate is now rendered directly in code by `buildCertificateHtml_` (`Certificate.js`), so there is no template Doc to share, copy, or grant the prod account access to. Skip this item entirely. If a `TEMPLATE_DOC_ID` Script Property exists on any deployment, delete it: it is ignored, and leaving it there reads as live config.
 - [ ] **Two Drive folders** owned by / writable by the prod account: one for archived COC PDFs, one for supporting-document uploads.
   - Known Megaworld COC archive folder from the old AppSheet system: `1RJ1P7vZXgLa85KfsdQKCLBLqsaDqde-Y` (confirm the prod account can write to it).
 - [ ] **Decide the ownership model** (see Phase B).
@@ -158,7 +173,7 @@ Apps Script editor → **Project Settings** (gear icon) → **Script Properties*
 
 | Key | Value | If you forget it |
 |---|---|---|
-| `TEMPLATE_DOC_ID` | prod COC template Doc ID (**44 chars** — a double-length 88-char paste throws a misleading "Unexpected error"; check the length) | Falls back to the dev literal in `Constants.js`; if that is also gone → clear error naming the key |
+| ~~`TEMPLATE_DOC_ID`~~ | **REMOVED 2026-08-11.** Do not set it. The Doc-template engine is gone; `buildCertificateHtml_` renders the certificate in code. | n/a — the key is no longer read by anything |
 | `ARCHIVE_FOLDER_ID` | prod COC-PDF archive folder ID | same |
 | `ATTACHMENTS_FOLDER_ID` | prod supporting-docs folder ID | same |
 | `EMAIL_DEV_TAG` | `false` | Defaults to **`true`** (dev-tagged) on purpose — a forgotten property can never silently send production-looking mail |
@@ -174,7 +189,7 @@ Verify with: Run **`_testConfig`** in the editor. It logs each resolved value ta
 
 ### D1-alt. (Fallback path) Edit `backend/Constants.js` directly
 Still supported if you would rather not use properties — the literals are the fallback source:
-- [ ] `COC.TEMPLATE_DOC_ID` → prod template Doc ID
+- [x] ~~`COC.TEMPLATE_DOC_ID` → prod template Doc ID~~ — **removed from `Constants.js` 2026-08-11**, nothing to swap
 - [ ] `COC.ARCHIVE_FOLDER_ID` → prod COC-PDF folder
 - [ ] `COC.ATTACHMENTS_FOLDER_ID` → prod supporting-docs folder
 
@@ -254,7 +269,7 @@ Run one real request end-to-end before announcing it:
 
 | COC value | Move? | Missing-value policy | Why |
 |---|---|---|---|
-| `COC.TEMPLATE_DOC_ID` | Yes (highest priority) | **Fail loud**, named error | This is the value that caused the misleading Drive error. A named error turns it into an instant diagnosis. |
+| ~~`COC.TEMPLATE_DOC_ID`~~ | **Gone (2026-08-11)** | n/a | The misleading-Drive-error class of failure this row existed to diagnose is now structurally impossible: there is no external Doc to point at. |
 | `COC.ATTACHMENTS_FOLDER_ID` | Yes | Fail loud | Pure environment value |
 | `COC.ARCHIVE_FOLDER_ID` | Yes | Fail loud | Pure environment value |
 | `EMAIL_DEV_TAG` | Yes | **Fail soft, default to `true` (dev-tagged)** | A forgotten property then sends visibly-test emails, never silently-production ones |

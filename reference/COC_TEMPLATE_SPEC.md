@@ -1,10 +1,24 @@
 # COC Template Spec — Phase 9 (Template 1)
 
-**Status:** Build spec + repo record for the Google Docs COC template.
-**Why this file exists:** We chose **Option B** (manually-built Google Doc) for the certificate
-template. The real layout lives in Google Drive, not the repo — so this file is the version-controlled
-record of *what* that Doc must contain (placeholders, formatting, structure) and *why*. If the Doc is
-ever lost or corrupted, rebuild it from this spec.
+> # ⚠️ SUPERSEDED — 2026-08-11. DO NOT FOLLOW THIS DOCUMENT.
+>
+> The Google-Docs-template engine described here **no longer exists**. The certificate is now rendered
+> directly in code by `buildCertificateHtml_()` in `backend/Certificate.js`, which is the single source
+> of truth for the certificate's design and content.
+>
+> **If you are here to change how the certificate looks, edit `buildCertificateHtml_()`.** There is no
+> Doc to open, no `TEMPLATE_DOC_ID` to configure, and no `{{token}}` / `<<[placeholder]>>` vocabulary.
+>
+> This file is retained as a historical record of the original AppSheet-derived layout and the token
+> contract, which is still useful for understanding *why* the certificate contains the fields it does.
+> Everything below describes the retired approach.
+>
+> See `reference/COC_SYSTEM_PROFILE.md` §5.6 for what replaced it and why.
+
+**Original status (retired):** Build spec + repo record for the Google Docs COC template.
+**Why this file existed:** We chose **Option B** (manually-built Google Doc) for the certificate
+template. The real layout lived in Google Drive, not the repo — so this file was the version-controlled
+record of *what* that Doc had to contain (placeholders, formatting, structure) and *why*.
 
 > Source of truth for the look: the original AppSheet template ("Image 6" in
 > `E-Certificate Automation Documentation.pdf`).

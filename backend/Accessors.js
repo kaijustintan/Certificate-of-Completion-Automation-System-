@@ -33,6 +33,9 @@
   ────────────────────────────────────────────────────────────
   ID GENERATORS
     - generateActionId_() / generateGroupId_() / generateGroupApproverId_()
+  GROUPS / APPROVERS — EXECUTION-SCOPED READ CACHE
+    - groupRows_() / groupApproverRows_() memoized tab reads (one per execution)
+    - invalidateGroupCaches_()            drop both memos after any write
   GROUPS / APPROVERS
     - getGroupApprovers_(groupId)         ordered active approver rows
     - getApprovers_(groupId)              legacy 6-field shape (compat)
@@ -93,6 +96,66 @@ function generateGroupId_() {
 
 
 // ============================================================
+// GROUPS / APPROVERS — EXECUTION-SCOPED READ CACHE
+// ============================================================
+/*
+  LAYMAN (Tropang Ex):
+  Yung Groups at Group_Approvers ay maliliit na talaan na paulit-ulit binabasa.
+  Dati, tuwing kailangan ang pangalan ng group o kung sino ang approver, binabasa
+  ang BUONG tab mula sa Google Sheets. Sa isang dashboard na may 50 requests,
+  50 beses na buong pagbasa yun para sa parehong data. Ngayon, isang basa lang
+  bawat execution, tapos gagamitin na lang ulit.
+
+  TECHNICAL:
+  Memoized readers for the two small, rarely-written lookup tables, mirroring the
+  SCRIPT_PROPS_CACHE_ / scriptProps_() pattern in Constants.js. Apps Script
+  discards globals between executions, so the cache lives exactly one execution
+  and there is no cross-request staleness to reason about.
+
+  ⚠️ DELIBERATELY LIMITED TO THESE TWO SHEETS. Requests and Activity_Log are NOT
+  memoized: both have genuine read-after-write patterns inside a single execution
+  (submitNewRequest appends a row then re-resolves it by ID for rollback;
+  checkContractExpiries appends EXPIRY_* rows mid-loop). A stale cache there
+  would be a correctness bug, not an optimization.
+
+  ⚠️ THE RULE: read-only paths use these; WRITE paths read fresh and then call
+  invalidateGroupCaches_(). generateGroupId_/updateGroupFields_/replaceGroupChain_
+  deliberately keep their raw getDataRows_ calls because they compute sheet row
+  numbers for an imminent write and run inside a lock.
+
+  This is what keeps adminSaveChain's post-write getGroupChain_() re-read and
+  notifyChainChanges_'s getCurrentApprover_() calls honest.
+*/
+var GROUPS_CACHE_ = null;
+var GROUP_APPROVERS_CACHE_ = null;
+
+/* groupRows_ — memoized data rows of the Groups tab (one read per execution). */
+function groupRows_() {
+  if (GROUPS_CACHE_ === null) GROUPS_CACHE_ = getDataRows_(SHEET_NAMES.GROUPS);
+  return GROUPS_CACHE_;
+}
+
+/* groupApproverRows_ — memoized data rows of the Group_Approvers tab. */
+function groupApproverRows_() {
+  if (GROUP_APPROVERS_CACHE_ === null) GROUP_APPROVERS_CACHE_ = getDataRows_(SHEET_NAMES.GROUP_APPROVERS);
+  return GROUP_APPROVERS_CACHE_;
+}
+
+/*
+  invalidateGroupCaches_ — drop both memos so the next read hits the sheet.
+  LAYMAN    : Tawagin ito pagkatapos magsulat sa Groups o Group_Approvers, para
+              yung susunod na magbabasa ay makita ang bagong laman, hindi yung luma.
+  TECHNICAL : Call after ANY write to either tab. Cheap (two null assignments).
+              When in doubt, invalidate: a redundant call costs one sheet read,
+              a missing one serves stale data for the rest of the execution.
+*/
+function invalidateGroupCaches_() {
+  GROUPS_CACHE_ = null;
+  GROUP_APPROVERS_CACHE_ = null;
+}
+
+
+// ============================================================
 // GROUPS / APPROVERS
 // ============================================================
 /*
@@ -101,7 +164,7 @@ function generateGroupId_() {
 */
 function getGroupApprovers_(groupId) {
   const target = String(groupId);
-  return getDataRows_(SHEET_NAMES.GROUP_APPROVERS)
+  return groupApproverRows_()
     .filter(function (r) {
       return String(r[GAP.GROUP_ID - 1]) === target &&
              String(r[GAP.ACTIVE - 1]).toUpperCase() !== "FALSE";
@@ -157,7 +220,7 @@ function getCurrentApprover_(step, groupId) {
 /* getGroupById_ — raw Groups row (0-indexed array) or null. */
 function getGroupById_(groupId) {
   const target = String(groupId);
-  return getDataRows_(SHEET_NAMES.GROUPS)
+  return groupRows_()
     .find(function (r) { return String(r[GRP.GROUP_ID - 1]) === target; }) || null;
 }
 /* getGroupNameById_ — display name for a group_id ("" if not found). */
@@ -170,7 +233,7 @@ function getGroupNameById_(groupId) {
    unprivileged caller has no reason to perform. Kept (not deleted) because the
    group rename flow is a plausible future caller. */
 function getGroupIdByName_(name) {
-  const m = getDataRows_(SHEET_NAMES.GROUPS)
+  const m = groupRows_()
     .find(function (r) { return r[GRP.GROUP_NAME - 1] === name; });
   return m ? m[GRP.GROUP_ID - 1] : "";
 }
@@ -187,12 +250,12 @@ function getGroupIdByName_(name) {
 */
 function getApproverGroups() {
   const hasApprover = {};
-  getDataRows_(SHEET_NAMES.GROUP_APPROVERS).forEach(function (r) {
+  groupApproverRows_().forEach(function (r) {
     if (String(r[GAP.ACTIVE - 1]).toUpperCase() !== "FALSE" && r[GAP.GROUP_ID - 1]) {
       hasApprover[String(r[GAP.GROUP_ID - 1])] = true;
     }
   });
-  return getDataRows_(SHEET_NAMES.GROUPS)
+  return groupRows_()
     .filter(function (r) {
       return r[GRP.GROUP_ID - 1] &&
              String(r[GRP.ACTIVE - 1]).toUpperCase() !== "FALSE" &&
@@ -217,7 +280,7 @@ function getApproverGroups() {
   RETURNS   : [{ id, name, active(bool), createdAt(Date|"") }].
 */
 function getAllGroups_() {
-  return getDataRows_(SHEET_NAMES.GROUPS)
+  return groupRows_()
     .filter(function (r) { return r[GRP.GROUP_ID - 1]; })
     .map(function (r) {
       return {
@@ -240,7 +303,7 @@ function getAllGroups_() {
 */
 function getGroupChain_(groupId) {
   const target = String(groupId);
-  return getDataRows_(SHEET_NAMES.GROUP_APPROVERS)
+  return groupApproverRows_()
     .filter(function (r) {
       return String(r[GAP.GROUP_ID - 1]) === target &&
              String(r[GAP.ACTIVE - 1]).toUpperCase() !== "FALSE";
@@ -282,6 +345,7 @@ function createGroup_(name) {
     row[GRP.ACTIVE - 1]     = "TRUE";
     row[GRP.CREATED_AT - 1] = new Date();
     sheet.appendRow(row);
+    invalidateGroupCaches_();   // the new group must be visible to later reads this execution
     return { id: id, name: name };
   } finally {
     lock.releaseLock();
@@ -308,6 +372,9 @@ function updateGroupFields_(groupId, fields) {
       const rowNum = i + 2; // +1 header, +1 1-based
       if (fields.name !== undefined)   sheet.getRange(rowNum, GRP.GROUP_NAME).setValue(fields.name);
       if (fields.active !== undefined) sheet.getRange(rowNum, GRP.ACTIVE).setValue(fields.active ? "TRUE" : "FALSE");
+      // adminSetGroupActive reads the group name AFTER this call for its audit
+      // line, so the memo has to drop here or that line reads pre-edit values.
+      invalidateGroupCaches_();
       return true;
     }
   }
@@ -415,6 +482,11 @@ function replaceGroupChain_(groupId, slots) {
       sheet.getRange(sheet.getLastRow() + 1, 1, appends.length, 6).setValues(appends);
     }
   } finally {
+    // Inside the finally so the memo is dropped even on a partial write: serving
+    // a pre-edit chain after a half-applied change would be worse than a re-read.
+    // adminSaveChain immediately re-reads via getGroupChain_() and notifies via
+    // getCurrentApprover_(), and both must observe the new chain.
+    invalidateGroupCaches_();
     lock.releaseLock();
   }
 }
@@ -478,7 +550,7 @@ function ensureAdminsLogTab_() {
 */
 function detectRole_(email) {
   if (!email) return "requestor";
-  const rows = getDataRows_(SHEET_NAMES.GROUP_APPROVERS);
+  const rows = groupApproverRows_();
   for (let i = 0; i < rows.length; i++) {
     if (sameEmail_(rows[i][GAP.APPROVER_EMAIL - 1], email)) return "approver";
   }

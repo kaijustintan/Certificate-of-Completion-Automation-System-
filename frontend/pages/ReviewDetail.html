@@ -45,6 +45,12 @@
 // it without re-fetching. Cleared between renders.
 let __reviewDetail = null;
 
+// Minimum characters for a decline/return reason.
+// ⚠️ MUST MATCH MIN_REMARK in validateRemark_() (backend/Approvals.js). That
+// function is the actual control; this constant only drives the counter and the
+// disabled state so the approver is not rejected after typing.
+const REVIEW_MIN_REMARK = 20;
+
 
 /*
   Function Name: renderReviewDetailPage
@@ -239,7 +245,8 @@ function renderActionBar() {
     '<div id="decline-panel" class="card hidden">' +
       '<div class="card-header"><div class="card-title">Decline this request</div></div>' +
       '<p class="text-muted mb-md">Provide a reason for declining. The requestor will receive this in the notification email and the request will be closed (it cannot be resubmitted).</p>' +
-      '<textarea class="form-textarea" id="decline-remark" placeholder="Reason for decline (required)…" oninput="syncPanelButton(\'decline\')"></textarea>' +
+      '<textarea class="form-textarea" id="decline-remark" placeholder="Reason for decline (required, at least ' + REVIEW_MIN_REMARK + ' characters)…" oninput="syncPanelButton(\'decline\')"></textarea>' +
+      '<div class="text-tiny text-muted" id="decline-remark-count">0 / ' + REVIEW_MIN_REMARK + ' characters minimum</div>' +
       '<div class="form-actions">' +
         '<button class="btn btn-secondary" onclick="closeReviewPanels()">Cancel</button>' +
         '<button class="btn btn-danger action-btn" id="decline-submit" disabled onclick="onDeclineSubmit()">Confirm decline</button>' +
@@ -250,7 +257,8 @@ function renderActionBar() {
     '<div id="return-panel" class="card hidden">' +
       '<div class="card-header"><div class="card-title">Return to requestor</div></div>' +
       '<p class="text-muted mb-md">Describe what needs to be changed. The requestor will receive this in the notification email and can update and resubmit.</p>' +
-      '<textarea class="form-textarea" id="return-remark" placeholder="What needs to change (required)…" oninput="syncPanelButton(\'return\')"></textarea>' +
+      '<textarea class="form-textarea" id="return-remark" placeholder="What needs to change (required, at least ' + REVIEW_MIN_REMARK + ' characters)…" oninput="syncPanelButton(\'return\')"></textarea>' +
+      '<div class="text-tiny text-muted" id="return-remark-count">0 / ' + REVIEW_MIN_REMARK + ' characters minimum</div>' +
       '<div class="form-actions">' +
         '<button class="btn btn-secondary" onclick="closeReviewPanels()">Cancel</button>' +
         '<button class="btn btn-warning action-btn" id="return-submit" disabled onclick="onReturnSubmit()">Confirm return</button>' +
@@ -314,16 +322,38 @@ function setActionItemHidden(btnId, hidden) {
 // Enable/disable the submit button based on textarea content.
 /*
   Function Name: syncPanelButton
-  LAYMAN    : I-enable ang "Confirm decline/return" button ONLY kapag may laman
-              na ang remark textarea. Huwag pahintulutan ang walang dahilan.
-  TECHNICAL : Reads the textarea value; enables/disables the matching submit button.
+
+  LAYMAN (Tropang Ex):
+  Habang nagta-type ang approver ng dahilan, ito ang nag-a-update ng counter sa
+  ilalim ng textarea at nagbubukas ng "Confirm decline/return" button. Bubukas
+  lang ito kapag umabot na sa minimum na haba. Ganito para hindi maka-decline ang
+  approver nang walang paliwanag na mababasa ng requestor.
+
+  TECHNICAL:
+  Reads the textarea, writes the live counter, and enables/disables the matching
+  submit button on a trimmed length >= REVIEW_MIN_REMARK.
+
+  ⚠️ UX MIRROR, NOT THE CONTROL. validateRemark_() in Approvals.js is what
+  actually enforces this, because decline_/returnRequest_ are reachable directly
+  via google.script.run. REVIEW_MIN_REMARK must stay in sync with MIN_REMARK there.
+
   PARAMS    : kind — 'decline' | 'return'.
+  RETURNS   : (void)
 */
 function syncPanelButton(kind) {
   const remark = document.getElementById(kind + '-remark');
   const button = document.getElementById(kind + '-submit');
   if (!remark || !button) return;
-  button.disabled = !remark.value.trim();
+
+  const len = remark.value.trim().length;
+  button.disabled = len < REVIEW_MIN_REMARK;
+
+  const counter = document.getElementById(kind + '-remark-count');
+  if (counter) {
+    counter.textContent = len >= REVIEW_MIN_REMARK
+      ? len + ' characters'
+      : len + ' / ' + REVIEW_MIN_REMARK + ' characters minimum';
+  }
 }
 
 
@@ -355,7 +385,7 @@ async function onApproveClick() {
 async function onDeclineSubmit() {
   const id     = __reviewDetail && __reviewDetail.requestId;
   const remark = (document.getElementById('decline-remark') || {}).value;
-  if (!id || !remark || !remark.trim()) return;
+  if (!id || !remark || remark.trim().length < REVIEW_MIN_REMARK) return;
 
   const ok = await showConfirm({
     title:        'Decline request',
@@ -370,7 +400,7 @@ async function onDeclineSubmit() {
 async function onReturnSubmit() {
   const id     = __reviewDetail && __reviewDetail.requestId;
   const remark = (document.getElementById('return-remark') || {}).value;
-  if (!id || !remark || !remark.trim()) return;
+  if (!id || !remark || remark.trim().length < REVIEW_MIN_REMARK) return;
 
   await runReviewAction('handleReturn', [id, remark.trim()], 'Request returned to the requestor.', 'Returning…');
 }

@@ -51,32 +51,148 @@
 // ============================================================
 
 /*
+  ATTACHMENT_RULES_ — accepted file extensions and their magic-byte signatures.
+
+  LAYMAN (Tropang Ex):
+  Listahan ng mga file type na pinapayagan bilang supporting document, kasama ang
+  "fingerprint" ng bawat isa. Yung fingerprint ay yung unang ilang byte sa loob ng
+  file na nagsasabi kung ano talaga ito. Kaya kahit i-rename mo ang virus.exe
+  papuntang resibo.pdf, mahuhuli pa rin kasi hindi nagsisimula sa %PDF ang laman.
+
+  TECHNICAL:
+  Extension (lowercase, no dot) → array of acceptable leading-byte signatures as
+  uppercase hex. Checked by validateAttachmentPayload_ against fileSignatureHex_().
+  Signature match is a PREFIX test, so a 3-byte signature (JPEG) and a 4-byte one
+  (PDF) both work against the same 6-byte read.
+
+  Note the collisions, which are correct and not a mistake:
+    D0CF11E0 — OLE2 compound document, shared by legacy .doc and .xls
+    504B0304 — ZIP container, shared by every OOXML format (.docx, .xlsx)
+  So this proves the CONTAINER, not the document type. A .xlsx renamed to .docx
+  passes, which is fine: both are accepted types and Drive stores the bytes as
+  given. What it stops is an executable, script, or archive wearing a document
+  extension.
+*/
+const ATTACHMENT_RULES_ = {
+  pdf:  ["25504446"],   // %PDF
+  doc:  ["D0CF11E0"],   // OLE2 compound document
+  xls:  ["D0CF11E0"],   // OLE2 compound document
+  docx: ["504B0304"],   // ZIP (OOXML)
+  xlsx: ["504B0304"],   // ZIP (OOXML)
+  jpg:  ["FFD8FF"],     // JPEG (SOI + marker)
+  jpeg: ["FFD8FF"],
+  png:  ["89504E47"],   // \x89PNG
+};
+
+/*
+  ATTACHMENT_MIMES_ — accepted browser-reported MIME types.
+
+  LAYMAN    : Yung sinasabi ng browser kung anong klaseng file ito. Advisory lang
+              ito, hindi ito ang tunay na bantay, kasi kayang palitan ng kahit sino
+              ang halagang ito bago ipadala.
+  TECHNICAL : Client-supplied and therefore ADVISORY. "application/octet-stream"
+              is deliberately allowed because browsers genuinely misreport valid
+              PDFs and Office files that way, which is exactly why the magic-byte
+              check exists as the real backstop.
+*/
+const ATTACHMENT_MIMES_ = {
+  "application/pdf": true,
+  "application/msword": true,
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document": true,
+  "application/vnd.ms-excel": true,
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": true,
+  "image/jpeg": true,
+  "image/jpg": true,
+  "image/png": true,
+  "application/octet-stream": true,   // browser fallback; magic bytes still decide
+};
+
+/*
+  Function Name: fileSignatureHex_
+
+  LAYMAN (Tropang Ex):
+  Kinukuha ang unang ilang byte ng file (hindi buo, para mabilis) at ginagawang
+  hex text para maihambing sa listahan ng fingerprints sa itaas.
+
+  TECHNICAL:
+  Decodes only the first 8 base64 characters, which is exactly 6 bytes with no
+  padding involved, then renders them as uppercase hex. 6 bytes covers every
+  signature in ATTACHMENT_RULES_ (longest is 4).
+
+  ⚠️ Utilities.base64Decode returns Java SIGNED bytes (-128..127), so each value
+  is masked with 0xFF before hexing. Without the mask, any leading byte above
+  0x7F (which includes PNG's 0x89 and JPEG's 0xFF) would render negative and
+  never match.
+
+  PARAMS  : base64 — the raw base64 body (a data: prefix is tolerated).
+  RETURNS : Uppercase hex string, or "" if there is not enough input to read.
+
+  EXAMPLE
+    fileSignatureHex_("JVBERi0xLjQ...")  → "255044462D312E"   // %PDF-1.
+    fileSignatureHex_("iVBORw0KGgo...")  → "89504E470D0A1A"   // PNG
+*/
+function fileSignatureHex_(base64) {
+  const head = String(base64 || "").replace(/^data:[^;]+;base64,/, "").substring(0, 8);
+  if (head.length < 8) return "";
+  const bytes = Utilities.base64Decode(head);
+  let hex = "";
+  for (let i = 0; i < bytes.length; i++) {
+    hex += ("0" + (bytes[i] & 0xFF).toString(16)).slice(-2);
+  }
+  return hex.toUpperCase();
+}
+
+/*
   Function Name: validateAttachmentPayload_
-  LAYMAN    : Bago mag-upload ng kahit ano sa Drive, sinisiguro muna natin na
-              valid ang lahat ng files: may laman, may description bawat isa,
-              hindi sobrang laki. Ito ang "bouncer" bago pumasok sa Drive.
-  TECHNICAL : Pure validation — no I/O. Called server-side before any upload
-              attempt. Estimates decoded byte size from base64.length * 3/4.
-              Returns { ok: true } or { ok: false, error: string }.
-  PARAMS    : files — Array<{ base64, filename, mimeType, description }>.
-              requireAtLeastOne — bool (default true). New-request submit requires
-              ≥1 file; resubmit_ passes false (added files are optional there).
-  RETURNS   : { ok: true } or { ok: false, error: string }.
+
+  LAYMAN (Tropang Ex):
+  Ito ang "bouncer" bago makapasok ang kahit anong file sa Drive. Tinitingnan
+  bawat file: may laman ba, may description ba, hindi ba sobrang laki, tama ba
+  ang klase (PDF / Word / Excel / larawan), at ang pinaka-importante, tugma ba
+  ang LAMAN sa extension. Kaya kung may mag-upload ng script na pinangalanang
+  "resibo.pdf", tatanggihan ito dahil hindi naman talaga PDF ang laman.
+
+  TECHNICAL:
+  Pure validation, no I/O (base64Decode is in-memory). Called server-side before
+  any upload attempt, so a rejection costs nothing and needs no rollback. Runs
+  per file: required fields → description → extension allowlist → MIME allowlist
+  → size floor/ceiling → magic-byte signature. Cheapest checks first.
+
+  ⚠️ THE SIGNATURE CHECK IS THE ONLY REAL CONTROL. Filename, extension, and
+  mimeType all arrive from the browser and can be anything the caller wants,
+  because submitNewRequest/handleResubmit are reachable directly via
+  google.script.run. The NewRequest.html accept= attribute and its client-side
+  extension check are convenience, not security.
+
+  ⚠️ Both entry points are covered automatically: submitNewRequest (requires
+  ≥1 file) and handleResubmit (passes requireAtLeastOne = false).
+
+  PARAMS:
+  - files — Array<{ base64, filename, mimeType, description }>.
+  - requireAtLeastOne — bool (default true). New-request submit requires ≥1 file;
+    resubmit passes false (added files are optional there).
+
+  RETURNS:
+  { ok: true } or { ok: false, error: string } with a user-facing message.
 
   EXAMPLE
     validateAttachmentPayload_([])
     → { ok: false, error: "At least one supporting document is required." }
-    validateAttachmentPayload_([], false)   // resubmit_, no new files
+    validateAttachmentPayload_([], false)   // resubmit, no new files
     → { ok: true }
-    validateAttachmentPayload_([{ base64:"...", filename:"PO.pdf",
+    validateAttachmentPayload_([{ base64:"JVBERi0...", filename:"PO.pdf",
                                  mimeType:"application/pdf", description:"PO" }])
     → { ok: true }
+    // a .txt renamed to .pdf:
+    validateAttachmentPayload_([{ base64:"aGVsbG8g...", filename:"PO.pdf", … }])
+    → { ok: false, error: '"PO.pdf" does not appear to be a valid PDF file. …' }
 */
 function validateAttachmentPayload_(files, requireAtLeastOne) {
   if (requireAtLeastOne === undefined) requireAtLeastOne = true;
   const MAX_FILE_BYTES  = 5  * 1024 * 1024;   // 5 MB per file (decoded)
   const MAX_TOTAL_BYTES = 15 * 1024 * 1024;   // 15 MB total across all files
   const MAX_FILE_COUNT  = 10;
+  const MIN_FILE_BYTES  = 8;                  // enough bytes to read a signature
 
   if (!Array.isArray(files) || files.length === 0) {
     // Resubmit allows zero new files (the original attachments carry over).
@@ -97,11 +213,60 @@ function validateAttachmentPayload_(files, requireAtLeastOne) {
     if (!f.description || !String(f.description).trim()) {
       return { ok: false, error: "Each file needs a description (file " + (i + 1) + ': "' + f.filename + '").' };
     }
+
+    // ── TYPE GATE (3 layers, cheapest first) ──────────────────────────────
+    // Layers 1-2 are client-supplied and therefore advisory; layer 3 inspects
+    // the actual bytes and is the real control.
+
+    // Layer 1 — extension allowlist.
+    var dot = String(f.filename).lastIndexOf(".");
+    var ext = dot === -1 ? "" : String(f.filename).substring(dot + 1).toLowerCase();
+    if (!ATTACHMENT_RULES_.hasOwnProperty(ext)) {
+      return {
+        ok: false,
+        error: '"' + f.filename + '" is not an accepted file type. ' +
+               "Allowed: PDF, Word (.doc/.docx), Excel (.xls/.xlsx), JPG, PNG.",
+      };
+    }
+
+    // Layer 2 — browser-reported MIME allowlist.
+    if (!ATTACHMENT_MIMES_.hasOwnProperty(String(f.mimeType).toLowerCase())) {
+      return { ok: false, error: '"' + f.filename + '" has an unsupported content type (' + f.mimeType + ")." };
+    }
+
     // Estimate decoded byte count from base64 string length (~75% of base64 length)
     var approxBytes = Math.floor(f.base64.length * 3 / 4);
     if (approxBytes > MAX_FILE_BYTES) {
       return { ok: false, error: '"' + f.filename + '" exceeds the 5 MB file size limit.' };
     }
+    // Floor as well as ceiling: the signature read below needs real bytes, and a
+    // near-empty file is a failed upload rather than a document worth storing.
+    if (approxBytes < MIN_FILE_BYTES) {
+      return { ok: false, error: '"' + f.filename + '" is empty or truncated.' };
+    }
+
+    // Layer 3 — magic bytes. This is what catches a .txt or .exe renamed to .pdf.
+    // Decode is wrapped so malformed base64 surfaces as a clean validation error
+    // instead of an uncaught throw inside a caller that has already uploaded files.
+    var sig;
+    try {
+      sig = fileSignatureHex_(f.base64);
+    } catch (sigErr) {
+      return { ok: false, error: '"' + f.filename + '" could not be read. Please re-attach it.' };
+    }
+    var expected = ATTACHMENT_RULES_[ext];
+    var signatureOk = false;
+    for (var s = 0; s < expected.length; s++) {
+      if (sig.indexOf(expected[s]) === 0) { signatureOk = true; break; }
+    }
+    if (!signatureOk) {
+      return {
+        ok: false,
+        error: '"' + f.filename + '" does not appear to be a valid ' + ext.toUpperCase() +
+               " file. Please re-save or re-export it and try again.",
+      };
+    }
+
     totalBytes += approxBytes;
   }
   if (totalBytes > MAX_TOTAL_BYTES) {

@@ -651,7 +651,8 @@ async function renderRequestDetailPage(params) {
         '<div id="attachment-list"></div>' +
         '<div class="attachment-add-row">' +
           '<label class="btn btn-secondary file-input-label">' +
-            '<input type="file" id="attachment-file-input" multiple style="display:none">' +
+            '<input type="file" id="attachment-file-input" multiple style="display:none" ' +
+                   'accept=".pdf,.doc,.docx,.xls,.xlsx,.jpg,.jpeg,.png">' +
             '+ Add file' +
           '</label>' +
           '<span class="text-tiny text-muted">Max 5 MB per file · 15 MB total · 10 files max</span>' +

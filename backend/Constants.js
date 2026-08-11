@@ -304,15 +304,20 @@ const ADMIN_ACTION = {
 
 /*
   COC — Certificate of Completion (Phase 9) + supporting-docs upload (Phase 8).
-  LAYMAN    : Tatlong "address": (1) ang Google Docs template, (2) folder ng
-              na-generate na COC PDF, (3) folder ng supporting documents.
+  LAYMAN    : Dalawang "address": (1) folder ng na-generate na COC PDF,
+              (2) folder ng supporting documents.
   TECHNICAL : Used by generateCOC_() (Certificate.js) and uploadAttachmentFile_()
               (Attachments.js). Keep ATTACHMENTS_FOLDER_ID separate from
               ARCHIVE_FOLDER_ID. Both folders should be Restricted in Drive.
   ⚠️ SETUP  : Swap folder IDs to the Megaworld prod folders at go-live.
+
+  ⚠️ TEMPLATE_DOC_ID WAS REMOVED (2026-08-11). The certificate is no longer built
+  from a Google Doc template; buildCertificateHtml_ (Certificate.js) renders it
+  directly, so there is no external Doc to configure, lose, or silently edit. If
+  a stale TEMPLATE_DOC_ID Script Property still exists on a deployment, it is
+  simply ignored, but delete it so it does not read as live config.
 */
 const COC = {
-  TEMPLATE_DOC_ID:       "1FBf-l49w-z_3bey0NdxZ3VABevFb2_7gbGw-l111MSs",
   ARCHIVE_FOLDER_ID:     "1LKmStUeJrJMWHBfMXlxw3HafGg1EdZ4C",
   ATTACHMENTS_FOLDER_ID: "1rJPkh0yaSEFOzzKfHZvu5h2Kx-WrhvZg",
 };
@@ -428,7 +433,7 @@ function scriptProps_() {
 */
 function configFallback_(key) {
   switch (key) {
-    case "TEMPLATE_DOC_ID":       return COC.TEMPLATE_DOC_ID;
+    // TEMPLATE_DOC_ID intentionally absent — the Doc-template engine is gone.
     case "ARCHIVE_FOLDER_ID":     return COC.ARCHIVE_FOLDER_ID;
     case "ATTACHMENTS_FOLDER_ID": return COC.ATTACHMENTS_FOLDER_ID;
     default:                      return null;
@@ -446,7 +451,7 @@ function configFallback_(key) {
               up trailing whitespace, and getFolderById(" 1abc ") fails opaquely.
               Trimming is a no-op on the fallback path (literals are clean), so
               this introduces zero behaviour change until properties are used.
-  PARAMS    : key — the bare property key (e.g. "TEMPLATE_DOC_ID").
+  PARAMS    : key — the bare property key (e.g. "ARCHIVE_FOLDER_ID").
   RETURNS   : Non-empty trimmed string.
   THROWS    : Error naming the key when neither source has a usable value.
 
@@ -503,7 +508,7 @@ function configFlag_(key, dflt) {
 */
 function _testConfig() {
   const props = scriptProps_();
-  ["TEMPLATE_DOC_ID", "ARCHIVE_FOLDER_ID", "ATTACHMENTS_FOLDER_ID"].forEach(function (k) {
+  ["ARCHIVE_FOLDER_ID", "ATTACHMENTS_FOLDER_ID"].forEach(function (k) {
     const hasProp = props[k] !== undefined && props[k] !== null && String(props[k]).trim() !== "";
     let resolved;
     try { resolved = config_(k); } catch (e) { resolved = "<<UNRESOLVED: " + e.message + ">>"; }

@@ -243,7 +243,8 @@ async function renderNewRequestPage() {
 
         <div class="attachment-add-row">
           <label class="btn btn-secondary file-input-label">
-            <input type="file" id="attachment-file-input" multiple style="display:none">
+            <input type="file" id="attachment-file-input" multiple style="display:none"
+                   accept=".pdf,.doc,.docx,.xls,.xlsx,.jpg,.jpeg,.png">
             + Add file
           </label>
           <span class="text-tiny text-muted">Max 5 MB per file · 15 MB total · 10 files max</span>
@@ -487,13 +488,23 @@ function clearNewRequestFieldErrors(form) {
 
 /*
   Function Name: onAttachmentFilesSelected
-  LAYMAN    : Kapag pumili ng file sa picker, dito napupunta. Sinisiguro na hindi
-              lumagpas sa per-file at total size limits bago idagdag sa listahan.
-              Tapos nire-render agad ang updated list sa DOM.
-  TECHNICAL : Iterates FileList; enforces MAX_FILE_COUNT, per-file MAX_FILE_BYTES,
-              cumulative MAX_TOTAL_BYTES (using file.size, not base64 estimate,
-              for fast client feedback). Pushes {file, size, description:''} to
+  LAYMAN    : Kapag pumili ng file sa picker, dito napupunta. Sinisiguro na tama
+              ang klase ng file at hindi lumagpas sa per-file at total size limits
+              bago idagdag sa listahan. Tapos nire-render agad ang updated list.
+  TECHNICAL : Iterates FileList; enforces MAX_FILE_COUNT, the ALLOWED_EXTS
+              allowlist, per-file MAX_FILE_BYTES, and cumulative MAX_TOTAL_BYTES
+              (using file.size, not the base64 estimate, for fast client
+              feedback). Pushes {file, size, description:''} to
               window._newRequestFiles; calls renderAttachmentList().
+
+  ⚠️ SHARED BY BOTH UPLOAD PATHS. RequestDetail.html's resubmit picker calls this
+  same global, so an edit here changes submit AND resubmit. That is intended.
+
+  ⚠️ NOT A SECURITY CONTROL. Every check here is convenience; the authority is
+  validateAttachmentPayload_ in backend/Attachments.js, which re-checks the
+  extension and inspects the file's actual leading bytes. Keep ALLOWED_EXTS in
+  sync with ATTACHMENT_RULES_ there.
+
   PARAMS    : fileList — FileList from <input type=file> change event.
   RETURNS   : (void)
 */
@@ -501,12 +512,22 @@ function onAttachmentFilesSelected(fileList) {
   var MAX_FILE_BYTES  = 5  * 1024 * 1024;   // 5 MB
   var MAX_TOTAL_BYTES = 15 * 1024 * 1024;   // 15 MB total
   var MAX_FILE_COUNT  = 10;
+  // Mirrors ATTACHMENT_RULES_ in backend/Attachments.js. This is fast feedback
+  // only: the server re-checks the extension AND inspects the actual leading
+  // bytes, which is what a renamed file gets caught by.
+  var ALLOWED_EXTS = ['pdf', 'doc', 'docx', 'xls', 'xlsx', 'jpg', 'jpeg', 'png'];
 
   for (var i = 0; i < fileList.length; i++) {
     var f = fileList[i];
     if (window._newRequestFiles.length >= MAX_FILE_COUNT) {
       showToast('Maximum ' + MAX_FILE_COUNT + ' files allowed.', 'error');
       break;
+    }
+    var dot = f.name.lastIndexOf('.');
+    var ext = dot === -1 ? '' : f.name.substring(dot + 1).toLowerCase();
+    if (ALLOWED_EXTS.indexOf(ext) === -1) {
+      showToast('"' + f.name + '" is not an accepted file type (PDF, Word, Excel, JPG, PNG).', 'error');
+      continue;
     }
     if (f.size > MAX_FILE_BYTES) {
       showToast('"' + f.name + '" exceeds 5 MB and was skipped.', 'error');

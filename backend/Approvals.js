@@ -187,19 +187,62 @@ function decline_(requestId, approverRemark) {
 
 /*
   Function Name: validateRemark_
-  LAYMAN    : Tinitingnan lang kung hindi sobrang haba ang dahilan na tinype ng
-              approver. Dati walang limitasyon — pwedeng 50,000 characters, tapos
-              lalabas yun sa detail page at sa lahat ng email.
-  TECHNICAL : Length cap for approver-supplied free text before it enters the
-              append-only Activity_Log. Rejects rather than truncates, so the
-              approver is never silently robbed of their wording. Blank stays
-              acceptable — this does NOT introduce a mandatory-reason rule.
-  PARAMS    : remark — the caller-supplied string (may be undefined/null).
-  RETURNS   : { ok:true } | { ok:false, message:"<user-facing>" }
+
+  LAYMAN (Tropang Ex):
+  Tinitingnan kung may tunay na dahilan na naitype ang approver bago i-decline o
+  i-return ang isang request. Dapat may laman (hindi puro space), hindi masyadong
+  maikli para may kahulugan, at hindi sobrang haba. Kasi yung dahilan na ito ang
+  babasahin ng requestor sa email at yun lang ang basehan nila kung ano ang
+  aayusin. Dating pwedeng blangko, kaya may mga request na na-decline nang walang
+  kahit anong paliwanag.
+
+  TECHNICAL:
+  Validation gate for approver-supplied free text before it enters the
+  append-only Activity_Log. Three checks: non-blank, MIN_REMARK floor, MAX_REMARK
+  cap. Rejects rather than truncates, so the approver is never silently robbed of
+  their wording.
+
+  ⚠️ THE MINIMUM IS A REAL RULE CHANGE (previously blank was accepted). It applies
+  to decline_ and returnRequest_ only, and only to NEW actions, so no existing
+  Activity_Log row is affected and no migration is needed. approve_() takes no
+  remark and is untouched.
+
+  ⚠️ The frontend mirrors this in syncPanelButton() (ReviewDetail.html) with a
+  live counter, but THAT IS UX, NOT THE CONTROL. decline_/returnRequest_ are
+  reachable directly via google.script.run, so this server check is the only
+  thing actually enforcing it. Keep the two minimums in sync.
+
+  PARAMS:
+  - remark — the caller-supplied string (may be undefined/null).
+
+  RETURNS:
+  { ok:true } | { ok:false, message:"<user-facing>" }
+
+  EXAMPLE
+    validateRemark_("")                       → { ok:false, message:"A reason is required." }
+    validateRemark_("   ")                    → { ok:false, message:"A reason is required." }
+    validateRemark_("wrong dates")            → { ok:false, message:"Please give a bit more detail…" }
+    validateRemark_("Contract dates do not match the PO.")  → { ok:true }
 */
 function validateRemark_(remark) {
+  const MIN_REMARK = 20;
   const MAX_REMARK = 2000;
-  if (remark && String(remark).length > MAX_REMARK) {
+
+  // Trim for the blank/floor checks so whitespace can't satisfy the minimum,
+  // but measure the cap against the raw value, which is what actually gets stored.
+  const trimmed = String(remark == null ? "" : remark).trim();
+
+  if (trimmed === "") {
+    return { ok: false, message: "A reason is required. The requestor will receive this in their notification email." };
+  }
+  if (trimmed.length < MIN_REMARK) {
+    return {
+      ok: false,
+      message: "Please give a bit more detail (at least " + MIN_REMARK +
+               " characters, you entered " + trimmed.length + ").",
+    };
+  }
+  if (String(remark).length > MAX_REMARK) {
     return { ok: false, message: "Your remark is too long (max " + MAX_REMARK + " characters)." };
   }
   return { ok: true };
