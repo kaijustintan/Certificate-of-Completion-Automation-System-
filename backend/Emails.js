@@ -68,8 +68,26 @@
 // TEMP DEV AID: while testing with a single account (requestor == approver),
 // prefix every subject with [FOR APPROVER] / [FOR REQUESTOR] so the same inbox
 // can tell them apart. Set to false for production — one-line toggle.
-// ⚠️ FLIP TO FALSE BEFORE GO-LIVE
+// ⚠️ FLIP TO FALSE BEFORE GO-LIVE (or set the EMAIL_DEV_TAG Script Property to
+//    "false", which overrides this literal without a code change — see emailDevTag_)
 const EMAIL_DEV_TAG = true;
+
+/*
+  emailDevTag_ — is the [FOR APPROVER]/[FOR REQUESTOR] subject tag on?
+  LAYMAN    : Sinusuri kung naka-on pa ang dev tag. Ang Script Property na
+              "EMAIL_DEV_TAG" ang mananaig; kung wala, ang literal sa itaas.
+  TECHNICAL : Fail-SOFT resolution (configFlag_, Constants.js) defaulting to the
+              source literal, so a missing/garbled property can never silently
+              turn the tag OFF and let dev-looking mail masquerade as production.
+              Deliberately a function, not a top-level const: reading a property
+              in a file-load initializer would fire a PropertiesService call on
+              EVERY execution and an error there is an uncatchable load failure.
+  PARAMS    : (none)
+  RETURNS   : Boolean.
+*/
+function emailDevTag_() {
+  return configFlag_("EMAIL_DEV_TAG", EMAIL_DEV_TAG);
+}
 
 // Standing note appended to IN-FLIGHT requestor emails (progress update, resubmit
 // confirmation). An admin can change a request's approver chain at any time, so a
@@ -95,7 +113,7 @@ const REQUESTOR_PORTAL_NOTE =
 // Helper — standard minimal subject line.
 // audience = 'APPROVER' | 'REQUESTOR'; statusLabel e.g. 'Action Needed', 'Approved'.
 function emailSubject(controlNumber, statusLabel, audience) {
-  const tag    = EMAIL_DEV_TAG ? `[FOR ${audience}] ` : "";
+  const tag    = emailDevTag_() ? `[FOR ${audience}] ` : "";
   const suffix = statusLabel ? ` | ${statusLabel}` : "";
   return `${tag}[COC Request]: ${controlNumber}${suffix}`;
 }
@@ -491,9 +509,11 @@ Open this request: ${getPortalUrl(requestId, "review")}`;
               failure never blocks the approval email — it gracefully falls back to
               "provided separately". Includes buildApprovalLog; links to the
               requestor 'request' page.
-  FIRES     : handleApprove (final step, newStatus === APPROVED); also the
-              onSheetChange trigger on a manual "Fully Approved" sheet edit. Only
-              one path runs per approval, so the COC is generated exactly once.
+  FIRES     : handleApprove (final step, newStatus === APPROVED). This is now the
+              ONLY live path: registerTrigger() is deliberately disabled, so the
+              legacy onSheetChange manual-edit route no longer runs (and would
+              fail generateCOC's identity guard anyway, since an installable
+              trigger resolves Session to the trigger owner). Generated once.
 
   STEPS
     Step 1 — Load request data

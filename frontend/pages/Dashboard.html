@@ -480,7 +480,7 @@ function renderRequestorTable(requests) {
 function renderRequestRow(r) {
   const idAttr = escapeHtml(r.requestId);
   return '' +
-    '<tr role="button" tabindex="0" onclick="navigateTo(\'request\', {id: \'' + idAttr + '\'})" onkeydown="uiKeyActivate(event)">' +
+    '<tr tabindex="0" onclick="navigateTo(\'request\', {id: \'' + idAttr + '\'})" onkeydown="uiKeyActivate(event)">' +
       '<td>' +
         '<div class="cell-request">' +
           '<div class="cell-request-icon">' + renderIcon('file', 16) + '</div>' +

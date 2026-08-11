@@ -150,19 +150,18 @@ function sanitizeAttachmentFilename(name) {
     → { fileId: "1abc...", url: "https://drive.google.com/…" }
 */
 function uploadAttachmentFile(file, driveName) {
-  if (!COC.ATTACHMENTS_FOLDER_ID) {
-    throw new Error(
-      "COC.ATTACHMENTS_FOLDER_ID is not configured. " +
-      "Paste the supporting-docs Drive folder ID in Constants.js before accepting uploads."
-    );
-  }
+  // Resolved via Script Property with the Constants.js literal as fallback.
+  // config_() throws a named error when neither is set — correct here, because
+  // this function is documented to throw so submitNewRequest can roll back.
+  var folderId = config_("ATTACHMENTS_FOLDER_ID");
+
   // Strip data:...;base64, prefix defensively — client should have done this already
   var base64Clean = file.base64.replace(/^data:[^;]+;base64,/, "");
   var bytes    = Utilities.base64Decode(base64Clean);
   var name     = driveName ? sanitizeAttachmentFilename(driveName)
                            : sanitizeAttachmentFilename(file.filename);
   var blob     = Utilities.newBlob(bytes, file.mimeType, name);
-  var drv      = DriveApp.getFolderById(COC.ATTACHMENTS_FOLDER_ID).createFile(blob);
+  var drv      = DriveApp.getFolderById(folderId).createFile(blob);
 
   // No setSharing — the file stays PRIVATE (owner-only). Access is exclusively
   // through the identity-gated downloadAttachment() server function. This removes
@@ -515,7 +514,7 @@ function deleteAttachment(attachmentId) {
 
 function testDomainSharing() {
   var testBlob = Utilities.newBlob("test", "text/plain", "sharing-test.txt");
-  var folder   = DriveApp.getFolderById(COC.ATTACHMENTS_FOLDER_ID);
+  var folder   = DriveApp.getFolderById(config_("ATTACHMENTS_FOLDER_ID"));
   var file     = folder.createFile(testBlob);
 
   try {

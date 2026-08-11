@@ -84,7 +84,13 @@ function approve(requestId) {
       return { success: false, message: "This request is no longer awaiting approval." };
     }
     if (!isCurrentApprover(rowData, caller)) {
-      return { success: false, message: "Unauthorized" };
+      // A chain approver who is not the CURRENT one almost always means the
+      // request already moved on — e.g. a double-click across two tabs, where
+      // the first click advanced the step. Tell them that plainly. Reserve
+      // "Unauthorized" for a caller who has no business with this request.
+      return isChainApprover(rowData, caller)
+        ? { success: false, message: "This request has already been actioned." }
+        : { success: false, message: "Unauthorized" };
     }
 
     const approvers = getApprovers(groupId);
@@ -159,7 +165,10 @@ function decline(requestId, approverRemark) {
       return { success: false, message: "This request is no longer awaiting approval." };
     }
     if (!isCurrentApprover(rowData, caller)) {
-      return { success: false, message: "Unauthorized" };
+      // See approve(): distinguish "already actioned" from a genuine outsider.
+      return isChainApprover(rowData, caller)
+        ? { success: false, message: "This request has already been actioned." }
+        : { success: false, message: "Unauthorized" };
     }
 
     appendAction(requestId, groupId, cycle, step, caller, ACTION.DECLINED, approverRemark || "");
@@ -209,7 +218,10 @@ function returnRequest(requestId, approverRemark) {
       return { success: false, message: "This request is no longer awaiting approval." };
     }
     if (!isCurrentApprover(rowData, caller)) {
-      return { success: false, message: "Unauthorized" };
+      // See approve(): distinguish "already actioned" from a genuine outsider.
+      return isChainApprover(rowData, caller)
+        ? { success: false, message: "This request has already been actioned." }
+        : { success: false, message: "Unauthorized" };
     }
 
     appendAction(requestId, groupId, cycle, step, caller, ACTION.RETURNED, approverRemark || "");

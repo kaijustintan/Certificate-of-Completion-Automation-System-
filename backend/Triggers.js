@@ -297,9 +297,36 @@ function registerTrigger() {
   PARAMS  : (none) — invoked by the daily trigger.
   RETURNS : (void) — logs a summary.
 */
+/*
+  markExpiryFlag_ — mirror a just-appended EXPIRY_* row into the in-memory map.
+  LAYMAN    : Kapag nakapadala na tayo ng reminder at nag-log na tayo, itatanda
+              rin natin ito sa checklist na hawak natin sa memorya — para kung
+              may kaparehong request ID pa sa listahan, hindi na ito madodoble.
+  TECHNICAL : Keeps getExpiryFlagMap_'s snapshot consistent with writes made
+              during the same sweep. Required because the map is built ONCE
+              before the loop, whereas the previous per-row getApprovalActions()
+              re-read the sheet and so observed mid-loop appends. Keyed with
+              String() to match getExpiryFlagMap_.
+  PARAMS    : map — the flag map; requestId; action — an ACTION.EXPIRY_* value.
+  RETURNS   : (void) — mutates map.
+*/
+function markExpiryFlag_(map, requestId, action) {
+  const id = String(requestId);
+  if (!map[id]) map[id] = {};
+  map[id][action] = true;
+}
+
 function checkContractExpiries() {
   const rows = getDataRows(SHEET_NAMES.REQUESTS);
   let warned = 0, noticed = 0, overdue = 0;
+
+  // ONE Activity_Log scan for the entire sweep (was: one full scan per approved
+  // row, which is quadratic and breaches the 6-minute ceiling around ~1,450
+  // lifetime requests). Kept consistent with mid-loop appends via markExpiryFlag_.
+  // Deliberately NOT wrapped in a try/catch that falls back to {}: an empty map
+  // reads as "no reminder has ever been sent" and would re-notify every approved
+  // contract in the system. Let a scan failure abort the sweep (fail closed).
+  const expiryFlags = getExpiryFlagMap_();
 
   rows.forEach(function (row) {
     try {
@@ -312,24 +339,28 @@ function checkContractExpiries() {
 
       const requestId = row[CR.REQUEST_ID - 1];
       const groupId   = row[CR.GROUP - 1];
-      const actions   = getApprovalActions(requestId);
-      const hasWarning = actions.some(function (a) { return a.action === ACTION.EXPIRY_WARNING; });
-      const hasNotice  = actions.some(function (a) { return a.action === ACTION.EXPIRY_NOTICE; });
-      const hasOverdue = actions.some(function (a) { return a.action === ACTION.EXPIRY_OVERDUE; });
+      // Re-read from the map on EVERY iteration — it is mutated below.
+      const flags      = expiryFlags[String(requestId)] || {};
+      const hasWarning = flags[ACTION.EXPIRY_WARNING] === true;
+      const hasNotice  = flags[ACTION.EXPIRY_NOTICE]  === true;
+      const hasOverdue = flags[ACTION.EXPIRY_OVERDUE] === true;
 
       const endStr = Utilities.formatDate(new Date(rawEnd), "Asia/Manila", "yyyy-MM-dd");
 
       if (daysUntil >= 1 && daysUntil <= 3 && !hasWarning) {
         sendExpiryReminderToRequestor(requestId, daysUntil);
         appendAction(requestId, groupId, 0, null, "system", ACTION.EXPIRY_WARNING, "Contract expires " + endStr);
+        markExpiryFlag_(expiryFlags, requestId, ACTION.EXPIRY_WARNING);
         warned++;
       } else if (daysUntil === 0 && !hasNotice) {
         sendExpiryReminderToRequestor(requestId, daysUntil);
         appendAction(requestId, groupId, 0, null, "system", ACTION.EXPIRY_NOTICE, "Contract expires today " + endStr);
+        markExpiryFlag_(expiryFlags, requestId, ACTION.EXPIRY_NOTICE);
         noticed++;
       } else if (daysUntil < 0 && !hasOverdue) {
         sendExpiryReminderToRequestor(requestId, daysUntil);
         appendAction(requestId, groupId, 0, null, "system", ACTION.EXPIRY_OVERDUE, "Contract expired " + endStr);
+        markExpiryFlag_(expiryFlags, requestId, ACTION.EXPIRY_OVERDUE);
         overdue++;
       }
     } catch (err) {

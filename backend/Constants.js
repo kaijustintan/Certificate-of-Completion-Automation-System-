@@ -316,3 +316,208 @@ const COC = {
   ARCHIVE_FOLDER_ID:     "1LKmStUeJrJMWHBfMXlxw3HafGg1EdZ4C",
   ATTACHMENTS_FOLDER_ID: "1rJPkh0yaSEFOzzKfHZvu5h2Kx-WrhvZg",
 };
+
+
+/*
+  ORG — organization / tenant configuration.
+
+  LAYMAN (Tropang Ex):
+  Dito nakalagay kung anong email domain ang pinapayagan sa portal. Kapag
+  na-deploy ito sa Megaworld account, ilagay dito ang "megaworldcorp.com" para
+  kahit sakaling mali ang pagka-set ng deployment (napili ang "Anyone" imbes na
+  "Anyone within Megaworld"), hindi pa rin makakapasok ang taga-labas. Kapag
+  WALANG laman ang listahan, lahat pinapayagan — ganito habang nagte-test sa
+  personal/DLSU account.
+
+  TECHNICAL:
+  Deployment-scoped allowlist, checked server-side by isAllowedDomain()
+  (WebApp.js) at the app entry point (getCurrentUser) and at request creation
+  (submitNewRequest). This is DEFENCE IN DEPTH, not the primary gate — the
+  real gate is the Apps Script deployment setting "Who has access: Anyone
+  within <Workspace domain>" plus "Execute as: Me", which Google enforces
+  before any of this code runs. This backstop exists because a misconfigured
+  "Anyone" deployment makes Session.getActiveUser().getEmail() return "" for
+  outsiders, and a blank caller must never be able to write rows.
+
+  ⚠️ It is an ARRAY on purpose: organizations often have more than one valid
+  domain (subsidiaries, contractors, a legacy domain). Add every domain that
+  should be allowed. An empty array disables the check entirely.
+
+  Values are compared lowercase, without the "@".
+
+  EXAMPLE
+    ALLOWED_DOMAINS: []                                   // allow all (dev/testing)
+    ALLOWED_DOMAINS: ["megaworldcorp.com"]                // production
+    ALLOWED_DOMAINS: ["megaworldcorp.com", "megaworld.com.ph"]  // multi-domain org
+*/
+const ORG = {
+  // ⚠️ GO-LIVE: set to ["megaworldcorp.com"] (plus any other valid Megaworld
+  // domain) when deploying on the Megaworld Workspace account. Left empty here
+  // so the portal stays testable on the personal/DLSU dev account.
+  ALLOWED_DOMAINS: [],
+};
+
+
+// =========================================================================================================
+// RUNTIME CONFIG RESOLVER (Script Properties, with the constants above as fallback)
+// =========================================================================================================
+/*
+  LAYMAN (Tropang Ex):
+  Dati, kapag ilipat ang portal sa ibang Google account, kailangang i-edit ang
+  source code (yung mga Drive folder ID sa itaas) tapos i-redeploy. Ngayon,
+  pwede nang ilagay ang mga halagang iyon sa "Script Properties" ng Apps Script
+  project (Project Settings → Script Properties) — settings lang, hindi code.
+
+  Ang order ng paghahanap: (1) Script Property, (2) yung literal sa itaas
+  bilang fallback, (3) kung wala sa dalawa, malinaw na error na may pangalan ng
+  susi. Dahil may fallback, WALANG masisira sa dev account kahit wala pang
+  naka-set na kahit isang property — ganito rin ang paraan para i-rollback:
+  burahin lang ang properties at babalik sa mga literal.
+
+  TECHNICAL:
+  Script-Property-first config resolution with a Constants.js literal fallback.
+  Properties are project-scoped (shared by /dev and /exec), are NOT pushed by
+  clasp, and are NOT in git — they must be re-entered by hand on a new project.
+
+  ⚠️ TRAILING UNDERSCORE IS A SECURITY BOUNDARY, not style. Any non-underscored
+  top-level function is callable from the browser via google.script.run, so a
+  bare config("ARCHIVE_FOLDER_ID") would leak every Drive ID to any signed-in
+  user. Keep these private. (_testConfig uses a LEADING underscore instead
+  because trailing-underscore functions do not appear in the editor's Run menu.)
+
+  ⚠️ NO SERVICE CALLS AT FILE-LOAD TIME. Everything here runs inside a function
+  body. A PropertiesService call in a top-level initializer would fire on every
+  single execution (every doGet, every google.script.run, every trigger) and a
+  failure there is an uncatchable script-load error that breaks the whole app.
+*/
+
+// Execution-scoped memo. Apps Script discards globals after each execution, so
+// this is one cached read per call, and a property edit takes effect on the very
+// next execution with no cache to clear. Plain null literal — no service call.
+var SCRIPT_PROPS_CACHE_ = null;
+
+/*
+  scriptProps_ — all script properties as a plain object, read at most once per execution.
+  LAYMAN    : Isang beses lang kunin lahat ng settings, tapos i-reuse.
+  TECHNICAL : Memoized single getProperties() call. Never throws: on failure it
+              logs and memoizes {} so callers fall through to their literals
+              instead of retrying the failing service N times.
+  RETURNS   : Object of key → string value (possibly empty).
+*/
+function scriptProps_() {
+  if (SCRIPT_PROPS_CACHE_ === null) {
+    try {
+      SCRIPT_PROPS_CACHE_ = PropertiesService.getScriptProperties().getProperties() || {};
+    } catch (e) {
+      Logger.log("scriptProps_(): could not read Script Properties, using Constants.js fallbacks — " + e);
+      SCRIPT_PROPS_CACHE_ = {};
+    }
+  }
+  return SCRIPT_PROPS_CACHE_;
+}
+
+/*
+  configFallback_ — the Constants.js literal for a config key, or null.
+  LAYMAN    : Kung wala sa Script Properties, ito ang hahanapin sa code.
+  TECHNICAL : switch INSIDE the function body on purpose (a top-level const map
+              would add load-time evaluation). ORG.ALLOWED_DOMAINS is
+              deliberately absent: it is a version-controlled security control,
+              so a stray config_("ALLOWED_DOMAINS") throws rather than resolving.
+  PARAMS    : key — the bare property key.
+  RETURNS   : String literal or null if the key has no source fallback.
+*/
+function configFallback_(key) {
+  switch (key) {
+    case "TEMPLATE_DOC_ID":       return COC.TEMPLATE_DOC_ID;
+    case "ARCHIVE_FOLDER_ID":     return COC.ARCHIVE_FOLDER_ID;
+    case "ATTACHMENTS_FOLDER_ID": return COC.ATTACHMENTS_FOLDER_ID;
+    default:                      return null;
+  }
+}
+
+/*
+  config_ — resolve a required config value. FAIL-LOUD.
+  LAYMAN    : Kunin ang setting. Kung wala kahit sa Script Properties kahit sa
+              code, mag-e-error agad na may pangalan ng susi — para hindi ka
+              maghanap kung anong mali (ito ang aral sa maling template Doc ID
+              na nagbigay ng malabong Drive error).
+  TECHNICAL : Property → Constants.js fallback → throw a named Error. Values are
+              trimmed: pasting a Drive ID into the Properties UI routinely picks
+              up trailing whitespace, and getFolderById(" 1abc ") fails opaquely.
+              Trimming is a no-op on the fallback path (literals are clean), so
+              this introduces zero behaviour change until properties are used.
+  PARAMS    : key — the bare property key (e.g. "TEMPLATE_DOC_ID").
+  RETURNS   : Non-empty trimmed string.
+  THROWS    : Error naming the key when neither source has a usable value.
+
+  EXAMPLE
+    config_("ARCHIVE_FOLDER_ID")  → "1LKmStUeJrJMWHBfMXlxw3HafGg1EdZ4C"
+*/
+function config_(key) {
+  const fromProp = scriptProps_()[key];
+  if (fromProp !== undefined && fromProp !== null && String(fromProp).trim() !== "") {
+    return String(fromProp).trim();
+  }
+  const fromSource = configFallback_(key);
+  if (fromSource !== undefined && fromSource !== null && String(fromSource).trim() !== "") {
+    return String(fromSource).trim();
+  }
+  throw new Error("Script property " + key + " is not set and no fallback exists in Constants.js.");
+}
+
+/*
+  configFlag_ — resolve an optional boolean config value. FAIL-SOFT.
+  LAYMAN    : Para sa mga on/off na setting. Kung wala o hindi mabasa, gagamitin
+              ang default — hindi mag-e-error.
+  TECHNICAL : Reads scriptProps_() DIRECTLY (never via config_, which throws).
+              Accepts true/1/yes and false/0/no, case-insensitive and trimmed.
+              Anything unrecognized logs and returns the default.
+  PARAMS    : key — bare property key; dflt — boolean returned when unresolvable.
+  RETURNS   : Boolean.
+
+  EXAMPLE
+    configFlag_("EMAIL_DEV_TAG", true)  → false   // when the property is "false"
+    configFlag_("EMAIL_DEV_TAG", true)  → true    // when the property is unset
+*/
+function configFlag_(key, dflt) {
+  const raw = scriptProps_()[key];
+  if (raw === undefined || raw === null || String(raw).trim() === "") return dflt;
+  const v = String(raw).trim().toLowerCase();
+  if (v === "true"  || v === "1" || v === "yes") return true;
+  if (v === "false" || v === "0" || v === "no")  return false;
+  Logger.log("configFlag_(): unrecognized value for " + key + " ('" + raw + "'), using default " + dflt);
+  return dflt;
+}
+
+/*
+  _testConfig — editor smoke test for the config resolver. Logs only.
+  LAYMAN    : I-Run ito sa Apps Script editor para makita kung saan nanggagaling
+              ang bawat setting: sa Script Property o sa code (fallback). Wala
+              itong ibinabalik at wala itong binabago — tingin lang.
+  TECHNICAL : Prints each resolved value with a [PROPERTY] / [fallback] source
+              tag, the EMAIL_DEV_TAG flag, then exercises the fail-loud path with
+              a nonexistent key so the exact error text is visible. Returns
+              nothing, so nothing crosses the google.script.run boundary.
+  PARAMS    : (none) — run from the editor.
+  RETURNS   : (void).
+*/
+function _testConfig() {
+  const props = scriptProps_();
+  ["TEMPLATE_DOC_ID", "ARCHIVE_FOLDER_ID", "ATTACHMENTS_FOLDER_ID"].forEach(function (k) {
+    const hasProp = props[k] !== undefined && props[k] !== null && String(props[k]).trim() !== "";
+    let resolved;
+    try { resolved = config_(k); } catch (e) { resolved = "<<UNRESOLVED: " + e.message + ">>"; }
+    Logger.log(k + " = " + resolved + "   " + (hasProp ? "[PROPERTY]" : "[fallback(Constants.js)]"));
+  });
+  Logger.log("EMAIL_DEV_TAG = " + configFlag_("EMAIL_DEV_TAG", EMAIL_DEV_TAG) +
+             "   (source literal = " + EMAIL_DEV_TAG + ")");
+  Logger.log("ORG.ALLOWED_DOMAINS = " + JSON.stringify(ORG.ALLOWED_DOMAINS) +
+             "   [source only — deliberately NOT a Script Property]");
+  // Fail-loud proof, using a key that can never hold a real value.
+  try {
+    config_("NO_SUCH_KEY_SMOKE_TEST");
+    Logger.log("UNEXPECTED: fail-loud path did not throw.");
+  } catch (e) {
+    Logger.log("fail-loud OK → " + e.message);
+  }
+}

@@ -525,6 +525,58 @@ function getApprovalActions(requestId) {
 }
 
 /*
+  Function Name: getExpiryFlagMap_
+
+  LAYMAN (Tropang Ex):
+  Isang beses lang basahin ang BUONG Activity_Log, tapos gagawa ng "checklist"
+  kung aling request na ang napadalhan na ng expiry reminder (T-3, day-of, o
+  lumipas na). Dati, bawat request may sariling buong pagbabasa ng Activity_Log
+  — sobrang mabagal kapag dumami na (nag-6-minutong limit ng Apps Script sa mga
+  1,450 requests). Ngayon, isang basa lang para sa lahat.
+
+  TECHNICAL:
+  ONE full Activity_Log scan reduced to a lookup map for the daily expiry sweep,
+  replacing an O(N) getApprovalActions() call per approved row (O(N²) overall).
+  Only the three system EXPIRY_* actions are indexed — workflow actions are
+  irrelevant to expiry idempotency and are skipped.
+
+  ⚠️ Predicate parity with the code this replaces is deliberate and must hold:
+  same String() coercion on request_id, same `|| ""` on the action cell, same
+  strict === comparison against the ACTION.EXPIRY_* constants, and NO trimming
+  or case-folding (adding either would change behaviour on malformed rows).
+
+  ⚠️ Callers that append EXPIRY_* rows mid-loop MUST mirror the write into this
+  map (see markExpiryFlag_ in Triggers.js), because a snapshot taken before the
+  loop cannot see rows written during it, whereas the old per-row re-scan could.
+
+  PARAMS:
+  (none)
+
+  RETURNS:
+  { "<requestId>": { "expiry_warning": true, "expiry_notice": true, "expiry_overdue": true } }
+  Only keys/flags that actually exist are present; look up with String(requestId)
+  and default to {} for requests with no expiry history.
+
+  EXAMPLE
+    getExpiryFlagMap_()
+    → { "REQ-1A2B": { "expiry_warning": true },
+        "REQ-9C8D": { "expiry_warning": true, "expiry_overdue": true } }
+*/
+function getExpiryFlagMap_() {
+  const map = {};
+  getDataRows(SHEET_NAMES.ACTIVITY_LOG).forEach(function (r) {
+    const act = r[ACT.ACTION - 1] || "";
+    if (act !== ACTION.EXPIRY_WARNING &&
+        act !== ACTION.EXPIRY_NOTICE  &&
+        act !== ACTION.EXPIRY_OVERDUE) return;
+    const id = String(r[ACT.REQUEST_ID - 1]);
+    if (!map[id]) map[id] = {};
+    map[id][act] = true;
+  });
+  return map;
+}
+
+/*
   getApprovalView — derived view that reconstructs the OLD shapes from actions.
   LAYMAN    : Mula sa listahan ng actions, binubuo nito ang mga lumang field na
               inaasahan ng UI/email/COC: petsa+remark kada step, previousApprovals,

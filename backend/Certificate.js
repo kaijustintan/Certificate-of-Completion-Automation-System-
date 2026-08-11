@@ -25,8 +25,9 @@
   doc, and its approver-2/3 columns are cleared when those slots are unconfigured.
   Reads via getRequestRowData() (25-col Requests row) + getApprovers() (the
   Group_Approvers join) + getApprovalView() (action dates from Activity_Log).
-  Identity/auth is NOT re-checked here — generateCOC runs after the approval
-  flow has authorized + finalized the request; it is not a frontend-callable.
+  Identity IS re-checked here: generateCOC guards on isChainApprover || isAdmin
+  plus status === APPROVED, because any server function is reachable directly
+  via google.script.run, not only through the approval flow that calls it.
 
   ⚠️ SETUP: requires COC.TEMPLATE_DOC_ID set in Constants.js. See
   reference/COC_TEMPLATE_SPEC.md for the token contract + Doc build rules.
@@ -124,11 +125,19 @@
     → { success:false, error:"COC.TEMPLATE_DOC_ID is not set …" }
 */
 function generateCOC(requestId) {
-  // Step 1 — Guard: template configured
-  if (!COC.TEMPLATE_DOC_ID) {
+  // Step 1 — Guard: template configured. Resolved via Script Property with the
+  // Constants.js literal as fallback. config_() THROWS when neither is set, but
+  // this line sits outside the try below and generateCOC is documented never to
+  // throw, so catch locally and return the established { success:false, error }
+  // shape instead.
+  let templateDocId;
+  try {
+    templateDocId = config_("TEMPLATE_DOC_ID");
+  } catch (cfgErr) {
     return {
       success: false,
-      error: "COC.TEMPLATE_DOC_ID is not set. Build the template Doc and paste its ID into Constants.js (see reference/COC_TEMPLATE_SPEC.md).",
+      error: cfgErr.message +
+             " Set it in Project Settings → Script Properties, or restore COC.TEMPLATE_DOC_ID in Constants.js (see reference/COC_TEMPLATE_SPEC.md).",
     };
   }
 
@@ -164,7 +173,7 @@ function generateCOC(requestId) {
   let copyId = null;
 
   try {
-    copyId = DriveApp.getFileById(COC.TEMPLATE_DOC_ID).makeCopy(copyName).getId();
+    copyId = DriveApp.getFileById(templateDocId).makeCopy(copyName).getId();
     const doc  = DocumentApp.openById(copyId);
     const body = doc.getBody();
 
@@ -275,7 +284,9 @@ function generateCOC(requestId) {
       .setName(copyName + ".pdf");
 
     // Step 8 — Archive + clean up
-    const pdfFile = DriveApp.getFolderById(COC.ARCHIVE_FOLDER_ID).createFile(pdfBlob);
+    // Archive folder resolved the same way (Script Property → Constants.js literal).
+    // A throw here is already handled by this try's catch, which returns { success:false }.
+    const pdfFile = DriveApp.getFolderById(config_("ARCHIVE_FOLDER_ID")).createFile(pdfBlob);
     DriveApp.getFileById(copyId).setTrashed(true);
 
     // Step 9 — Record the generated certificate in COC_PDFs (one row per issue).

@@ -181,6 +181,36 @@ function sameEmail(a, b) {
 }
 
 /*
+  Function Name: isAllowedDomain
+  LAYMAN    : Taga-Megaworld ba ang email na ito? Kapag walang nakalista sa
+              ORG.ALLOWED_DOMAINS, lahat pinapayagan (ganito sa dev/testing).
+              Blangkong email ay LAGING bawal — ibig sabihin nun ay hindi
+              nakilala ng Google kung sino ang tumatawag.
+  TECHNICAL : Server-side domain allowlist check (defence in depth behind the
+              deployment's "Anyone within <domain>" setting). Empty
+              ORG.ALLOWED_DOMAINS disables the domain test but NEVER the
+              non-blank test: a blank email means an unidentified caller and is
+              always rejected, which is what closes the anonymous-write hole on
+              a misconfigured "Anyone" deployment.
+  PARAMS    : email — the caller's email (from Session).
+  RETURNS   : Boolean — true if the caller is identified and in an allowed domain.
+
+  EXAMPLE
+    // ORG.ALLOWED_DOMAINS = ["megaworldcorp.com"]
+    isAllowedDomain("juan@megaworldcorp.com")  → true
+    isAllowedDomain("outsider@gmail.com")      → false
+    isAllowedDomain("")                        → false (always)
+*/
+function isAllowedDomain(email) {
+  const e = normalizeEmail(email);
+  if (e === "" || e.indexOf("@") === -1) return false;   // unidentified caller — always denied
+  const allowed = (typeof ORG !== "undefined" && ORG.ALLOWED_DOMAINS) || [];
+  if (!allowed.length) return true;                      // no allowlist configured — allow all
+  const domain = e.split("@").pop();
+  return allowed.some(function (d) { return String(d).trim().toLowerCase() === domain; });
+}
+
+/*
   Function Name: getRequestRowData
   LAYMAN    : Kunin ang buong row ng isang request gamit ang Request ID.
   TECHNICAL : Resolves the Sheet row number, then reads the full 34-column row.
@@ -244,7 +274,18 @@ function isChainApprover(row, callerEmail) {
 */
 function getCurrentUser() {
   const email = Session.getActiveUser().getEmail();
-  const role  = detectRole(email);
+
+  // Domain gate (defence in depth — see ORG in Constants.js). An outsider on a
+  // misconfigured "Anyone" deployment resolves to a blank/foreign email; return
+  // the same blank-identity shape the frontend already handles, so bootstrap()
+  // shows the "sign in with your Megaworld account" screen instead of an empty
+  // but functional dashboard. Shape is unchanged (frozen DTO).
+  if (!isAllowedDomain(email)) {
+    Logger.log("getCurrentUser(): rejected caller outside allowed domain — '" + email + "'");
+    return { email: "", role: "requestor", isAdmin: false };
+  }
+
+  const role = detectRole(email);
   return { email, role, isAdmin: isAdmin(email) };
 }
 
@@ -623,6 +664,13 @@ function submitNewRequest(formData) {
   const caller = Session.getActiveUser().getEmail();
   const files  = Array.isArray(formData.files) ? formData.files : [];
 
+  // Step 0 — Identity gate. Blocks an unidentified ("" email) or out-of-domain
+  // caller from creating rows. Without this, a misconfigured "Anyone" deployment
+  // would let an anonymous visitor write requests with a blank requestor.
+  if (!isAllowedDomain(caller)) {
+    return { success: false, error: "Unauthorized. Please sign in with your organization Google account." };
+  }
+
   // Step 1 — Server-side validation (size/count/shape/descriptions)
   const v = validateAttachmentPayload(files);
   if (!v.ok) return { success: false, error: v.error };
@@ -630,7 +678,11 @@ function submitNewRequest(formData) {
   // Step 2a — Reject a group with no active approver chain. Without this the
   // request would route to nobody (getCurrentApprover -> null) and sit invisible
   // on every pending list forever. Mirrors the getApproverGroups dropdown filter.
-  if (!getApprovers(formData.group)) {
+  // Require a usable Approver 1, not merely a non-empty chain: a hand-seeded
+  // Group_Approvers row with ACTIVE=TRUE but a blank email yields a truthy
+  // object here, and the request would then route to nobody and stay invisible.
+  const groupChain = getApprovers(formData.group);
+  if (!groupChain || !groupChain.approver1) {
     return { success: false, error: "That approver group has no active approvers. Please choose another group." };
   }
 
@@ -670,7 +722,7 @@ function submitNewRequest(formData) {
   // request row, so no half-written request (visible to an approver with no
   // supporting documents) and no orphaned Drive files survive.
   const sheet = getSheet(SHEET_NAMES.REQUESTS);
-  let appendedRowNum = null;
+  let rowWritten = false;
   try {
     const newRow = new Array(CR.RESUBMIT_COUNT).fill("");
     newRow[CR.REQUEST_ID - 1]         = requestId;
@@ -699,18 +751,30 @@ function submitNewRequest(formData) {
     newRow[CR.REQUESTOR_REMARK - 1]   = formData.requestorRemark;
     newRow[CR.RESUBMIT_COUNT - 1]     = 0;                  // cache
     sheet.appendRow(newRow);
-    appendedRowNum = sheet.getLastRow();
-
-    // Log the submit on the append-only timeline (cycle 0, no step).
-    appendAction(requestId, formData.group, 0, null, caller, ACTION.SUBMITTED, "");
+    rowWritten = true;
 
     // Write attachment child rows (one batched write; cycle 0 = first submit).
     writeAttachmentRows(requestId, uploaded, 0);
+
+    // Log the submit LAST. Activity_Log is append-only and can never be
+    // un-written, so it must be the final step: if an earlier write fails we
+    // roll back without stranding a `submitted` row for a request that does
+    // not exist (which would poison the audit trail the whole schema rests on).
+    appendAction(requestId, formData.group, 0, null, caller, ACTION.SUBMITTED, "");
   } catch (err) {
     uploaded.forEach(function (u) {
       try { DriveApp.getFileById(u.fileId).setTrashed(true); } catch (e) {}
     });
-    if (appendedRowNum) { try { sheet.deleteRow(appendedRowNum); } catch (e) {} }
+    // Re-resolve the row by Request ID rather than trusting a row number captured
+    // earlier: submitNewRequest takes no lock, so a concurrent submit can append
+    // or shift rows in between, and deleting a stale index would destroy ANOTHER
+    // user's request. Looking it up by identity is always correct.
+    if (rowWritten) {
+      try {
+        const rollbackRow = getRowNumberByRequestId(requestId);
+        if (rollbackRow !== -1) sheet.deleteRow(rollbackRow);
+      } catch (e) {}
+    }
     Logger.log("submitNewRequest(): Sheet write failed — " + err + ". Rolled back files + row.");
     return { success: false, error: "Submission failed. No request was created. Please try again." };
   }
@@ -959,9 +1023,9 @@ function handleResubmit(requestId, newFiles) {
   const v = validateAttachmentPayload(files, false); // false → new files optional
   if (!v.ok) return { success: false, error: v.error };
 
+  const uploaded = [];
   if (files.length > 0) {
     const controlNo = row[CR.CONTROL_NUMBER - 1];
-    const uploaded  = [];
     try {
       for (let i = 0; i < files.length; i++) {
         const driveName = buildAttachmentDriveName(controlNo, resubmitCount, files[i].filename);
@@ -981,15 +1045,28 @@ function handleResubmit(requestId, newFiles) {
       Logger.log("handleResubmit(): Upload failed — " + err.message + ". Resubmit aborted.");
       return { success: false, error: "File upload failed. The request was not resubmitted. Please try again." };
     }
+  }
+
+  // Flip the state BEFORE recording the new attachment rows. resubmit() can now
+  // fail on a lock timeout, and writing rows tagged with a resubmit cycle that
+  // never happened would file the documents under a phantom "Resubmit #N" and
+  // make the user's retry upload a duplicate set.
+  const result = resubmit(requestId);
+  if (!result.success) {
+    uploaded.forEach(function(u) {
+      try { DriveApp.getFileById(u.fileId).setTrashed(true); } catch (e) {}
+    });
+    Logger.log("handleResubmit(): resubmit() failed — " + (result.message || "") + ". Rolled back uploaded files.");
+    return result;
+  }
+
+  if (uploaded.length > 0) {
     writeAttachmentRows(requestId, uploaded, resubmitCount); // append — keeps the original files
   }
 
-  const result = resubmit(requestId);
-  if (result.success) {
-    sendResubmitConfirmToRequestor(requestId, returnReason, resubmitCount);
-    if (result.newStatus === STATUS.PENDING_1) {
-      sendResubmitApprovalRequest(requestId, returnReason, resubmitCount); // dedicated resubmit email for Approver 1
-    }
+  sendResubmitConfirmToRequestor(requestId, returnReason, resubmitCount);
+  if (result.newStatus === STATUS.PENDING_1) {
+    sendResubmitApprovalRequest(requestId, returnReason, resubmitCount); // dedicated resubmit email for Approver 1
   }
   return result;
 }
