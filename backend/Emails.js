@@ -191,19 +191,57 @@ function buildAttachmentList_(requestId) {
 
 /*
   Function Name: buildApprovalLog_
-  LAYMAN    : Para sa email, ipakita kung sino-sino nang nag-approve_ at kailan.
-              Lalabas lang ang slots na may laman; walang laman → "No approvals
-              recorded yet."
-  TECHNICAL : Reads APP1/2/3_DATE; for each non-empty slot, appends
-              "Approver N: email\nApproved: timestamp". Replaces AppSheet's
-              <<If: ISNOTBLANK([App1_Date])>> blocks.
-  PARAMS    : rowData — the 0-indexed row array; approvers — from getApprovers_().
+
+  LAYMAN (Tropang Ex):
+  Ang buong kasaysayan ng request para sa plain-text na bahagi ng email: sinumite,
+  inaprubahan, ibinalik, muling sinumite — LAHAT, naka-grupo kada round. Dati,
+  ang huling round lang ang lumalabas, kaya hindi alam ng requestor na inaprubahan
+  na pala siya noon bago ibinalik.
+
+  TECHNICAL:
+  Renders getApprovalView_().timeline — every workflow action across every cycle,
+  grouped by cycle. REPLACED the old current-cycle-only rendering (which read
+  view.byStep[1..3]) rather than being added beside it, because the timeline is a
+  strict superset: it contains every approval the old version showed, plus the
+  submission and every return/resubmit.
+
+  ⚠️ Signature is unchanged on purpose, so all existing call sites pick this up
+  with no edit. `approvers` is now unused but retained: dropping it would touch
+  every call site for no behavioural gain, and it is the natural parameter if
+  per-slot designations are ever added back to the log.
+
+  ⚠️ The HTML twin is emailApprovalLog_ (EmailHtml.js). Keep the two in step —
+  both share timelineLabel_/timelineCycleLabel_ (Accessors.js) precisely so the
+  wording cannot drift.
+
+  PARAMS    : rowData — the 0-indexed row array; approvers — from getApprovers_() (unused).
   RETURNS   : Multi-line string.
 */
 // Helper — builds the approval progress log shown in emails.
 // Reads per-step approval dates from the Approval_Actions timeline (current
 // cycle) via getApprovalView_ — signature unchanged so callers don't change.
-function buildApprovalLog_(rowData, approvers) {
+/*
+  Function Name: buildApprovalSummary_
+
+  LAYMAN (Tropang Ex):
+  Maikling bersyon: sino lang ang nakapag-approve sa KASALUKUYANG round at kailan.
+  Ito ang ginagamit ng mga digest email (yung araw-araw na paalala sa approver, at
+  yung abiso kapag nabago ang chain) na naglilista ng MARAMING request sa iisang
+  email. Kung buong timeline ang ilalagay doon kada request, magiging sobrang haba
+  at hindi na mababasa.
+
+  TECHNICAL:
+  The pre-timeline rendering, preserved verbatim and renamed. buildApprovalLog_
+  was rewritten to render the full cross-cycle timeline, which is correct for
+  single-request emails but wrong inside a loop over N requests.
+
+  ⚠️ USE THIS, NOT buildApprovalLog_, IN ANY EMAIL THAT LOOPS OVER REQUESTS.
+  Current callers: sendPendingApprovalReminder_ and sendNewApproverNotice_.
+
+  PARAMS  : rowData — the 0-indexed row array; approvers — from getApprovers_().
+  RETURNS : Multi-line string, or "No approvals recorded yet."
+*/
+function buildApprovalSummary_(rowData, approvers) {
   const view = getApprovalView_(rowData[CR.REQUEST_ID - 1]);
   const slot = function (n) { return n === 1 ? approvers.approver1 : n === 2 ? approvers.approver2 : approvers.approver3; };
   let log = "";
@@ -215,6 +253,26 @@ function buildApprovalLog_(rowData, approvers) {
     }
   });
   return log.trim() || "No approvals recorded yet.";
+}
+
+
+function buildApprovalLog_(rowData, approvers) {
+  const view = getApprovalView_(rowData[CR.REQUEST_ID - 1]);
+  const entries = view.timeline || [];
+  if (!entries.length) return "No activity recorded yet.";
+
+  let out = "";
+  let lastCycle = -1;
+  entries.forEach(function (e) {
+    if (e.cycle !== lastCycle) {
+      out += (lastCycle === -1 ? "" : "\n") + timelineCycleLabel_(e.cycle) + "\n";
+      lastCycle = e.cycle;
+    }
+    out += "  " + timelineLabel_(e) + " — " + (e.actor || "—") + "\n";
+    out += "    " + (e.date || "—") + "\n";
+    if (String(e.remark || "").trim()) out += '    Reason: "' + e.remark + '"\n';
+  });
+  return out.trim();
 }
 
 
@@ -352,6 +410,10 @@ ${buildInfoBlock_(rowData)}
 Date of Action: ${nowFormatted_()}
 
 The requestor has been notified that this request is now closed and cannot be resubmitted.
+
+Request History:
+${buildApprovalLog_(rowData)}
+
 Open this request: ${getPortalUrl_(requestId, "review")}`;
 
   // HTML twin — red accent (decline_ receipt).
@@ -363,7 +425,8 @@ Open this request: ${getPortalUrl_(requestId, "review")}`;
              "</strong>, have <strong>declined</strong> the following request.") +
       emailInfoTable_(rowData) +
       emailKeyValueRows_([["Date of Action", nowFormatted_()]]) +
-      emailP_("The requestor has been notified that this request is now closed and cannot be resubmitted."),
+      emailP_("The requestor has been notified that this request is now closed and cannot be resubmitted.") +
+      emailSection_("Request History", emailApprovalLog_(rowData)),
     buttonUrl:   getPortalUrl_(requestId, "review"),
     buttonLabel: "Open this request",
   });
@@ -409,6 +472,10 @@ Declined by: ${approverLabel} (${actioner})
 Date: ${nowFormatted_()}
 
 Note: If you would like to try again, you must create a brand new request.
+
+Request History:
+${buildApprovalLog_(rowData)}
+
 Open this request: ${getPortalUrl_(requestId, "request")}`;
 
   // HTML twin — red accent; decline_ reason in a red callout box.
@@ -423,7 +490,8 @@ Open this request: ${getPortalUrl_(requestId, "request")}`;
         ["Declined by", approverLabel + " (" + actioner + ")"],
         ["Date",        nowFormatted_()],
       ]) +
-      emailP_("Note: If you would like to try again, you must create a brand new request."),
+      emailP_("Note: If you would like to try again, you must create a brand new request.") +
+      emailSection_("Request History", emailApprovalLog_(rowData)),
     buttonUrl:   getPortalUrl_(requestId, "request"),
     buttonLabel: "Open this request",
   });
@@ -474,6 +542,10 @@ ${buildInfoBlock_(rowData)}
 Final Approval Date: ${formatPHTime_(new Date(lastDate))}
 
 The request is now fully approved and the requestor has been notified. Thank you!
+
+Request History:
+${buildApprovalLog_(rowData)}
+
 Open this request: ${getPortalUrl_(requestId, "review")}`;
 
   // HTML twin — green accent (final approval receipt).
@@ -484,7 +556,8 @@ Open this request: ${getPortalUrl_(requestId, "review")}`;
       emailP_("This confirms that you provided the <strong>final approval</strong> for the following request.") +
       emailInfoTable_(rowData) +
       emailKeyValueRows_([["Final Approval Date", formatPHTime_(new Date(lastDate))]]) +
-      emailP_("The request is now fully approved and the requestor has been notified. Thank you!"),
+      emailP_("The request is now fully approved and the requestor has been notified. Thank you!") +
+      emailSection_("Request History", emailApprovalLog_(rowData)),
     buttonUrl:   getPortalUrl_(requestId, "review"),
     buttonLabel: "Open this request",
   });
@@ -732,7 +805,7 @@ Supporting Documents:
 ${buildAttachmentList_(requestId)}
 
 Approval Progress:
-${buildApprovalLog_(row, approvers)}
+${buildApprovalSummary_(row, approvers)}
 
 Open this request: ${getPortalUrl_(requestId, "review")}`;
   }).join("\n\n————————————————————\n\n");
@@ -756,7 +829,7 @@ Please review and act on ${n > 1 ? "each" : "the"} request in the portal. Thank 
     const approvers = getApprovers_(row[CR.GROUP - 1]);
     return emailInfoTable_(row) +
       emailSection_("Supporting Documents", emailAttachmentList_(requestId)) +
-      emailSection_("Approval Progress", emailApprovalLog_(row, approvers)) +
+      emailSection_("Approval Progress", emailApprovalSummary_(row, approvers)) +
       emailButton_(getPortalUrl_(requestId, "review"), "Review this request");
   }).join(emailDivider_());
 
@@ -846,7 +919,7 @@ Supporting Documents:
 ${buildAttachmentList_(requestId)}
 
 Approval Progress:
-${buildApprovalLog_(row, approvers)}
+${buildApprovalSummary_(row, approvers)}
 
 Open this request: ${getPortalUrl_(requestId, "review")}`;
     }).join("\n\n————————————————————\n\n");
@@ -915,7 +988,7 @@ Thank you!`;
         const approvers = getApprovers_(row[CR.GROUP - 1]);
         return emailInfoTable_(row) +
           emailSection_("Supporting Documents", emailAttachmentList_(requestId)) +
-          emailSection_("Approval Progress", emailApprovalLog_(row, approvers)) +
+          emailSection_("Approval Progress", emailApprovalSummary_(row, approvers)) +
           emailButton_(getPortalUrl_(requestId, "review"), "Review this request");
       }).join(emailDivider_()) +
       emailP_("Please review and act on " + (n > 1 ? "each" : "the") + " request in the portal.");
@@ -971,6 +1044,10 @@ Return Date: ${nowFormatted_()}
 Reason for Return: ${reason}
 
 Please review the comments, make the necessary changes, and resubmit_ your request.
+
+Request History:
+${buildApprovalLog_(rowData)}
+
 Open this request: ${getPortalUrl_(requestId, "request")}`;
 
   // HTML twin — amber accent; return reason in an amber callout box.
@@ -985,7 +1062,8 @@ Open this request: ${getPortalUrl_(requestId, "request")}`;
         ["Return Date", nowFormatted_()],
       ]) +
       emailRemarkBox_("Reason for Return", reason, "amber") +
-      emailP_("Please review the comments, make the necessary changes, and resubmit_ your request."),
+      emailP_("Please review the comments, make the necessary changes, and resubmit_ your request.") +
+      emailSection_("Request History", emailApprovalLog_(rowData)),
     buttonUrl:   getPortalUrl_(requestId, "request"),
     buttonLabel: "Update and resubmit_",
   });
@@ -1029,6 +1107,10 @@ Returned to: ${requestor}
 Date of Action: ${nowFormatted_()}
 
 The requestor has been notified to review your comments and take the necessary next steps.
+
+Request History:
+${buildApprovalLog_(rowData)}
+
 Open this request: ${getPortalUrl_(requestId, "review")}`;
 
   // HTML twin — amber accent (return receipt).
@@ -1043,7 +1125,8 @@ Open this request: ${getPortalUrl_(requestId, "review")}`;
         ["Returned to",    requestor],
         ["Date of Action", nowFormatted_()],
       ]) +
-      emailP_("The requestor has been notified to review your comments and take the necessary next steps."),
+      emailP_("The requestor has been notified to review your comments and take the necessary next steps.") +
+      emailSection_("Request History", emailApprovalLog_(rowData)),
     buttonUrl:   getPortalUrl_(requestId, "review"),
     buttonLabel: "Open this request",
   });
@@ -1088,6 +1171,10 @@ ${buildInfoBlock_(rowData)}
 Date of Action: ${nowFormatted_()}
 
 The request has been forwarded to the next approver. You will be notified once the full process is complete.
+
+Request History:
+${buildApprovalLog_(rowData)}
+
 Open this request: ${getPortalUrl_(requestId, "review")}`;
 
   // HTML twin — green accent (approval receipt).
@@ -1098,7 +1185,8 @@ Open this request: ${getPortalUrl_(requestId, "review")}`;
       emailP_("This confirms that you have <strong>approved</strong> the following request.") +
       emailInfoTable_(rowData) +
       emailKeyValueRows_([["Date of Action", nowFormatted_()]]) +
-      emailP_("The request has been forwarded to the next approver. You will be notified once the full process is complete."),
+      emailP_("The request has been forwarded to the next approver. You will be notified once the full process is complete.") +
+      emailSection_("Request History", emailApprovalLog_(rowData)),
     buttonUrl:   getPortalUrl_(requestId, "review"),
     buttonLabel: "Open this request",
   });
@@ -1218,6 +1306,10 @@ Reason for Return: ${reason || "No reason provided."}
 Date: ${nowFormatted_()}
 
 When the requestor resubmits, the request will route through the full approval chain again and will require your approval once more. You will receive a new action request at that time.
+
+Request History:
+${buildApprovalLog_(rowData)}
+
 Open this request: ${getPortalUrl_(requestId, "review")}`;
 
   // HTML twin — built ONCE before the loop (same body for every prior approver).
@@ -1232,7 +1324,8 @@ Open this request: ${getPortalUrl_(requestId, "review")}`;
         ["Date",        nowFormatted_()],
       ]) +
       emailRemarkBox_("Reason for Return", reason || "No reason provided.", "amber") +
-      emailP_("When the requestor resubmits, the request will route through the full approval chain again and will require your approval once more. You will receive a new action request at that time."),
+      emailP_("When the requestor resubmits, the request will route through the full approval chain again and will require your approval once more. You will receive a new action request at that time.") +
+      emailSection_("Request History", emailApprovalLog_(rowData)),
     buttonUrl:   getPortalUrl_(requestId, "review"),
     buttonLabel: "Open this request",
   });
@@ -1284,6 +1377,9 @@ Previous Return Reason: ${returnReason || "No reason provided."}
 
 You will be notified as the request progresses through the approval chain.
 
+Request History:
+${buildApprovalLog_(rowData)}
+
 ${REQUESTOR_PORTAL_NOTE}
 Open this request: ${getPortalUrl_(requestId, "request")}`;
 
@@ -1298,6 +1394,7 @@ Open this request: ${getPortalUrl_(requestId, "request")}`;
       emailKeyValueRows_([["Resubmitted on", nowFormatted_()]]) +
       emailRemarkBox_("Previous Return Reason", returnReason || "No reason provided.", "amber") +
       emailP_("You will be notified as the request progresses through the approval chain.") +
+      emailSection_("Request History", emailApprovalLog_(rowData)) +
       emailRemarkBox_(null, REQUESTOR_PORTAL_NOTE, "blue"),
     buttonUrl:   getPortalUrl_(requestId, "request"),
     buttonLabel: "Open this request",
@@ -1356,6 +1453,10 @@ Supporting Documents:
 ${attachmentList}
 
 Please review the updates made by the requestor and act on this request (approve_, decline_, or return).
+
+Request History:
+${buildApprovalLog_(rowData)}
+
 Open this request: ${getPortalUrl_(requestId, "review")}`;
 
   // HTML twin — resubmission context up top, prior return reason in an amber box.
@@ -1368,7 +1469,8 @@ Open this request: ${getPortalUrl_(requestId, "review")}`;
       emailInfoTable_(rowData) +
       emailRemarkBox_("Previous Return Reason", returnReason || "No reason provided.", "amber") +
       emailSection_("Supporting Documents", emailAttachmentList_(requestId)) +
-      emailP_("Please review the updates made by the requestor and act on this request (approve_, decline_, or return)."),
+      emailP_("Please review the updates made by the requestor and act on this request (approve_, decline_, or return).") +
+      emailSection_("Request History", emailApprovalLog_(rowData)),
     buttonUrl:   getPortalUrl_(requestId, "review"),
     buttonLabel: "Review this resubmission",
   });

@@ -51,9 +51,14 @@
     - appendAdminLog_(admin, action, gid, details)  audit an admin action
   ROLE
     - detectRole_(email) / isAdmin_(email)
+  ACTIVITY_LOG — EXECUTION-SCOPED READ CACHE
+    - activityRows_() / invalidateActivityCache_()  memoized tab read; sole
+      invalidation point is appendAction_ (the sole writer)
   APPROVAL ACTIONS (read)
     - getApprovalActions_(requestId)      raw timeline rows
     - getApprovalView_(requestId)         derived per-step/history view (frozen-DTO source)
+    - timelineLabel_(entry) / timelineCycleLabel_(cycle)  shared human labels
+      used by BOTH the portal renderer and the email renderers
   APPROVAL ACTIONS (write)
     - appendAction_(requestId, groupId, cycle, step, actor, action, remark)
     - setRequestCache_(requestId, {status, step, resubmitCount})
@@ -152,6 +157,48 @@ function groupApproverRows_() {
 function invalidateGroupCaches_() {
   GROUPS_CACHE_ = null;
   GROUP_APPROVERS_CACHE_ = null;
+}
+
+
+/*
+  ACTIVITY_LOG — EXECUTION-SCOPED READ CACHE
+
+  LAYMAN (Tropang Ex):
+  Ang Activity_Log ang pinaka-madalas basahin na tab: dito nakukuha ang buong
+  kasaysayan ng bawat request. Ang problema, bawat basa ay BUONG tab. Sa isang
+  email pa lang, dalawang beses na itong binabasa (isa para sa plain-text na
+  bahagi, isa para sa HTML) — at ngayong may timeline na ang 12 emails, mas
+  lalong dadami. Isang basa na lang ngayon bawat execution.
+
+  TECHNICAL:
+  Same pattern as groupRows_/invalidateGroupCaches_ above. Justified by a
+  measured problem, not a guess: buildApprovalLog_ (Emails.js) and
+  emailApprovalLog_ (EmailHtml.js) are called back-to-back inside the same email
+  function and EACH independently calls getApprovalView_ -> getApprovalActions_
+  -> a full getDataRows_(ACTIVITY_LOG). So every email already scanned the whole
+  activity table twice before this feature existed.
+
+  ⚠️ SAFE ONLY BECAUSE THERE IS EXACTLY ONE WRITER. appendAction_ (bottom of
+  this file) is the sole function in the entire codebase that writes to
+  Activity_Log — verified by grep over SHEET_NAMES.ACTIVITY_LOG. It invalidates
+  this cache. If a second writer is ever added it MUST invalidate too, or reads
+  later in the same execution will silently miss the new row.
+
+  ⚠️ NO REGRESSION TO checkContractExpiries. That sweep builds its flag map into
+  a local variable BEFORE its loop and mirrors mid-loop appends via
+  markExpiryFlag_, so it never re-reads and is unaffected by invalidation.
+*/
+var ACTIVITY_CACHE_ = null;
+
+/* activityRows_ — memoized data rows of the Activity_Log tab (one read per execution). */
+function activityRows_() {
+  if (ACTIVITY_CACHE_ === null) ACTIVITY_CACHE_ = getDataRows_(SHEET_NAMES.ACTIVITY_LOG);
+  return ACTIVITY_CACHE_;
+}
+
+/* invalidateActivityCache_ — drop the memo. Called by appendAction_ after every append. */
+function invalidateActivityCache_() {
+  ACTIVITY_CACHE_ = null;
 }
 
 
@@ -581,7 +628,7 @@ function isAdmin_(email) {
 */
 function getApprovalActions_(requestId) {
   const target = String(requestId);
-  return getDataRows_(SHEET_NAMES.ACTIVITY_LOG)
+  return activityRows_()
     .filter(function (r) { return String(r[ACT.REQUEST_ID - 1]) === target; })
     .map(function (r) {
       const stepRaw = r[ACT.APPROVER_STEP - 1];
@@ -639,7 +686,7 @@ function getApprovalActions_(requestId) {
 */
 function getExpiryFlagMap_() {
   const map = {};
-  getDataRows_(SHEET_NAMES.ACTIVITY_LOG).forEach(function (r) {
+  activityRows_().forEach(function (r) {
     const act = r[ACT.ACTION - 1] || "";
     if (act !== ACTION.EXPIRY_WARNING &&
         act !== ACTION.EXPIRY_NOTICE  &&
@@ -669,8 +716,22 @@ function getExpiryFlagMap_() {
       approvedCount,
       latestRemark,                                            // latest decline_/return remark (any cycle)
       resubmitHistory,                                         // formatted string (frozen DTO)
+      timeline: [{ cycle, action, step, actor, remark, date }],// EVERY workflow action, all cycles
       hasAnyAction
     }
+
+  ⚠️ timeline vs resubmitHistory — they are NOT duplicates and neither replaces
+  the other yet. resubmitHistory is a reconstructed legacy STRING whose
+  "\n\n---\n\n" separator and [PENDING] marker are parsed by renderResubmitBanner
+  (RequestDetail.html); it contains RETURNS ONLY. timeline is structured data
+  containing every workflow action across every cycle, and is what the portal
+  timeline and the emails render. Retiring resubmitHistory in favour of timeline
+  is a plausible future cleanup, but it means rewriting that banner parser, so it
+  is deliberately NOT bundled here.
+
+  ⚠️ timeline EXCLUDES the three EXPIRY_* system actions. See the allowlist
+  comment in the body: every other output here filters them only by accident of
+  branching on action names, and the timeline is the first generic walk.
 */
 function getApprovalView_(requestId) {
   const actions = getApprovalActions_(requestId);
@@ -683,8 +744,35 @@ function getApprovalView_(requestId) {
   let approvedCount = 0;
   let latestRemark = "";
   const historyEntries = [];
+  const timeline = [];            // EVERY workflow action, every cycle, in order
+
+  // ⚠️ EXPLICIT ALLOWLIST — this is load-bearing, not defensive style.
+  // Activity_Log also holds three SYSTEM actions (expiry_warning / expiry_notice /
+  // expiry_overdue) written by the daily expiry sweep. Everything else in this
+  // function ignores them only BY ACCIDENT, because it happens to branch on the
+  // five workflow actions by name. The timeline is the first thing here that
+  // walks actions generically, so without this allowlist a requestor's approval
+  // history would show "expiry_warning · system · Contract expires 2026-08-31".
+  const WORKFLOW_ACTIONS = {};
+  WORKFLOW_ACTIONS[ACTION.SUBMITTED]   = true;
+  WORKFLOW_ACTIONS[ACTION.APPROVED]    = true;
+  WORKFLOW_ACTIONS[ACTION.DECLINED]    = true;
+  WORKFLOW_ACTIONS[ACTION.RETURNED]    = true;
+  WORKFLOW_ACTIONS[ACTION.RESUBMITTED] = true;
 
   actions.forEach(function (a) {
+    // Unified timeline entry. Append order is chronological and is the same
+    // ordering basis every other output in this function already relies on.
+    if (WORKFLOW_ACTIONS[a.action]) {
+      timeline.push({
+        cycle:  a.cycle,
+        action: a.action,
+        step:   a.step,                       // null for submitted/resubmitted
+        actor:  a.actor,
+        remark: a.remark || "",
+        date:   a.timestamp ? formatPHTime_(new Date(a.timestamp)) : "",
+      });
+    }
     // Approvals from a PRIOR cycle — used for the "you previously approved this,
     // re-review after the return" note. Empty when the request has never been
     // resubmitted (currentCycle 0), so the note can't misfire on normal progression.
@@ -743,8 +831,57 @@ function getApprovalView_(requestId) {
     approvedCount:     approvedCount,
     latestRemark:      latestRemark,
     resubmitHistory:   historyEntries.join("\n\n---\n\n"),
+    timeline:          timeline,            // EVERY workflow action, all cycles, chronological
     hasAnyAction:      actions.length > 0,
   };
+}
+
+/*
+  Function Name: timelineLabel_
+
+  LAYMAN (Tropang Ex):
+  Ginagawang mababasa ng tao ang isang entry ng timeline: "Approved by Approver 2"
+  imbes na "approved". Iisang lugar lang ito para pareho ang salita sa portal at
+  sa email.
+
+  TECHNICAL:
+  Shared label formatter for one timeline entry, so the frontend renderer
+  (renderTimeline in UI.html) and the two email renderers cannot drift apart.
+  submitted/resubmitted carry no step (ACT.APPROVER_STEP is blank for them);
+  approved/declined/returned do.
+
+  PARAMS  : entry — one element of getApprovalView_().timeline.
+  RETURNS : Human-readable action label string.
+
+  EXAMPLE
+    timelineLabel_({action:"approved",    step:2})  → "Approved by Approver 2"
+    timelineLabel_({action:"submitted",   step:null}) → "Submitted"
+    timelineLabel_({action:"resubmitted", step:null}) → "Resubmitted"
+*/
+function timelineLabel_(entry) {
+  const by = entry.step ? " by Approver " + entry.step : "";
+  switch (entry.action) {
+    case ACTION.SUBMITTED:   return "Submitted";
+    case ACTION.RESUBMITTED: return "Resubmitted";
+    case ACTION.APPROVED:    return "Approved" + by;
+    case ACTION.DECLINED:    return "Declined" + by;
+    case ACTION.RETURNED:    return "Returned" + by;
+    default:                 return String(entry.action || "");
+  }
+}
+
+/*
+  Function Name: timelineCycleLabel_
+  LAYMAN    : Pangalan ng bawat pangkat sa timeline: "Original submission" para sa
+              unang round, "Resubmit #N" para sa mga sumunod.
+  TECHNICAL : Cycle 0 is the first submission; cycle N is the Nth resubmission.
+              Matches the numbering already used by resubmitHistory's
+              "Resubmit #N" labels, so the two never disagree.
+  PARAMS    : cycle — integer resubmit cycle.
+  RETURNS   : Section heading string.
+*/
+function timelineCycleLabel_(cycle) {
+  return (parseInt(cycle, 10) || 0) === 0 ? "Original submission" : "Resubmit #" + cycle;
 }
 
 
@@ -771,6 +908,10 @@ function appendAction_(requestId, groupId, cycle, step, actor, action, remark) {
   row[ACT.REMARK - 1]         = remark || "";
   row[ACT.TIMESTAMP - 1]      = new Date();
   sheet.appendRow(row);
+  // Sole writer of Activity_Log, so this is the sole invalidation point. Without
+  // it, anything reading the timeline later in the SAME execution (e.g. the
+  // notification emails fired right after an approve) would miss this row.
+  invalidateActivityCache_();
 }
 
 /*

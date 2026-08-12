@@ -682,6 +682,7 @@ async function renderRequestDetailPage(params) {
         ${renderRequestSummaryCards(detail)}
         ${renderAttachmentsBlock(detail, isOwner)}
         ${resubmitPanel}
+        ${renderTimeline(detail.timeline)}
       </div>
 
       <div class="detail-rail">

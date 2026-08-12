@@ -369,15 +369,44 @@ function emailAttachmentList_(requestId) {
 
 /*
   Function Name: emailApprovalLog_
-  LAYMAN    : HTML na bersyon ng approval history — sino-sinong approver na
-              ang pumirma at kailan. Galing pa rin sa Activity_Log timeline.
-  TECHNICAL : HTML twin of buildApprovalLog_() (Emails.js) — same
-              getApprovalView_() per-step reads + same slot resolution +
-              same "No approvals recorded yet." fallback. Emails escaped.
-  PARAMS    : rowData — Requests row array; approvers — getApprovers_() shape.
-  RETURNS   : HTML string — key/value rows per acted step, or fallback line.
+
+  LAYMAN (Tropang Ex):
+  Ang HTML na bersyon ng buong kasaysayan ng request: sinumite, inaprubahan,
+  ibinalik, muling sinumite — lahat, may kulay na tuldok kada uri (berde =
+  aprubado, pula = tinanggihan, amber = ibinalik) para makita agad kung saan
+  may naging problema, at naka-grupo kada round.
+
+  TECHNICAL:
+  HTML twin of buildApprovalLog_() (Emails.js). Both render
+  getApprovalView_().timeline and both label via timelineLabel_() /
+  timelineCycleLabel_() (Accessors.js) so the two renderings cannot drift apart.
+
+  ⚠️ REPLACED the old per-step rendering (view.byStep[1..3], current cycle only)
+  rather than being added beside it — the timeline is a strict superset, so
+  keeping both would print the same approvals twice in one email.
+
+  ⚠️ Table-based with a real <td> for the status dot rather than a CSS bullet or
+  a ::before, because Outlook honours table cells and ignores most of the
+  alternatives. Same constraint the rest of this file works under.
+
+  Every interpolated value is escaped via escapeHtml_ per this file's convention.
+
+  PARAMS    : rowData — Requests row array; approvers — getApprovers_() shape (unused,
+              retained so the signature matches buildApprovalLog_ and all call sites).
+  RETURNS   : HTML string — grouped timeline rows, or a muted fallback line.
 */
-function emailApprovalLog_(rowData, approvers) {
+/*
+  Function Name: emailApprovalSummary_
+  LAYMAN    : Maikling HTML na bersyon — sino lang ang nag-approve sa kasalukuyang
+              round. Para sa mga digest email na maraming request ang nilalaman.
+  TECHNICAL : HTML twin of buildApprovalSummary_ (Emails.js). This is the
+              pre-timeline rendering, preserved verbatim and renamed.
+              ⚠️ USE THIS, NOT emailApprovalLog_, IN ANY EMAIL THAT LOOPS OVER
+              REQUESTS: sendPendingApprovalReminder_, sendNewApproverNotice_.
+  PARAMS    : rowData — Requests row array; approvers — getApprovers_() shape.
+  RETURNS   : HTML string — key/value rows per acted step, or a muted fallback.
+*/
+function emailApprovalSummary_(rowData, approvers) {
   const view = getApprovalView_(rowData[CR.REQUEST_ID - 1]);
   const slot = function (n) {
     return n === 1 ? approvers.approver1 : n === 2 ? approvers.approver2 : approvers.approver3;
@@ -394,6 +423,58 @@ function emailApprovalLog_(rowData, approvers) {
       "No approvals recorded yet.</div>";
   }
   return emailKeyValueRows_(pairs);
+}
+
+
+function emailApprovalLog_(rowData, approvers) {
+  const view    = getApprovalView_(rowData[CR.REQUEST_ID - 1]);
+  const entries = view.timeline || [];
+
+  if (!entries.length) {
+    return '<div style="font-family:' + EMAIL_THEME.fontStack + "; font-size: 13px; color:" +
+           EMAIL_THEME.muted + ';">No activity recorded yet.</div>';
+  }
+
+  // Accent per action so a return is scannable at a glance without reading it.
+  const dotColor = function (action) {
+    if (action === ACTION.APPROVED) return EMAIL_THEME.green;
+    if (action === ACTION.DECLINED) return EMAIL_THEME.red;
+    if (action === ACTION.RETURNED) return EMAIL_THEME.amber;
+    return EMAIL_THEME.navy;   // submitted / resubmitted
+  };
+
+  let html = '<table width="100%" cellpadding="0" cellspacing="0" border="0" ' +
+             'style="font-family:' + EMAIL_THEME.fontStack + ';">';
+  let lastCycle = -1;
+
+  entries.forEach(function (e) {
+    if (e.cycle !== lastCycle) {
+      html += '<tr><td colspan="2" style="padding:' + (lastCycle === -1 ? "0" : "12px") +
+                ' 0 4px; font-size:11px; font-weight:bold; letter-spacing:0.06em; ' +
+                'text-transform:uppercase; color:' + EMAIL_THEME.muted + ';">' +
+                escapeHtml_(timelineCycleLabel_(e.cycle)) + "</td></tr>";
+      lastCycle = e.cycle;
+    }
+    html += "<tr>" +
+      // Fixed-width status dot cell; a real <td> rather than a bullet so Outlook honours it.
+      '<td width="14" valign="top" style="padding:5px 0 0;">' +
+        '<div style="width:8px; height:8px; border-radius:4px; background-color:' +
+          dotColor(e.action) + ';"></div>' +
+      "</td>" +
+      '<td valign="top" style="padding:2px 0 6px; font-size:13px; color:' + EMAIL_THEME.text + ';">' +
+        "<strong>" + escapeHtml_(timelineLabel_(e)) + "</strong>" +
+        '<div style="font-size:12px; color:' + EMAIL_THEME.muted + '; padding-top:1px;">' +
+          escapeHtml_(e.actor || "—") + " &middot; " + escapeHtml_(e.date || "—") +
+        "</div>" +
+        (String(e.remark || "").trim()
+          ? '<div style="font-size:12px; color:' + EMAIL_THEME.text + '; padding-top:3px; ' +
+              "border-left:2px solid " + EMAIL_THEME.border + '; padding-left:8px;">' +
+              escapeHtml_(e.remark) + "</div>"
+          : "") +
+      "</td></tr>";
+  });
+
+  return html + "</table>";
 }
 
 /*

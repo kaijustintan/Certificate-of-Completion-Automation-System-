@@ -116,6 +116,7 @@ async function renderReviewDetailPage(params) {
       <div class="detail-main">
         ${renderRequestSummaryCards(detail)}
         ${renderAttachmentsBlock(detail, false)}
+        ${renderTimeline(detail.timeline)}
       </div>
 
       <div class="detail-rail">

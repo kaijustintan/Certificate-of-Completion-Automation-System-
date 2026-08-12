@@ -253,6 +253,13 @@ A COC failure never blocks the approval email; the caller wraps it in try/catch 
 
 ### 5.7 Audit and history
 
+**The unified timeline (added 2026-08-11).** `getApprovalView_()` exposes `timeline`: every workflow action across every cycle, chronological. One shared renderer serves the requestor (`RequestDetail`), the approver (`ReviewDetail`), and 13 single-request emails, so all three finally see the same story. Before this, each audience saw a different fragment: the requestor saw **returns only and never any approval**, the approver saw the current cycle plus a note about their own prior approval, and emails showed the current cycle only.
+
+Two implementation notes worth carrying to a sibling system:
+
+- **The system-action filter is load-bearing.** `Activity_Log` also holds three `EXPIRY_*` idempotency flags written by the daily sweep. Every *other* output of `getApprovalView_` filters them only by accident, because each branches on a workflow action by name. The timeline is the first generic walk over the actions, so it needs an explicit allowlist or a requestor's approval history shows `expiry_warning · system`.
+- **Digest emails are deliberately excluded.** `sendPendingApprovalReminder_` and `sendNewApproverNotice_` loop over many requests; they keep a compact current-cycle rendering (`buildApprovalSummary_` / `emailApprovalSummary_`) because a full timeline per request makes a digest unreadable.
+
 Two separate append-only logs, deliberately not merged:
 
 - `Activity_Log` is **request-scoped**. Every workflow action, plus system expiry flags.
@@ -630,7 +637,9 @@ Concretely, `getMyRequests()` maps over every request row and calls `getGroupNam
 
 **✅ Fixed for the dominant case.** `Accessors.js` now memoizes the two small lookup tables per execution (`groupRows_()` / `groupApproverRows_()`), mirroring the `SCRIPT_PROPS_CACHE_` pattern in `Constants.js`. Apps Script discards globals between executions, so the cache lives exactly one execution. The three write paths (`createGroup_`, `updateGroupFields_`, `replaceGroupChain_`) read fresh and call `invalidateGroupCaches_()`, which is what keeps `adminSaveChain`'s post-write re-read and `notifyChainChanges_`'s current-approver comparison correct.
 
-`Requests` and `Activity_Log` are **deliberately not memoized**: both have genuine read-after-write patterns inside a single execution (`submitNewRequest` appends a row then re-resolves it by ID for rollback; `checkContractExpiries` appends `EXPIRY_*` rows mid-loop). A stale cache there would be a correctness bug, not an optimization.
+`Activity_Log` was subsequently memoized too, on the same read-fresh-and-invalidate rule, once the timeline work made it acute: `buildApprovalLog_` and `emailApprovalLog_` are called back to back in the same email function and **each independently triggered a full scan of the entire activity table**, so every email was already scanning it twice. `appendAction_` is the sole writer and is therefore the sole invalidation point.
+
+`Requests` is still **deliberately not memoized**: `submitNewRequest` appends a row then re-resolves it by ID for rollback, so a stale cache there would be a correctness bug rather than an optimization.
 
 **⚠️ Still open.** `getRowNumberByRequestId_()` remains a linear scan of the whole `Requests` tab, called repeatedly within single operations (each mutator calls it, then `setRequestCache_` calls it again, so roughly three full `Requests` reads per approval). This is a constant factor rather than an N+1, so it was left alone. The right fix is `createTextFinder()` with `findAll()` + take-last and a re-read inside the lock; note that `.find()` returning the *first* match is a subtle bug when duplicates exist.
 

@@ -19,7 +19,7 @@ Frontend: custom SPA served via HtmlService. Managed via clasp + VS Code + GitHu
 The database is **normalized into 8 sheets**. Use the column-map constants from `Constants.js` — `CR`, `ACT`, `GRP`, `GAP`, `RA`, `ADM`, `ADL`, `COCPDF`:
 
 - `Requests` (`CR.*`) — 25 cols (A–Y). The core request row. Key: STATUS(3), STEP(4), GROUP(9 = a **group_id** FK → Groups, not a name), RESUBMIT_COUNT(25). ⚠️ STATUS / STEP / RESUBMIT_COUNT are a denormalized **read-cache** — the source of truth is `Activity_Log`. They're kept current only via `setRequestCache()` in `Accessors.js`.
-- `Activity_Log` (`ACT.*`) — 9 cols. The **append-only** action timeline (submit / approve / decline / return / resubmit). Never updated or deleted. Replaces the old flat App1/2/3 date+remark, Previous_Approvals, Last_Action_By, Resubmit_History columns.
+- `Activity_Log` (`ACT.*`) — 9 cols. The **append-only** action timeline (submit / approve / decline / return / resubmit). Never updated or deleted. Replaces the old flat App1/2/3 date+remark, Previous_Approvals, Last_Action_By, Resubmit_History columns. ⚠️ **Memoized per execution** via `activityRows_()` (`Accessors.js`); `appendAction()` is the **sole writer** and is therefore the sole invalidation point (`invalidateActivityCache_()`). Any new writer MUST invalidate, or reads later in the same execution will silently miss the row.
 - `Groups` (`GRP.*`) — registry; surrogate `group_id` PK (e.g. `G001`) so a group can be renamed without breaking routing.
 - `Group_Approvers` (`GAP.*`) — the normalized approver chain. Composite key (group_id, sequence). `ACTIVE` soft-disables a slot. ⚠️ **The schema stores N approvers, but routing is still hard-capped at 3.** `getApprovers()` only reads sequences 1–3, `approve()` only branches steps 1–3, and `isChainApprover()` only checks slots 1–3. A hand-added `sequence = 4` row resolves in `getCurrentApprover()` but **fails `isChainApprover()`, silently locking that request out permanently.** Lifting the cap is a real (unstarted) change to those three functions — do not describe the chain as "unlimited."
 - `Request_Attachments` (`RA.*`) — 8 cols. Adds RESUBMIT_CYCLE(6), UPLOADED_BY(7), UPLOADED_AT(8).
@@ -105,8 +105,30 @@ What you **cannot** get from the request row anymore — because it's no longer 
 ```js
 const view = getApprovalView(requestId); // Accessors.js — derives the old shapes from the timeline
 // view.byStep, view.previousApprovals, view.priorApprovals, view.approvedCount,
-// view.latestRemark, view.resubmitHistory, view.currentCycle
+// view.latestRemark, view.resubmitHistory, view.currentCycle, view.timeline
 ```
+
+### `view.timeline` — the unified cross-cycle history
+
+`timeline` is `[{ cycle, action, step, actor, remark, date }]`: **every** workflow action across
+**every** cycle, in chronological (append) order. It is what the portal's `renderTimeline()`
+(`UI.html`) and the emails' `buildApprovalLog_` / `emailApprovalLog_` render, so requestor, approver,
+and email all see the same story.
+
+⚠️ **It EXCLUDES the three `EXPIRY_*` system actions via an explicit allowlist.** Every other output
+in `getApprovalView` filters them only *by accident*, because each branches on a workflow action by
+name. `timeline` is the only generic walk over the actions, so without the allowlist a requestor's
+history would show `expiry_warning · system · Contract expires …`. Never remove that filter.
+
+⚠️ **`timeline` does not replace `resubmitHistory`.** The latter is a legacy *string* whose
+`\n\n---\n\n` separator and `[PENDING]` marker are parsed by `renderResubmitBanner`
+(`RequestDetail.html`), and it contains **returns only**. Retiring it in favour of `timeline` means
+rewriting that parser; deliberately not bundled.
+
+⚠️ **Digest emails must use `buildApprovalSummary_` / `emailApprovalSummary_`, not the `*Log_` pair.**
+`sendPendingApprovalReminder_` and `sendNewApproverNotice_` loop over many requests; a full timeline
+per request makes them unreadable. The `Summary_` pair is the pre-timeline current-cycle rendering,
+preserved verbatim for exactly this.
 Who-last-acted = the latest `Activity_Log` row's `actor` (the old `LAST_ACTION_BY` column is gone). To record an action, append to the timeline with `appendAction(...)` — never write history back onto the request row.
 
 ## Frontend patterns

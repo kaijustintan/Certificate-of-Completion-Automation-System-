@@ -85,6 +85,50 @@ google.script.run.uploadAttachmentFile({base64:"",filename:"x",mimeType:"text/pl
     - d. Repeat (b) on the **resubmit** picker in `RequestDetail`, which shares the same handler.
 25. **Group-lookup cache invalidation.** In Admin → View Groups, open a chain with 2+ approvers, **reorder** it, Save. The editor must redraw showing the **new** order immediately (a stale order means an `invalidateGroupCaches_()` call was missed). Confirm an `Admins_Log` row was written and the newly-current approver got the "Approver Role Changed" email. Then load both dashboards and confirm group names and pending lists are still correct.
 
+### 🔴 Also re-test (unified approval timeline, 2026-08-11)
+
+> Every audience previously saw a different fragment of a request's history: the requestor saw
+> **returns only and never any approval**, the approver saw the current cycle plus a note about their
+> own prior approval, and emails showed the current cycle only. All three now render one unified
+> timeline of every action across every cycle, from the same `Activity_Log` data.
+>
+> **Static checks already passed**: callable surface unchanged at 31 (list byte-identical to HEAD),
+> and 18 logic assertions run locally against a mock multi-cycle log, including the `EXPIRY_*` filter,
+> the frozen `resubmitHistory` format, and HTML escaping.
+
+**⚠️ SEED DATA FIRST — the feature is invisible without it.** Build ONE request that goes:
+submit → approve as App1 → **return** as App2 → resubmit → **return** as App1 → resubmit → approve
+through to Fully Approved. That single request exercises every branch below.
+
+26. **Requestor view.** Open that request as the requestor. The Request History card lists **all**
+    actions in order, grouped `Original submission` / `Resubmit #1` / `Resubmit #2`, each with actor,
+    timestamp, and the return reasons. ⚠️ Confirm the **approvals are visible** — that is the whole
+    point, the requestor could never see them before.
+27. **Approver view.** Open the same request as an approver. The Request History card is
+    **identical** to what the requestor sees. This symmetry is the feature.
+28. **Clean request.** Open a request that was never returned. Timeline shows `Submitted` plus each
+    approval under a single `Original submission` heading, with no `Resubmit` groups.
+29. **⚠️ THE HIGHEST-VALUE TEST — expiry actions must not leak.** Take a Fully-Approved request that
+    has an `expiry_warning` / `expiry_notice` / `expiry_overdue` row in `Activity_Log` (or run
+    `checkContractExpiries()` from the editor to create one). Open its detail page and check any
+    email it generates. **No `expiry_*` entry and no `system` actor may appear anywhere in the
+    timeline.** If one does, the allowlist in `getApprovalView_` was broken.
+30. **Emails carry it.** Approve/return/decline and confirm the "Request History" section appears in
+    the resulting mail, matching the portal. Check both the HTML and the plain-text fallback.
+31. **⚠️ Digests must NOT carry it.** Run `checkPendingApprovals()` from the editor with several
+    pending requests. Each request keeps a **compact** "Approval Progress" block, not a full
+    timeline. A digest with a timeline per request is the regression to watch for.
+32. **Expiry reminder email** still has **no** history section (deliberately excluded, it is a
+    contract-renewal nudge rather than an approval-state email).
+33. **Resubmit banner still works.** The amber "returned for revision" banner and its collapsible
+    previous-return history render as before. Its `[PENDING]` / `\n\n---\n\n` parser was deliberately
+    left untouched.
+34. **Cache invalidation.** Approve a request, then immediately open its detail page. The new
+    approval appears in the timeline. This proves `appendAction_` invalidates the `Activity_Log` memo
+    within the same execution.
+35. **Mobile.** On a phone viewport the timeline wraps (long approver emails, long return reasons)
+    and does not force the page to scroll sideways.
+
 ### ⚠️ Two things this sweep deliberately did NOT change
 - **`include()` stays callable.** It is invoked from `Index.html` scriptlets; if underscore-hiding broke scriptlet resolution, no page would render at all. Too much blast radius for a Low finding that cannot be verified locally. Revisit with a live `/dev` to test against.
 - **`ORG.ALLOWED_DOMAINS` still ships as `[]` (allow-all).** Correct for dev, wrong for production — see Phase D1b. `_testConfig` now prints a loud warning while it is empty.

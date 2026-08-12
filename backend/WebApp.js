@@ -497,7 +497,7 @@ function getMyActionedRequests() {
   // any approve_/decline_/return action whose actor is the caller. Load all action
   // rows once, build a membership set — no per-row sheet reads, no LAST_ACTION_BY.
   const acted = {};
-  getDataRows_(SHEET_NAMES.ACTIVITY_LOG).forEach(function (a) {
+  activityRows_().forEach(function (a) {
     const action = a[ACT.ACTION - 1];
     if ((action === ACTION.APPROVED || action === ACTION.DECLINED || action === ACTION.RETURNED) &&
         sameEmail_(a[ACT.ACTOR_EMAIL - 1], email)) {
@@ -636,6 +636,11 @@ function getRequestDetail(requestId) {
     resubmitHistory:      view.resubmitHistory,
     previousApprovals:    view.previousApprovals,   // current cycle (progress)
     priorApprovals:       view.priorApprovals,      // earlier cycles (re-review note; empty unless resubmitted)
+    // Full cross-cycle action history: every submit/approve/decline/return/resubmit
+    // in order. Rendered identically for the requestor (RequestDetail) and the
+    // approver (ReviewDetail) via renderTimeline() in UI.html. EXPIRY_* system
+    // actions are filtered out server-side. Additive field — nothing else moved.
+    timeline:             view.timeline,
     approver1:            approvers.approver1 || "",
     approver2:            approvers.approver2 || "",
     approver3:            approvers.approver3 || "",

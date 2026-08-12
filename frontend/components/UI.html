@@ -328,4 +328,84 @@ function renderPagination(opts) {
   '</div>';
 }
 
+
+// ─── REQUEST TIMELINE ───────────────────────────────────────
+
+/*
+  Function Name: renderTimeline
+
+  LAYMAN (Tropang Ex):
+  Ang buong kuwento ng isang request sa isang listahan: sinumite, inaprubahan,
+  ibinalik (kasama ang dahilan), muling sinumite, at kung ano pa man — sunod-sunod,
+  naka-grupo kada round. Dati, kanya-kanyang piraso ang nakikita ng bawat isa: ang
+  requestor, mga return lang; ang approver, ang kasalukuyang round lang. Ngayon,
+  IISA ang tinitingnan nilang lahat. Ito ang parehong function na ginagamit ng
+  RequestDetail (view ng requestor) at ng ReviewDetail (view ng approver) — sadyang
+  ganito para hindi na sila magkaiba pa.
+
+  TECHNICAL:
+  Renders detail.timeline from getRequestDetail() (built by getApprovalView_ in
+  Accessors.js). Pure: no state, no server calls. Grouped by resubmit cycle with a
+  heading per group; a coloured dot per action makes a return scannable without
+  reading it.
+
+  ⚠️ Server-side twins: emailApprovalLog_ (EmailHtml.js) renders the same data for
+  email, and the labels come from timelineLabel_/timelineCycleLabel_ (Accessors.js).
+  If you change the wording here, change it there, or the portal and the emails
+  will describe the same event differently.
+
+  ⚠️ Labels are recomputed client-side rather than sent down, so the DTO stays raw
+  data. Keep the switch below in step with timelineLabel_ (Accessors.js).
+
+  ⚠️ EXPIRY_* system actions are filtered out SERVER-SIDE. Do not re-add them here.
+
+  PARAMS  : timeline — detail.timeline array of { cycle, action, step, actor, remark, date }.
+  RETURNS : HTML string for the card, or '' when there is nothing to show.
+*/
+function renderTimeline(timeline) {
+  const entries = Array.isArray(timeline) ? timeline : [];
+  if (!entries.length) return '';
+
+  const label = function (e) {
+    const by = e.step ? ' by Approver ' + e.step : '';
+    if (e.action === 'submitted')   return 'Submitted';
+    if (e.action === 'resubmitted') return 'Resubmitted';
+    if (e.action === 'approved')    return 'Approved' + by;
+    if (e.action === 'declined')    return 'Declined' + by;
+    if (e.action === 'returned')    return 'Returned' + by;
+    return String(e.action || '');
+  };
+  const cycleLabel = function (c) {
+    return (parseInt(c, 10) || 0) === 0 ? 'Original submission' : 'Resubmit #' + c;
+  };
+
+  let rows = '';
+  let lastCycle = -1;
+  entries.forEach(function (e) {
+    if (e.cycle !== lastCycle) {
+      rows += '<div class="timeline-cycle">' + escapeHtml(cycleLabel(e.cycle)) + '</div>';
+      lastCycle = e.cycle;
+    }
+    rows +=
+      '<div class="timeline-item timeline-' + escapeHtml(e.action) + '">' +
+        '<div class="timeline-dot"></div>' +
+        '<div class="timeline-body">' +
+          '<div class="timeline-action">' + escapeHtml(label(e)) + '</div>' +
+          '<div class="timeline-meta">' +
+            escapeHtml(e.actor || '—') + ' &middot; ' + escapeHtml(e.date || '—') +
+          '</div>' +
+          (String(e.remark || '').trim()
+            ? '<div class="timeline-remark">' + escapeHtml(e.remark) + '</div>'
+            : '') +
+        '</div>' +
+      '</div>';
+  });
+
+  return '' +
+    '<div class="card">' +
+      '<div class="card-header"><div class="card-title">Request History</div></div>' +
+      '<div class="timeline">' + rows + '</div>' +
+    '</div>';
+}
+
 </script>

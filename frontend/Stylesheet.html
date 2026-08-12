@@ -32,6 +32,7 @@
   FORMS                  .form-section, .form-grid, .form-label, .form-input/select/textarea, .form-actions
   DETAIL ROWS            .detail-row, .detail-key, .detail-value
   PROGRESS STEPS         .progress-steps, .step-dot (done/active/declined), .step-line
+  REQUEST TIMELINE       .timeline, .timeline-cycle/-item/-dot/-action/-meta/-remark
   RESUBMIT BANNER        .resubmit-banner
   ACTION BAR             .action-item, .form-actions
   FILTER BAR             .filter-bar, .filter-group, .filter-label, .filter-select
@@ -829,6 +830,69 @@
     transition: background 240ms var(--ease-out);
   }
   .step-line.done { background: var(--navy-900); }
+
+
+  /* ─── REQUEST TIMELINE ──────────────────────────────────── */
+  /* Vertical activity list rendered by renderTimeline() (UI.html), shown on both
+     RequestDetail (requestor) and ReviewDetail (approver). The connector line is
+     a border on .timeline, and each item's dot sits on top of it, so a variable
+     number of entries needs no per-item height maths. */
+  .timeline {
+    position: relative;
+    padding-left: 22px;
+    border-left: 1px solid var(--border);
+    margin-left: 6px;
+  }
+  .timeline-cycle {
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--text-secondary);
+    margin: 16px 0 8px;
+  }
+  .timeline-cycle:first-child { margin-top: 0; }
+  .timeline-item {
+    position: relative;
+    padding-bottom: 14px;
+    /* Grid child guard (see the CSS notes in CLAUDE.md): long emails and long
+       return reasons must wrap instead of widening the column. */
+    min-width: 0;
+  }
+  .timeline-item:last-child { padding-bottom: 0; }
+  .timeline-dot {
+    position: absolute;
+    left: -27px;
+    top: 4px;
+    width: 9px;
+    height: 9px;
+    border-radius: 50%;
+    background: var(--navy-900);
+    box-shadow: 0 0 0 3px var(--surface);   /* punches through the connector line */
+  }
+  .timeline-approved .timeline-dot { background: var(--green-text); }
+  .timeline-declined .timeline-dot { background: var(--red-text); }
+  .timeline-returned .timeline-dot { background: var(--amber-text); }
+  .timeline-action {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-primary);
+  }
+  .timeline-meta {
+    font-size: 12px;
+    color: var(--text-secondary);
+    word-break: break-word;                  /* long approver emails */
+  }
+  .timeline-remark {
+    font-size: 12px;
+    color: var(--text-primary);
+    background: var(--gray-100);
+    border-radius: var(--radius-sm);
+    padding: 6px 10px;
+    margin-top: 5px;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
 
 
   /* ─── RESUBMIT BANNER ───────────────────────────────────── */
