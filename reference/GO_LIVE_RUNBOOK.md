@@ -131,7 +131,7 @@ through to Fully Approved. That single request exercises every branch below.
 
 ### ⚠️ Two things this sweep deliberately did NOT change
 - **`include()` stays callable.** It is invoked from `Index.html` scriptlets; if underscore-hiding broke scriptlet resolution, no page would render at all. Too much blast radius for a Low finding that cannot be verified locally. Revisit with a live `/dev` to test against.
-- **`ORG.ALLOWED_DOMAINS` still ships as `[]` (allow-all).** Correct for dev, wrong for production — see Phase D1b. `_testConfig` now prints a loud warning while it is empty.
+- **`ORG.ALLOWED_DOMAINS` is now `["megaworldcorp.com", "dlsu.edu.ph"]`** (changed 2026-08-11 from the old allow-all `[]`). This is **tighter** than what it replaced: `[]` allowed every Google account on earth including personal gmail, whereas this admits exactly two domains. `dlsu.edu.ph` is a **temporary maintainer-access exception** and is listed in `ORG.TRANSITIONAL_DOMAINS` so `_testConfig` warns about it on every run until it is removed. See Phase D1b.
 
 ### Tier 1 — go-live blockers (real, meaningful)
 - [ ] **B1. Auth guards are bypassable.** The workflow mutators (`approve/decline/returnRequest/resubmit` in `Approvals.js`) and the admin write-primitives (`replaceGroupChain/createGroup/updateGroupFields` in `Accessors.js`) + `generateCOC` carry NO auth of their own — the guards live only in the `handle*`/`admin*` wrappers. In Apps Script, `google.script.run` can call ANY global directly, around the wrappers. → Any authenticated Megaworld user could self-approve their own request or make themselves a group's sole approver (logged under their real email, but still). **Fix:** fold an identity + actionable-status guard INTO each workflow mutator; add `isAdmin()` guards into the admin write-primitives; guard `generateCOC` on `isChainApprover || isAdmin` + `status===APPROVED`.
@@ -238,7 +238,9 @@ Still supported if you would rather not use properties — the literals are the 
 - [ ] `COC.ATTACHMENTS_FOLDER_ID` → prod supporting-docs folder
 
 ### D1b. Edit `backend/Constants.js` — the domain allowlist (ORG)
-- [ ] Set `ORG.ALLOWED_DOMAINS` to `["megaworldcorp.com"]` (add any other valid Megaworld domain: subsidiaries, contractor domains, a legacy domain).
+- [ ] **Remove the maintainer-access exception.** `ORG.ALLOWED_DOMAINS` currently reads `["megaworldcorp.com", "dlsu.edu.ph"]`. Delete `"dlsu.edu.ph"` from **BOTH** `ORG.ALLOWED_DOMAINS` **and** `ORG.TRANSITIONAL_DOMAINS` in `Constants.js`, leaving `["megaworldcorp.com"]` (plus any other valid Megaworld domain: subsidiaries, contractor domains, a legacy domain). Confirm by running `_testConfig()` and seeing the "TEMPORARY DOMAIN EXCEPTION STILL ACTIVE" warning replaced by "all cleared".
+
+  > ⚠️ **Do this LAST, and understand what it does.** The portal currently lives on a personal DLSU-owned Apps Script project, and the maintainer has no Megaworld account. Removing `dlsu.edu.ph` locks them out of the system completely: they will not be able to sign in, test, or diagnose anything afterwards. Before removing it, confirm that (a) the project, spreadsheet, and both Drive folders have been transferred to a Megaworld-owned account, and (b) someone with a Megaworld account can deploy and run `_testConfig()`. Otherwise you will have a production system nobody can service.
   - Layman: this is the "only company accounts may use this portal" list.
   - It is a **backstop**, not the main gate. The real gate is the deployment setting in D4 ("Who has access: Anyone within Megaworld"). This exists so that if that dropdown is ever set wrong, an outsider still cannot sign in or file a request.
   - Leaving it `[]` (empty) allows all domains, which is correct for dev testing and WRONG for production.

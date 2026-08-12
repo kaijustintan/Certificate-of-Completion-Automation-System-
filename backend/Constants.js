@@ -348,18 +348,36 @@ const COC = {
   domain (subsidiaries, contractors, a legacy domain). Add every domain that
   should be allowed. An empty array disables the check entirely.
 
+  ⚠️ AN EMPTY ARRAY IS NOT "THE DEV SETTING", IT IS "NO SETTING". It allows every
+  Google account on earth, including personal gmail. Listing the real dev domain
+  explicitly is strictly SAFER than leaving it empty, and it is why this now
+  ships with two entries rather than none.
+
   Values are compared lowercase, without the "@".
 
   EXAMPLE
-    ALLOWED_DOMAINS: []                                   // allow all (dev/testing)
-    ALLOWED_DOMAINS: ["megaworldcorp.com"]                // production
+    ALLOWED_DOMAINS: []                                   // allow ALL (never do this)
+    ALLOWED_DOMAINS: ["megaworldcorp.com"]                // final production state
     ALLOWED_DOMAINS: ["megaworldcorp.com", "megaworld.com.ph"]  // multi-domain org
 */
 const ORG = {
-  // ⚠️ GO-LIVE: set to ["megaworldcorp.com"] (plus any other valid Megaworld
-  // domain) when deploying on the Megaworld Workspace account. Left empty here
-  // so the portal stays testable on the personal/DLSU dev account.
-  ALLOWED_DOMAINS: [],
+  // Both the production domain and the current maintainer's domain. The portal
+  // presently runs on a personal DLSU-owned Apps Script project, and the
+  // maintainer has no Megaworld account, so removing dlsu.edu.ph today would
+  // lock the only person who can deploy it out of the system entirely.
+  //
+  // This is deliberately NOT an empty array: [] would allow ANY Google account,
+  // so naming both domains is the tighter of the two options available.
+  ALLOWED_DOMAINS: ["megaworldcorp.com", "dlsu.edu.ph"],
+
+  // ⚠️ REMOVE-BEFORE-HANDOVER LIST. Anything named here is a temporary access
+  // exception, not a real organization domain. _testConfig() prints a loud
+  // warning for every entry that is still live in ALLOWED_DOMAINS above, so the
+  // go-live smoke test catches a forgotten one instead of relying on memory.
+  //
+  // To finish the handover: delete "dlsu.edu.ph" from BOTH arrays. That is the
+  // whole change. Confirm by running _testConfig() and seeing the warning gone.
+  TRANSITIONAL_DOMAINS: ["dlsu.edu.ph"],
 };
 
 
@@ -524,9 +542,28 @@ function _testConfig() {
              "   [source only — deliberately NOT a Script Property]");
   Logger.log(domains.length
     ? "  → domain gate ACTIVE: only these domains may sign in."
-    : "  → ⚠️ DOMAIN GATE OFF — ANY Google account that can open the app is allowed. " +
-      "Correct for dev. BEFORE GO-LIVE set ORG.ALLOWED_DOMAINS in Constants.js " +
+    : "  → ⚠️ DOMAIN GATE OFF — ANY Google account that can open the app is allowed, " +
+      "including personal gmail. Set ORG.ALLOWED_DOMAINS in Constants.js " +
       "(e.g. [\"megaworldcorp.com\"]). See GO_LIVE_RUNBOOK Phase D1b.");
+
+  // Temporary access exceptions still live? Shout. This is the check that stops a
+  // maintainer-access domain from silently surviving into production, which is
+  // otherwise invisible: everything keeps working, so nothing ever surfaces it.
+  const transitional = (typeof ORG !== "undefined" && ORG.TRANSITIONAL_DOMAINS) || [];
+  const stillLive = transitional.filter(function (t) {
+    const tl = String(t).trim().toLowerCase();
+    return domains.some(function (d) { return String(d).trim().toLowerCase() === tl; });
+  });
+  if (stillLive.length) {
+    Logger.log("  → ⚠️ TEMPORARY DOMAIN EXCEPTION STILL ACTIVE: " + JSON.stringify(stillLive));
+    Logger.log("     These are maintainer-access domains, NOT organization domains. Anyone with " +
+               "an account on them can sign in and file requests.");
+    Logger.log("     BEFORE FINAL HANDOVER: delete them from BOTH ORG.ALLOWED_DOMAINS and " +
+               "ORG.TRANSITIONAL_DOMAINS in Constants.js, then re-run _testConfig to confirm " +
+               "this warning is gone.");
+  } else if (transitional.length) {
+    Logger.log("  → temporary domain exceptions: all cleared. ✅");
+  }
   // Fail-loud proof, using a key that can never hold a real value.
   try {
     config_("NO_SUCH_KEY_SMOKE_TEST");
