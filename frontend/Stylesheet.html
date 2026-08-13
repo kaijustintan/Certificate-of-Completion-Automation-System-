@@ -905,6 +905,66 @@
   }
 
 
+  /* ─── RETURN FLAGS (per-item "fix this" marks) ──────────── */
+  /* Picker inside the approver's return panel (ReviewDetail). */
+  .flag-section { margin: 12px 0 4px; }
+  .flag-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--amber-text);
+    text-decoration: none;
+  }
+  .flag-toggle:hover { text-decoration: underline; }
+  .flag-group-label {
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--gray-400);
+    margin: 12px 0 4px;
+  }
+  .flag-item { padding: 4px 0; }
+  .flag-item-label {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    font-size: 13px;
+    color: var(--gray-900);
+    cursor: pointer;
+  }
+  .flag-comment-row { margin: 6px 0 4px 22px; }
+  .flag-comment { font-size: 13px; }
+
+  /* Requestor side: highlighted field rows + the "What needs fixing" card. */
+  .detail-row--flagged {
+    background: var(--amber-bg);
+    border-radius: var(--radius-sm);
+  }
+  .flag-pin {
+    font-size: 12px;
+    color: var(--amber-text);
+    margin-top: 4px;
+  }
+  .flags-card-item { padding: 8px 0; border-bottom: 1px solid var(--gray-200); }
+  .flags-card-item:last-child { border-bottom: none; }
+  .flags-card-label {
+    font-weight: 600;
+    font-size: 13px;
+    color: var(--gray-900);
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .flags-card-label .flag-icon { color: var(--amber-text); }
+  .flags-card-comment { font-size: 13px; color: var(--gray-600); margin-top: 2px; }
+  .flags-card-meta { font-size: 11px; color: var(--gray-400); margin-top: 2px; }
+  .flags-card-resolved .flags-card-label { color: var(--gray-600); }
+  .flags-card-resolved .flag-icon { color: var(--green-text); }
+
+
   /* ─── ACTION ITEM (button + helper caption column) ──────── */
   .action-item {
     display: flex;

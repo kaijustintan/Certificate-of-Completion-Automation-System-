@@ -42,7 +42,7 @@
   C. AUTHORIZATION HELPERS  (server-side, identity from Session)
      - normalizeEmail_(email)          trim + lowercase
      - sameEmail_(a, b)                safe non-blank equality
-     - getRequestRowData_(id)          full 34-col row by Request ID
+     - getRequestRowData_(id)          full 25-col row by Request ID
      - isCurrentApprover_(row, caller) is caller the one due to act now?
      - isChainApprover_(row, caller)   is caller any approver for the group?
 
@@ -536,7 +536,8 @@ function getMyActionedRequests() {
               ang makakakita. Kung wala kang karapatan, null ang babalik (hindi error).
   TECHNICAL : Reads the full row, authorizes the caller (requestor OR chain
               approver OR admin), then returns a rich DTO (dates pre-formatted,
-              PREVIOUS_APPROVALS JSON-parsed, attachments joined in).
+              history/timeline derived from Activity_Log, flags + attachments
+              joined in).
   PARAMS    : requestId — the request to load.
   RETURNS   : Detail DTO object, or null if not found OR caller unauthorized.
 
@@ -546,7 +547,7 @@ function getMyActionedRequests() {
       Technical : getRowNumberByRequestId_(); -1 → return null.
     Step 2 — Read row + group approvers
       Layman    : Basahin ang buong row at ang approvers ng group.
-      Technical : getRange(rowNum,1,1,34); getApprovers_(group) || {}.
+      Technical : getRange(rowNum, 1, 1, CR.RESUBMIT_COUNT); getApprovers_(group) || {}.
     Step 3 — Authorize the caller (view gate)
       Layman    : Requestor ka ba, approver ng chain, o admin? Kung hindi, null.
       Technical : return null unless sameEmail_(REQUESTOR, caller) ||
@@ -558,11 +559,14 @@ function getMyActionedRequests() {
     Step 4 — Build the DTO (format + parse)
       Layman    : Buuin ang malinis na object: petsa naka-format, prev
                   approvals na-parse, attachments naka-sama.
-      Technical : Dates via Utilities.formatDate; PREVIOUS_APPROVALS JSON.parse
-                  in a try/catch (bad JSON → []); attachments mapped to
-                  {attachmentId, filename, description, resubmitCycle} — NO Drive
-                  URL (Phase 8 gated serving; the UI fetches bytes via
-                  downloadAttachment). resubmitCycle drives the #6 cycle grouping.
+      Technical : Dates via Utilities.formatDate (display "MMM dd, yyyy" +
+                  machine yyyy-MM-dd *Input twins for the edit form);
+                  previousApprovals/priorApprovals/timeline derived from
+                  getApprovalView_; flags from getFlagsForRequest_ with labels
+                  resolved server-side; attachments mapped to {attachmentId,
+                  filename, description, resubmitCycle} — NO Drive URL (Phase 8
+                  gated serving; the UI fetches bytes via downloadAttachment).
+                  resubmitCycle drives the #6 cycle grouping.
 
   EXAMPLE
     // As the requestor or a chain approver:
@@ -593,12 +597,43 @@ function getRequestDetail(requestId) {
     ? Utilities.formatDate(new Date(val), "Asia/Manila", "MMM dd, yyyy hh:mm a") : "";
   const fmtDateOnly = (val) => val
     ? Utilities.formatDate(new Date(val), "Asia/Manila", "MMM dd, yyyy") : "";
+  // Machine-readable form for <input type="date"> prefill on the resubmit edit
+  // form. The display keys (contractStart/End) stay human-formatted — frozen DTO.
+  const fmtDateInput = (val) => val
+    ? Utilities.formatDate(new Date(val), "Asia/Manila", "yyyy-MM-dd") : "";
 
   // Per-step dates/remarks, previousApprovals, and resubmitHistory are DERIVED
   // from the append-only Approval_Actions timeline (frozen DTO — same shape).
   const view       = getApprovalView_(requestId);
   const stepDate   = (n) => (view.byStep[n] && view.byStep[n].date) ? fmtDateTime(view.byStep[n].date) : "";
   const stepRemark = (n) => (view.byStep[n] ? view.byStep[n].remark : "") || "";
+
+  // Flags (per-item "fix this" marks raised on return). label is resolved
+  // server-side: field flags from FLAGGABLE_FIELDS, attachment flags from the
+  // attachment's filename. resolved self-heals: a flag from an older cycle
+  // renders as resolved even if resolveOpenFlags_'s stamp was missed.
+  const resubmitCountRaw = parseInt(row[CR.RESUBMIT_COUNT - 1], 10) || 0;
+  const attachmentRowsForReq = getAttachmentsForRequest_(row[CR.REQUEST_ID - 1]);
+  const attachmentNameById = {};
+  attachmentRowsForReq.forEach(function (a) {
+    attachmentNameById[String(a[RA.ATTACHMENT_ID - 1])] = a[RA.FILE - 1] || "";
+  });
+  const flags = getFlagsForRequest_(requestId).map(function (f) {
+    const label = f.targetType === "attachment"
+      ? (attachmentNameById[String(f.targetKey)] || "Attachment")
+      : ((FLAGGABLE_FIELDS[f.targetKey] && FLAGGABLE_FIELDS[f.targetKey].label) || f.targetKey);
+    return {
+      flagId:     f.flagId,
+      cycle:      f.cycle,
+      targetType: f.targetType,
+      targetKey:  f.targetKey,
+      label:      label,
+      comment:    f.comment,
+      flaggedBy:  f.flaggedBy,
+      flaggedAt:  f.flaggedAt ? fmtDateTime(f.flaggedAt) : "",
+      resolved:   f.resolvedCycle !== null || f.cycle < resubmitCountRaw,
+    };
+  });
 
   return {
     requestId:            row[CR.REQUEST_ID - 1],
@@ -623,6 +658,10 @@ function getRequestDetail(requestId) {
     typeOfLicense:        row[CR.TYPE_OF_LICENSE - 1],
     contractStart:        fmtDateOnly(row[CR.CONTRACT_START - 1]),
     contractEnd:          fmtDateOnly(row[CR.CONTRACT_END - 1]),
+    // Raw yyyy-MM-dd twins for the resubmit edit form's <input type="date">
+    // prefill (the display keys above are human-formatted and can't round-trip).
+    contractStartInput:   fmtDateInput(row[CR.CONTRACT_START - 1]),
+    contractEndInput:     fmtDateInput(row[CR.CONTRACT_END - 1]),
     isExpired:            isContractExpired_(row[CR.CONTRACT_END - 1]),  // #10 — drives the detail-page "Expired" chip
     supplierName:         row[CR.SUPPLIER_NAME - 1],
     requestorRemark:      row[CR.REQUESTOR_REMARK - 1],
@@ -641,6 +680,15 @@ function getRequestDetail(requestId) {
     // approver (ReviewDetail) via renderTimeline() in UI.html. EXPIRY_* system
     // actions are filtered out server-side. Additive field — nothing else moved.
     timeline:             view.timeline,
+    // Per-item flags (additive): open + resolved history, labels pre-resolved
+    // server-side. Drives the flag picker (ReviewDetail), the "What needs
+    // fixing" card + field highlights (both detail pages), and the edit form.
+    flags:                flags,
+    // The flaggable/editable field set (from FLAGGABLE_FIELDS in Constants.js)
+    // so the frontend never hardcodes its own copy of the list.
+    flaggableFields:      Object.keys(FLAGGABLE_FIELDS).map(function (k) {
+      return { key: k, label: FLAGGABLE_FIELDS[k].label };
+    }),
     approver1:            approvers.approver1 || "",
     approver2:            approvers.approver2 || "",
     approver3:            approvers.approver3 || "",
@@ -649,7 +697,7 @@ function getRequestDetail(requestId) {
     designation3:         approvers.designation3 || "",
     // No raw Drive URL is sent to the frontend. The UI uses attachmentId to call
     // the identity-gated downloadAttachment(); FILE holds the display filename.
-    attachments:          getAttachmentsForRequest_(row[CR.REQUEST_ID - 1]).map(a => ({
+    attachments:          attachmentRowsForReq.map(a => ({
       attachmentId:  a[RA.ATTACHMENT_ID - 1],
       filename:      a[RA.FILE - 1],
       description:   a[RA.DESCRIPTION - 1],
@@ -699,13 +747,13 @@ function getRequestDetail(requestId) {
                   nalilikha sa sheet.
       Technical : uploadAttachmentFile_(f) per file; on catch: trash uploaded
                   fileIds via DriveApp.getFileById().setTrashed(true).
-    Step 4 — Append the request row (PENDING_1)
+    Step 4 — Append the request row (PENDING_1), under the script lock
       Layman    : Ngayon lang isusulat ang request — pagkatapos ng upload.
-      Technical : Build 33-col array via CR.*; status = PENDING_1 always;
-                  EXPECTED_ATTACHMENTS = files.length (record-keeping).
-    Step 5 — Write attachment child rows (batched)
+      Technical : Build the 25-col array via CR.*; status = PENDING_1 always.
+                  Lock taken AFTER uploads, released before the email send.
+    Step 5 — Write attachment child rows (batched, same lock hold)
       Layman    : Isulat ang lahat ng attachment rows sa isang write.
-      Technical : writeAttachmentRows_(requestId, uploaded) — one setValues call.
+      Technical : writeAttachmentRows_(requestId, uploaded, 0) — one setValues call.
     Step 6 — Send approval email (last — implies files are ready)
       Layman    : Padala ng email sa Approver 1. Siniguro na na kumpleto ang lahat.
       Technical : sendApprovalRequest_(requestId).
@@ -770,10 +818,18 @@ function validateRequestFields_(formData) {
     if (val !== undefined && val !== null && String(val).length > MAX_SHORT_TEXT) {
       return { ok: false, error: label + " is too long (max " + MAX_SHORT_TEXT + " characters)." };
     }
+    // Formula-injection guard: a leading "=" would be written into the cell as
+    // a LIVE formula by setValue/setValues (e.g. =IMPORTRANGE exfiltration).
+    if (val !== undefined && val !== null && startsWithFormula_(val)) {
+      return { ok: false, error: label + ' must not start with "=".' };
+    }
   }
 
   if (formData.requestorRemark && String(formData.requestorRemark).length > MAX_REMARK) {
     return { ok: false, error: "Remark is too long (max " + MAX_REMARK + " characters)." };
+  }
+  if (formData.requestorRemark && startsWithFormula_(formData.requestorRemark)) {
+    return { ok: false, error: 'Remark must not start with "=".' };
   }
 
   // Ordering only — blanks stay acceptable, as before.
@@ -853,6 +909,21 @@ function submitNewRequest(formData) {
   // fails after the files were uploaded, roll back: trash the files AND remove the
   // request row, so no half-written request (visible to an approver with no
   // supporting documents) and no orphaned Drive files survive.
+  //
+  // Under the script lock: writeAttachmentRows_ computes its start row from
+  // getLastRow()+1, so two concurrent submits could otherwise interleave and
+  // overwrite each other's attachment rows. The lock is taken only AFTER the
+  // Drive uploads (never hold a lock across slow Drive I/O) and released
+  // before the email send.
+  const lock = LockService.getScriptLock();
+  try { lock.waitLock(10000); }
+  catch (e) {
+    uploaded.forEach(function (u) {
+      try { DriveApp.getFileById(u.fileId).setTrashed(true); } catch (e2) {}
+    });
+    Logger.log("submitNewRequest(): could not acquire lock. Rolled back uploaded files.");
+    return { success: false, error: "System is busy. Please try again." };
+  }
   const sheet = getSheet_(SHEET_NAMES.REQUESTS);
   let rowWritten = false;
   try {
@@ -897,10 +968,9 @@ function submitNewRequest(formData) {
     uploaded.forEach(function (u) {
       try { DriveApp.getFileById(u.fileId).setTrashed(true); } catch (e) {}
     });
-    // Re-resolve the row by Request ID rather than trusting a row number captured
-    // earlier: submitNewRequest takes no lock, so a concurrent submit can append
-    // or shift rows in between, and deleting a stale index would destroy ANOTHER
-    // user's request. Looking it up by identity is always correct.
+    // Re-resolve the row by Request ID rather than trusting a row number
+    // captured earlier. Even under the lock this stays the safe form: identity
+    // lookup can never delete another user's row, whatever else went wrong.
     if (rowWritten) {
       try {
         const rollbackRow = getRowNumberByRequestId_(requestId);
@@ -909,10 +979,13 @@ function submitNewRequest(formData) {
     }
     Logger.log("submitNewRequest(): Sheet write failed — " + err + ". Rolled back files + row.");
     return { success: false, error: "Submission failed. No request was created. Please try again." };
+  } finally {
+    lock.releaseLock();
   }
 
-  // Step 6 — Send approval email LAST. A mail failure must NOT roll back the
-  // committed request; sendBrandedEmail_ swallows send errors so this never throws.
+  // Step 6 — Send approval email LAST, outside the lock. A mail failure must NOT
+  // roll back the committed request; sendBrandedEmail_ swallows send errors so
+  // this never throws.
   sendApprovalRequest_(requestId);
 
   return { success: true, requestId, controlNumber: controlNo };
@@ -1017,54 +1090,138 @@ function handleDecline(requestId, remark) {
 }
 
 /*
+  Function Name: validateReturnFlags_
+
+  LAYMAN (Tropang Ex):
+  Chinecheck kung tama ang mga "markahan mo ito" na ipinadala ng approver kasama
+  ng return: totoo bang field ng request ang minarkahan (o attachment na sa
+  request na ito talaga nakakabit), may komento ba bawat isa, hindi sobrang
+  haba, at walang duplicate. Kung may mali, ANG BUONG RETURN ang bumabagsak —
+  wala pang nagbabago sa system, kaya ligtas ulitin ng approver.
+
+  TECHNICAL:
+  Validates handleReturn's optional flags payload BEFORE returnRequest_ runs.
+  Also RESOLVES each item's display label server-side (field → FLAGGABLE_FIELDS
+  label, attachment → filename) so downstream writers/emails never trust a
+  client-supplied label. Absent/empty payload is valid (flags are optional
+  enhancement; the 20-char return remark is the required substance).
+
+  PARAMS:
+  - requestId — the request being returned (attachment ownership check).
+  - flags — undefined | [{targetType:'field'|'attachment', targetKey, comment}].
+
+  RETURNS:
+  { ok:true, items:[{targetType, targetKey, comment, label}] } (items trimmed,
+  labels resolved) or { ok:false, error:"<user-facing>" }.
+*/
+function validateReturnFlags_(requestId, flags) {
+  if (flags === undefined || flags === null) return { ok: true, items: [] };
+  if (!Array.isArray(flags)) return { ok: false, error: "Invalid flag payload." };
+  if (flags.length === 0) return { ok: true, items: [] };
+  if (flags.length > FLAG_MAX_ITEMS) {
+    return { ok: false, error: "Too many flagged items (max " + FLAG_MAX_ITEMS + ")." };
+  }
+
+  // Attachment flags must point at a file of THIS request — a foreign
+  // attachmentId would let a flag reference (and label) someone else's file.
+  const attachmentNameById = {};
+  getAttachmentsForRequest_(requestId).forEach(function (a) {
+    attachmentNameById[String(a[RA.ATTACHMENT_ID - 1])] = a[RA.FILE - 1] || "Attachment";
+  });
+
+  const items = [];
+  const seen = {};
+  for (let i = 0; i < flags.length; i++) {
+    const f          = flags[i] || {};
+    const targetType = String(f.targetType || "");
+    const targetKey  = String(f.targetKey || "");
+    const comment    = String(f.comment == null ? "" : f.comment).trim();
+
+    let label;
+    if (targetType === "field") {
+      // Allowlist: also structurally rejects 'group' and server-derived fields.
+      if (!FLAGGABLE_FIELDS[targetKey]) {
+        return { ok: false, error: 'Unknown or non-flaggable field: "' + targetKey + '".' };
+      }
+      label = FLAGGABLE_FIELDS[targetKey].label;
+    } else if (targetType === "attachment") {
+      if (!attachmentNameById[targetKey]) {
+        return { ok: false, error: "A flagged attachment does not belong to this request." };
+      }
+      label = attachmentNameById[targetKey];
+    } else {
+      return { ok: false, error: "Invalid flag target type." };
+    }
+
+    if (!comment) {
+      return { ok: false, error: 'Each flagged item needs a comment ("' + label + '").' };
+    }
+    if (String(f.comment).length > FLAG_MAX_COMMENT) {
+      return { ok: false, error: 'The comment for "' + label + '" is too long (max ' + FLAG_MAX_COMMENT + " characters)." };
+    }
+    if (startsWithFormula_(comment)) {
+      return { ok: false, error: 'Flag comments must not start with "=" ("' + label + '").' };
+    }
+
+    const dupKey = targetType + ":" + targetKey;
+    if (seen[dupKey]) return { ok: false, error: 'Duplicate flag for "' + label + '".' };
+    seen[dupKey] = true;
+
+    items.push({ targetType: targetType, targetKey: targetKey, comment: comment, label: label });
+  }
+  return { ok: true, items: items };
+}
+
+/*
   Function Name: handleReturn
   LAYMAN    : Pag ibinalik ng approver ang request sa requestor para ayusin.
-              Ito ang pinaka-maraming bookkeeping: bago baguhin ang state,
-              itinatala muna kung SINO ang nagbalik, KAILAN, at BAKIT (bilang
-              [PENDING] entry sa history), at kung SINO-SINO nang approver ang
-              nakapag-approve_ (para malaman pag na-resubmit_, babalik ulit sa
-              kanila). Tapos saka ibinabalik at nag-eemail sa lahat ng apektado.
-  TECHNICAL : Captures returner + reason + prior approvals WHILE Step still
-              reflects the returner (this is the only reliable point), writes a
-              single active [PENDING] history entry + the PREVIOUS_APPROVALS
-              JSON, then returnRequest_() + 3 notifications.
-  PARAMS    : requestId — request to return; remark — what needs to change.
+              Pwede na ngayong may kasamang mga MARKA: mga specific na field o
+              attachment na may problema, may komento bawat isa. Vina-validate
+              muna ang mga marka BAGO ang return (kung invalid, walang
+              nangyayari); pagkatapos mag-succeed ang return, saka isinusulat
+              ang mga marka at ipinapadala ang 3 emails.
+  TECHNICAL : Guard (current approver) → validateReturnFlags_ BEFORE any state
+              change (invalid payload fails the whole action) →
+              returnRequest_(requestId, remark) (the frozen primitive: lock,
+              re-guard, validateRemark_, RETURNED action with the remark
+              VERBATIM — the resubmit-banner parser reads it) → appendFlags_
+              AFTER success, fail-soft (the remark always carries the substance;
+              flags are enhancement, so a flag-write failure never rolls back a
+              committed return) → 3 notifications, with the flagged items listed
+              in the requestor's email.
+  PARAMS    : requestId — request to return; remark — what needs to change
+              (required, 20..2000 chars); flags — optional
+              [{targetType:'field'|'attachment', targetKey, comment}].
   RETURNS   : returnRequest_()'s result, or { success:false, error/message }.
 
   STEPS
-    Step 1 — Locate row + read pre-mutation state
-      Layman    : Hanapin ang row; basahin ang step, group, approvers, at
-                  kung sino ang nagbalik — BAGO magbago ang state.
-      Technical : getRowNumberByRequestId_; read 33-col row; returner = session.
-    Step 2 — Authorize BEFORE any write
-      Layman    : Kung hindi ikaw ang current approver → Unauthorized (bago
-                  pa masulatan ang history/AH).
-      Technical : sameEmail_(getCurrentApprover_(step,group), returner) gate,
-                  placed before any setValue so no unauthorized mutation.
-    Step 3 — Build the [PENDING] history entry
-      Layman    : Buuin ang tala: sino, kailan, anong dahilan.
-      Technical : approverLabel = `Approver ${step}`; pendingEntry string with
-                  returner, PH timestamp, and reason.
-    Step 4 — Snapshot prior approvals → AH column
-      Layman    : Itala kung sino nang nakapag-approve_ bago mabura ang petsa.
-      Technical : push {step,email,date} for each filled AppN_Date; write JSON
-                  to PREVIOUS_APPROVALS (AH) — keeps AG as pure narrative.
-    Step 5 — Write history (one active [PENDING] only)
-      Layman    : Kung may luma nang [PENDING], palitan — huwag mag-ipon ng dalawa.
-      Technical : if existing includes "[PENDING]", splice it out before
-                  appending; else append after a separator.
-    Step 6 — Perform the return + notify
-      Layman    : Ibalik ang request; email sa requestor, sa nagbalik, at sa
-                  mga dating approver (na kasama ang dahilan).
-      Technical : returnRequest_(); on success → sendReturnToRequestor_ +
+    Step 1 — Authorize BEFORE any write
+      Layman    : Kung hindi ikaw ang current approver → Unauthorized.
+      Technical : sameEmail_(getCurrentApprover_(step,group), returner) gate.
+    Step 2 — Validate the flags (still before any write)
+      Layman    : Tama ba ang mga minarkahan? Kung hindi, ibalik ang error —
+                  wala pang nagbabago kaya safe ulitin.
+      Technical : validateReturnFlags_ resolves labels + rejects bad targets.
+    Step 3 — Perform the return
+      Layman    : Ibalik ang request (may lock at sariling re-check sa loob).
+      Technical : returnRequest_() — appendAction_(RETURNED) + cache flip.
+    Step 4 — Record the flags (fail-soft)
+      Layman    : Isulat ang mga marka. Kung pumalpak ito, tuloy pa rin ang
+                  return — nasa remark naman ang buod.
+      Technical : appendFlags_(requestId, cycle=RESUBMIT_COUNT, returner, items)
+                  in try/catch; cycle read from the pre-return row snapshot.
+    Step 5 — Notify
+      Layman    : Email sa requestor (kasama ang listahan ng mga marka), sa
+                  nagbalik, at sa mga dating approver.
+      Technical : sendReturnToRequestor_(id, label, savedFlags) +
                   sendReturnConfirmToApprover_ + sendReturnedChainNotification_.
 
   EXAMPLE
-    handleReturn("REQ-9b1", "Wrong supplier on contract")
-    → { success:true, … }
-      (AH stores prior approvers; requestor + returner + prior approvers emailed)
+    handleReturn("REQ-9b1", "Contract dates do not match the PO.",
+                 [{targetType:'field', targetKey:'contractEnd', comment:'PO says 2027-01-31.'}])
+    → { success:true, … }   // flag row written; requestor email lists the flagged field
 */
-function handleReturn(requestId, remark) {
+function handleReturn(requestId, remark, flags) {
   const row = getRequestRowData_(requestId);
   if (!row) return { success: false, message: "Request not found." };
 
@@ -1077,6 +1234,11 @@ function handleReturn(requestId, remark) {
     return { success: false, error: "Unauthorized" };
   }
 
+  // Validate flags BEFORE any state change: an invalid payload fails the whole
+  // action while nothing has happened yet, so the approver just fixes and retries.
+  const fv = validateReturnFlags_(requestId, flags);
+  if (!fv.ok) return { success: false, error: fv.error };
+
   const approverLabel = `Approver ${step}`;
 
   // Who had already approved this cycle — for the prior-approver notification.
@@ -1087,7 +1249,20 @@ function handleReturn(requestId, remark) {
 
   const result = returnRequest_(requestId, remark);
   if (result.success) {
-    sendReturnToRequestor_(requestId, approverLabel);
+    // Record the flags AFTER the return commits, fail-soft: the required remark
+    // always carries the substance, so a flag-write failure degrades the UX
+    // (no highlights) but must never roll back or fail a committed return.
+    let savedFlags = [];
+    if (fv.items.length > 0) {
+      try {
+        const cycle = parseInt(row[CR.RESUBMIT_COUNT - 1], 10) || 0;
+        appendFlags_(requestId, cycle, returnerEmail, fv.items);
+        savedFlags = fv.items;
+      } catch (e) {
+        Logger.log("handleReturn(): flag write failed for " + requestId + " — " + e + ". Return itself committed.");
+      }
+    }
+    sendReturnToRequestor_(requestId, approverLabel, savedFlags);
     sendReturnConfirmToApprover_(requestId, approverLabel);
     sendReturnedChainNotification_(requestId, previousApprovals, remark, approverLabel);
   }
@@ -1095,23 +1270,82 @@ function handleReturn(requestId, remark) {
 }
 
 /*
+  Function Name: validateResubmitPayload_
+
+  LAYMAN (Tropang Ex):
+  Chinecheck ang mga in-edit na field values na kasama ng resubmit: kilala bang
+  field lahat ng keys (bawal ang 'group' — hindi napapalitan ang approver group
+  sa kalagitnaan), hindi sobrang haba, tama ang date order, at walang
+  nagsisimula sa "=". Kung wala namang ipinadalang edits, valid — dating
+  files-only na resubmit lang iyon.
+
+  TECHNICAL:
+  Validates handleResubmit's optional updatedFields payload. Keys must all be in
+  FLAGGABLE_FIELDS (the same allowlist that drives flag targets and the write
+  mapping); values are trimmed then run through startsWithFormula_ and the SAME
+  validateRequestFields_ used by submitNewRequest (its formData key names match
+  this payload by construction, so caps + date ordering come for free).
+
+  PARAMS:
+  - updatedFields — undefined | { fieldKey: newValue, ... }.
+
+  RETURNS:
+  { ok:true, fields:null } (no edits) | { ok:true, fields:{...trimmed} } |
+  { ok:false, error:"<user-facing>" }.
+*/
+function validateResubmitPayload_(updatedFields) {
+  if (updatedFields === undefined || updatedFields === null) return { ok: true, fields: null };
+  if (typeof updatedFields !== "object" || Array.isArray(updatedFields)) {
+    return { ok: false, error: "Invalid resubmit payload." };
+  }
+
+  const cleaned = {};
+  const keys = Object.keys(updatedFields);
+  for (let i = 0; i < keys.length; i++) {
+    const key = keys[i];
+    // Allowlist: structurally rejects 'group' and every server-derived field.
+    if (!FLAGGABLE_FIELDS[key]) {
+      return { ok: false, error: 'Field "' + key + '" cannot be edited on resubmit.' };
+    }
+    cleaned[key] = String(updatedFields[key] == null ? "" : updatedFields[key]).trim();
+  }
+  if (Object.keys(cleaned).length === 0) return { ok: true, fields: null };
+
+  // Same caps + contract-date-ordering + formula guard as a fresh submit.
+  const tv = validateRequestFields_(cleaned);
+  if (!tv.ok) return { ok: false, error: tv.error };
+
+  return { ok: true, fields: cleaned };
+}
+
+/*
   Function Name: handleResubmit
   LAYMAN    : Pag ire-resubmit_ ng requestor ang request na ibinalik sa kanya.
               Requestor lang ang pwede, at "Returned" lang ang pwedeng
-              i-resubmit_. Pwede silang magdagdag ng bago/tamang documents (kasi
-              kadalasan dahil sa maling/kulang na dokumento kaya naibalik) —
-              OPTIONAL lang ito; ang lumang files ay pinananatili (audit trail).
-              Ina-upload muna ang bagong files BAGO baguhin ang status, tapos
-              ibinabalik sa Approver 1 ang chain na may resubmit_ email.
-  TECHNICAL : Guard (caller === requestor AND status === RETURNED) → validate +
-              upload-first any newFiles (rollback on failure) → append their rows
-              (old rows kept) → capture return reason + next resubmit_ count BEFORE
-              resubmit_() clears the remark columns → resubmit_() (→ PENDING_1) →
-              confirmation + resubmit_ approval email. Upload-first mirrors
-              submitNewRequest's atomicity: no state change until files are safe.
+              i-resubmit_. Pwede na ngayong I-EDIT ang mga field ng request
+              (lahat maliban sa approver group) at magdagdag ng bago/tamang
+              documents — ang lumang files ay pinananatili (audit trail).
+              Ina-upload muna ang bagong files BAGO baguhin ang status; ang mga
+              field edit ay isinusulat sa loob mismo ng resubmit_ lock; tapos
+              minamarkahang resolved ang mga flag at ibinabalik sa Approver 1
+              ang chain na may resubmit_ email na nagsasabi kung ANO ang nabago.
+  TECHNICAL : Guard (caller === requestor AND status === RETURNED) → validate
+              files + validateResubmitPayload_(updatedFields) → upload-first any
+              newFiles to Drive (rollback on failure) → capture return reason +
+              next resubmit_ count → resubmit_(requestId, uploaded, fields)
+              flips the state, writes the changed field cells (one batched
+              setValues), records "Changed: <labels>" as the RESUBMITTED
+              action's remark, AND appends the new attachment rows — all inside
+              one script-lock hold → resolveOpenFlags_ (fail-soft; the DTO
+              self-heals a miss) → confirmation + resubmit_ approval email
+              (with the changed-fields line). Upload-first mirrors
+              submitNewRequest's atomicity: no state change until files are
+              safe in Drive.
   PARAMS    : requestId — the returned request to resubmit_.
               newFiles  — optional Array<FilePayload> of added/corrected docs
                           ({filename, mimeType, base64, description}). May be empty.
+              updatedFields — optional { fieldKey: newValue } over the
+                          FLAGGABLE_FIELDS keys (the edit form sends all 17).
   RETURNS   : resubmit_()'s result, or { success:false, error }.
 
   STEPS
@@ -1119,23 +1353,27 @@ function handleReturn(requestId, remark) {
       Layman    : Ikaw ba ang requestor AT "Returned" ba ito? Kung hindi →
                   Unauthorized.
       Technical : sameEmail_(REQUESTOR, caller) && status === RETURNED.
-    Step 2 — Capture reason + count BEFORE clearing
-      Layman    : Kunin ang dating dahilan (sa remark cols) at ang bagong
-                  resubmit_ number bago burahin ni resubmit_().
-      Technical : returnReason from APP3/2/1_REMARK fallback; resubmitCount =
-                  current + 1 (mirrors what resubmit_() will write).
-    Step 3 — Perform the resubmit_ + notify
-      Layman    : Ibalik sa simula ng chain; email-confirm sa requestor; kung
-                  diretso sa Approver 1, padalhan siya ng dedicated resubmit_ email.
-      Technical : resubmit_(); sendResubmitConfirmToRequestor_; if newStatus ===
-                  PENDING_1 → sendResubmitApprovalRequest_ (SYNCING defers it).
+    Step 2 — Validate edits + files, upload files
+      Layman    : Chinecheck ang mga edit at files; i-upload muna ang files.
+      Technical : validateAttachmentPayload_ + validateResubmitPayload_ BEFORE
+                  any upload; Drive uploads rollback-on-failure.
+    Step 3 — Perform the resubmit_ + resolve flags + notify
+      Layman    : Ibalik sa simula ng chain (kasama ang pag-sulat ng mga edit
+                  at bagong files); markahang resolved ang mga flag; email-confirm
+                  sa requestor; padalhan ng resubmit_ email si Approver 1 na may
+                  "What changed" na linya.
+      Technical : resubmit_(requestId, uploaded, fields) — field diff + writes +
+                  state flip + attachment rows under one lock, returns
+                  changedLabels; resolveOpenFlags_(id, newCount) fail-soft;
+                  sendResubmitConfirmToRequestor_;
+                  sendResubmitApprovalRequest_(…, changedLabels).
 
   EXAMPLE
-    handleResubmit("REQ-9b1")
+    handleResubmit("REQ-9b1", [], { contractEnd: "2027-01-31", projectTitle: "…" })
     → { success:true, newStatus:"Pending Approver 1", … }
       (requestor gets a confirm; Approver 1 gets a "this is a resubmission" email)
 */
-function handleResubmit(requestId, newFiles) {
+function handleResubmit(requestId, newFiles, updatedFields) {
   const caller = Session.getActiveUser().getEmail();
   const row    = getRequestRowData_(requestId);
   if (!row) return { success: false, error: "Request not found." };
@@ -1154,6 +1392,11 @@ function handleResubmit(requestId, newFiles) {
   const files = Array.isArray(newFiles) ? newFiles : [];
   const v = validateAttachmentPayload_(files, false); // false → new files optional
   if (!v.ok) return { success: false, error: v.error };
+
+  // Optional field edits: validate BEFORE any upload/state change so a bad
+  // payload costs nothing (no orphan Drive files, no cycle bump).
+  const pv = validateResubmitPayload_(updatedFields);
+  if (!pv.ok) return { success: false, error: pv.error };
 
   const uploaded = [];
   if (files.length > 0) {
@@ -1179,11 +1422,11 @@ function handleResubmit(requestId, newFiles) {
     }
   }
 
-  // Flip the state BEFORE recording the new attachment rows. resubmit_() can now
-  // fail on a lock timeout, and writing rows tagged with a resubmit_ cycle that
-  // never happened would file the documents under a phantom "Resubmit #N" and
-  // make the user's retry upload a duplicate set.
-  const result = resubmit_(requestId);
+  // resubmit_() writes the field edits, flips the state, AND records the new
+  // attachment rows inside one script-lock hold: nothing is written when the
+  // resubmit fails (no phantom "Resubmit #N" on a lock timeout), and the
+  // getLastRow()+1 batch write cannot interleave with a concurrent submit.
+  const result = resubmit_(requestId, uploaded, pv.fields);
   if (!result.success) {
     uploaded.forEach(function(u) {
       try { DriveApp.getFileById(u.fileId).setTrashed(true); } catch (e) {}
@@ -1192,13 +1435,19 @@ function handleResubmit(requestId, newFiles) {
     return result;
   }
 
-  if (uploaded.length > 0) {
-    writeAttachmentRows_(requestId, uploaded, resubmitCount); // append — keeps the original files
+  // Stamp every open flag as addressed by this resubmit. Fail-soft: the DTO
+  // self-heals (a flag from an older cycle renders as resolved regardless), so
+  // a failed stamp degrades nothing the user can see.
+  try {
+    resolveOpenFlags_(requestId, result.newCount);
+  } catch (e) {
+    Logger.log("handleResubmit(): resolveOpenFlags_ failed for " + requestId + " — " + e);
   }
 
   sendResubmitConfirmToRequestor_(requestId, returnReason, resubmitCount);
   if (result.newStatus === STATUS.PENDING_1) {
-    sendResubmitApprovalRequest_(requestId, returnReason, resubmitCount); // dedicated resubmit_ email for Approver 1
+    // Dedicated resubmit_ email for Approver 1, with the changed-fields line.
+    sendResubmitApprovalRequest_(requestId, returnReason, resubmitCount, result.changedLabels);
   }
   return result;
 }

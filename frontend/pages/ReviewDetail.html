@@ -109,6 +109,7 @@ async function renderReviewDetailPage(params) {
 
     ${renderProgressSteps(detail)}
     ${renderResubmitBanner(detail)}
+    ${renderFlagsCard(detail)}
     ${prevApprovalNote}
 
     <div class="detail-layout">
@@ -260,11 +261,141 @@ function renderActionBar() {
       '<p class="text-muted mb-md">Describe what needs to be changed. The requestor will receive this in the notification email and can update and resubmit.</p>' +
       '<textarea class="form-textarea" id="return-remark" placeholder="What needs to change (required, at least ' + REVIEW_MIN_REMARK + ' characters)…" oninput="syncPanelButton(\'return\')"></textarea>' +
       '<div class="text-tiny text-muted" id="return-remark-count">0 / ' + REVIEW_MIN_REMARK + ' characters minimum</div>' +
+      renderReturnFlagSection(__reviewDetail) +
       '<div class="form-actions">' +
         '<button class="btn btn-secondary" onclick="closeReviewPanels()">Cancel</button>' +
         '<button class="btn btn-warning action-btn" id="return-submit" disabled onclick="onReturnSubmit()">Confirm return</button>' +
       '</div>' +
     '</div>';
+}
+
+// ─── FLAG PICKER (return panel) ─────────────────────────────
+
+/*
+  Function Name: renderReturnFlagSection
+
+  LAYMAN (Tropang Ex):
+  Optional na seksyon sa loob ng return panel: "Flag specific items". Pag
+  binuksan, lalabas ang listahan ng lahat ng fields ng request at lahat ng
+  attachments — lagyan ng check ang may problema, at bawat check ay hihingi ng
+  maikling komento kung ano ang mali. Makikita ng requestor ang mga markang ito
+  naka-highlight sa kanilang page at nakalista sa email.
+
+  TECHNICAL:
+  Renders from detail.flaggableFields (server-supplied, from FLAGGABLE_FIELDS in
+  Constants.js — never a frontend copy of the list) + detail.attachments grouped
+  Current/Previous like renderAttachmentsBlock (prior-cycle files carry forward
+  as the effective document set, so they are flaggable too). Checkbox ids embed
+  the key; field keys are code literals and attachmentIds are server-generated
+  ("REQ-…"), both DOM-id-safe. Collapsed by default (flags are optional; the
+  remark stays the required control). Validation is mirrored client-side in
+  syncPanelButton and ENFORCED server-side in validateReturnFlags_.
+
+  PARAMS    : detail — the getRequestDetail DTO.
+  RETURNS   : HTML string (the whole collapsible section).
+*/
+function renderReturnFlagSection(detail) {
+  if (!detail) return '';
+  const fields      = detail.flaggableFields || [];
+  const attachments = detail.attachments || [];
+  const currentCycle = Number(detail.resubmitCount) || 0;
+
+  const item = function (type, key, label, sub) {
+    const dom = 'flag-' + type + '-' + key;
+    return '' +
+      '<div class="flag-item">' +
+        '<label class="flag-item-label">' +
+          '<input type="checkbox" id="' + dom + '" data-flag-type="' + type + '" data-flag-key="' + escapeHtml(key) + '" onchange="onFlagToggle(this)">' +
+          '<span>' + escapeHtml(label) +
+            (sub ? ' <span class="text-tiny text-muted">' + escapeHtml(sub) + '</span>' : '') +
+          '</span>' +
+        '</label>' +
+        '<div class="flag-comment-row hidden" id="' + dom + '-row">' +
+          '<input type="text" class="form-input flag-comment" id="' + dom + '-comment" maxlength="500" ' +
+            'placeholder="What is wrong with this item? (required)" oninput="syncPanelButton(\'return\')">' +
+        '</div>' +
+      '</div>';
+  };
+
+  const fieldItems = fields.map(function (f) { return item('field', f.key, f.label, ''); }).join('');
+
+  const currentFiles  = attachments.filter(function (a) { return (Number(a.resubmitCycle) || 0) === currentCycle; });
+  const previousFiles = attachments.filter(function (a) { return (Number(a.resubmitCycle) || 0) !== currentCycle; });
+  const fileItem = function (a) {
+    const cyc = Number(a.resubmitCycle) || 0;
+    const sub = cyc === 0 ? 'Original' : ('Resubmit #' + cyc);
+    return item('attachment', a.attachmentId, a.filename, sub);
+  };
+  let attachmentItems = '';
+  if (currentFiles.length)  attachmentItems += '<div class="flag-group-label">Documents — current submission</div>' + currentFiles.map(fileItem).join('');
+  if (previousFiles.length) attachmentItems += '<div class="flag-group-label">Documents — previous versions</div>' + previousFiles.map(fileItem).join('');
+
+  return '' +
+    '<div class="flag-section">' +
+      '<a href="javascript:void(0)" class="flag-toggle" onclick="toggleFlagSection()">' +
+        renderIcon('flag', 14) + ' Flag specific items (optional) ' +
+        '<span id="flag-section-arrow">' + renderIcon('chevron-down', 14) + '</span>' +
+      '</a>' +
+      '<div id="flag-section-body" class="hidden">' +
+        '<p class="text-tiny text-muted mb-sm">Check each field or document that needs fixing and say what is wrong. ' +
+          'The requestor sees these highlighted on their request.</p>' +
+        '<div class="flag-group-label">Request fields</div>' +
+        fieldItems +
+        attachmentItems +
+      '</div>' +
+    '</div>';
+}
+
+/* toggleFlagSection — expand/collapse the flag picker inside the return panel. */
+function toggleFlagSection() {
+  const body  = document.getElementById('flag-section-body');
+  const arrow = document.getElementById('flag-section-arrow');
+  if (!body) return;
+  const opening = body.classList.contains('hidden');
+  body.classList.toggle('hidden');
+  if (arrow) arrow.innerHTML = renderIcon(opening ? 'chevron-up' : 'chevron-down', 14);
+}
+
+/*
+  Function Name: onFlagToggle
+  LAYMAN    : Pag ni-check ang isang item, lalabas ang comment box nito (at
+              required ito bago pumayag ang Confirm return). Pag inalis ang
+              check, nawawala at nabubura ang comment.
+  TECHNICAL : Toggles the sibling comment row; clears the value on uncheck so a
+              stale comment can never ride along; re-syncs the submit gate.
+  PARAMS    : el — the checkbox element.
+*/
+function onFlagToggle(el) {
+  const row = document.getElementById(el.id + '-row');
+  const box = document.getElementById(el.id + '-comment');
+  if (row) row.classList.toggle('hidden', !el.checked);
+  if (!el.checked && box) box.value = '';
+  if (el.checked && box) box.focus();
+  syncPanelButton('return');
+}
+
+/*
+  Function Name: collectReturnFlags
+  LAYMAN    : Ipunin ang lahat ng naka-check na items at ang kanilang komento,
+              para ipadala kasama ng return.
+  TECHNICAL : Scans #return-panel for checked [data-flag-type] boxes →
+              [{targetType, targetKey, comment(trimmed)}]. The server re-validates
+              everything (validateReturnFlags_); this is just payload assembly.
+  RETURNS   : array (possibly empty).
+*/
+function collectReturnFlags() {
+  const panel = document.getElementById('return-panel');
+  if (!panel) return [];
+  const flags = [];
+  panel.querySelectorAll('input[data-flag-type]:checked').forEach(function (cb) {
+    const box = document.getElementById(cb.id + '-comment');
+    flags.push({
+      targetType: cb.getAttribute('data-flag-type'),
+      targetKey:  cb.getAttribute('data-flag-key'),
+      comment:    box ? box.value.trim() : '',
+    });
+  });
+  return flags;
 }
 
 /*
@@ -347,7 +478,14 @@ function syncPanelButton(kind) {
   if (!remark || !button) return;
 
   const len = remark.value.trim().length;
-  button.disabled = len < REVIEW_MIN_REMARK;
+  let disabled = len < REVIEW_MIN_REMARK;
+
+  // Return only: every checked flag must carry a non-blank comment before the
+  // confirm unlocks (mirrors validateReturnFlags_ — the server is the control).
+  if (kind === 'return' && !disabled) {
+    disabled = collectReturnFlags().some(function (f) { return !f.comment; });
+  }
+  button.disabled = disabled;
 
   const counter = document.getElementById(kind + '-remark-count');
   if (counter) {
@@ -403,7 +541,11 @@ async function onReturnSubmit() {
   const remark = (document.getElementById('return-remark') || {}).value;
   if (!id || !remark || remark.trim().length < REVIEW_MIN_REMARK) return;
 
-  await runReviewAction('handleReturn', [id, remark.trim()], 'Request returned to the requestor.', 'Returning…');
+  // Optional per-item flags ride along as the 3rd arg (server re-validates).
+  const flags = collectReturnFlags();
+  if (flags.some(function (f) { return !f.comment; })) return;  // gate mirror; button should already be disabled
+
+  await runReviewAction('handleReturn', [id, remark.trim(), flags], 'Request returned to the requestor.', 'Returning…');
 }
 
 
@@ -432,7 +574,9 @@ async function runReviewAction(serverFn, args, successMessage, loadingMessage) {
       navigateTo('approverDashboard');
     } else {
       hideLoading();
-      showToast((result && result.message) || 'Action failed.', 'error');
+      // Backend guard failures use both shapes: {message} (Approvals.js
+      // primitives) and {error} (WebApp.js validators). Surface either.
+      showToast((result && (result.message || result.error)) || 'Action failed.', 'error');
       unlockActionButtons();
     }
   } catch (err) {

@@ -31,6 +31,12 @@
       - renderSearchBar(opts)          search input w/ leading icon
       - renderPagination(opts)         client-side pager (prev / pages / next)
       - paginate(items, page, perPage) slice helper
+    SHARED LIST CONTROLS
+      - UI_SORT_OPTIONS                the one sort menu all list pages share
+      - renderSortOptions(current)     sort <option> html
+      - renderCountedOptions(o, c, cur) status <option> html with counts
+      - computeStatusCounts(rows, keys) one-pass status/expired bucket counter
+      - renderRequestTable(rows, route) the shared clickable request table
 
   ⚠️ Callbacks are passed as GLOBAL function-name strings (e.g.
      onInput:'dashboardSearch', onPage:'dashboardGoPage') because the markup
@@ -49,6 +55,7 @@ const UI_ICONS = {
   'x-circle':    '<circle cx="12" cy="12" r="10"/><path d="m15 9-6 6"/><path d="m9 9 6 6"/>',
   'clock':       '<circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>',
   'alert':       '<path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><path d="M12 9v4"/><path d="M12 17h.01"/>',
+  'flag':        '<path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><line x1="4" x2="4" y1="22" y2="15"/>',
   'inbox':       '<polyline points="22 12 16 12 14 15 10 15 8 12 2 12"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/>',
   'return':      '<polyline points="9 14 4 9 9 4"/><path d="M20 20v-7a4 4 0 0 0-4-4H4"/>',
   'settings':    '<path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/>',
@@ -329,6 +336,130 @@ function renderPagination(opts) {
 }
 
 
+// ─── SHARED LIST CONTROLS ───────────────────────────────────
+// The three list pages (Dashboard, My Approvals, Admin records) previously
+// carried byte-identical copies of the sort options, the counted status
+// options builder, the status-count loop, and (Approver/Admin) the request
+// table itself. One copy each now lives here. Only what was textually
+// identical was lifted — Dashboard keeps its own table (different columns).
+
+/* UI_SORT_OPTIONS — the one sort menu every list page shares. */
+const UI_SORT_OPTIONS = [
+  { value: 'newest',  label: 'Most Recent'  },
+  { value: 'oldest',  label: 'Oldest First' },
+  { value: 'project', label: 'Project A→Z' },
+  { value: 'group',   label: 'Group A→Z'   },
+];
+
+/*
+  Function Name: renderSortOptions
+  LAYMAN    : Ang mga <option> ng "Sort by" dropdown, naka-select ang kasalukuyan.
+  TECHNICAL : Maps UI_SORT_OPTIONS; values feed sortRequests() (JavaScript.html).
+  PARAMS    : current — the active sort key.
+  RETURNS   : HTML string of <option> elements.
+*/
+function renderSortOptions(current) {
+  return UI_SORT_OPTIONS.map(function (o) {
+    return '<option value="' + o.value + '"' +
+      (o.value === current ? ' selected' : '') + '>' + o.label + '</option>';
+  }).join('');
+}
+
+/*
+  Function Name: renderCountedOptions
+  LAYMAN    : Mga <option> na may bilang sa dulo, hal. "Approved (12)".
+  TECHNICAL : Shared by the three Status dropdowns; each page keeps its own
+              options array (their bucket sets genuinely differ) and count
+              object, this only renders them consistently.
+  PARAMS    : options — [{value,label}]; counts — {value:number}; current — active value.
+  RETURNS   : HTML string of <option> elements.
+*/
+function renderCountedOptions(options, counts, current) {
+  return options.map(function (o) {
+    return '<option value="' + o.value + '"' +
+      (o.value === current ? ' selected' : '') + '>' +
+      o.label + ' (' + (counts[o.value] || 0) + ')</option>';
+  }).join('');
+}
+
+/*
+  Function Name: computeStatusCounts
+  LAYMAN    : Bilangin ang requests kada status bucket (at expired) sa isang lakad.
+  TECHNICAL : Buckets via getDashboardFilter (Dashboard.html, global); expired is
+              cross-cutting via the server-computed isExpired flag (#10). The
+              caller supplies its own key set ('pending' exists on Dashboard and
+              Admin but not on the approver actioned view). 'all' must be included.
+  PARAMS    : rows — request DTOs; keys — bucket names to count.
+  RETURNS   : { <key>: count, ... }
+*/
+function computeStatusCounts(rows, keys) {
+  const counts = {};
+  keys.forEach(function (k) { counts[k] = 0; });
+  for (const r of (rows || [])) {
+    counts.all++;
+    const bucket = getDashboardFilter(r.status);
+    if (counts[bucket] !== undefined) counts[bucket]++;
+    if (r.isExpired && counts.expired !== undefined) counts.expired++;
+  }
+  return counts;
+}
+
+/*
+  Function Name: renderRequestTable
+  LAYMAN    : Ang table ng requests (Control No., Project, Requestor, Group,
+              Status, Filed) na clickable bawat row. Iisang table na ito ang
+              ginagamit ng My Approvals at ng Admin records — ang pinagkaiba
+              lang ay kung saang page dadalhin ang click.
+  TECHNICAL : Was two byte-identical copies (ApproverDashboard/Admin) differing
+              only in navigateTo target. route='review' opens the approver review
+              page; route='request' opens the read-only detail page. requestId is
+              server-generated ("REQ-" + UUID slice) so it is safe inside the
+              onclick JS-string context; escapeHtml is for the attribute layer.
+  PARAMS    : rows — request DTO page slice; route — 'review' | 'request'.
+  RETURNS   : .table-scroll > .data-table HTML string.
+*/
+function renderRequestTable(rows, route) {
+  const tableRows = rows.map(function (r) {
+    const idAttr = escapeHtml(r.requestId);
+    return '' +
+      '<tr tabindex="0" onclick="navigateTo(\'' + route + '\', {id: \'' + idAttr + '\'})" onkeydown="uiKeyActivate(event)">' +
+        '<td>' +
+          '<div class="cell-request">' +
+            '<div class="cell-request-icon">' + renderIcon('file', 16) + '</div>' +
+            '<div class="cell-request-text">' +
+              '<div class="cell-primary">' + escapeHtml(r.controlNumber) + '</div>' +
+            '</div>' +
+          '</div>' +
+        '</td>' +
+        '<td class="cell-clip" title="' + escapeHtml(r.projectTitle) + '">' + escapeHtml(r.projectTitle) + '</td>' +
+        '<td class="cell-clip" title="' + escapeHtml(r.requestor) + '">' + escapeHtml(r.requestor) + '</td>' +
+        '<td class="cell-clip" title="' + escapeHtml(r.group) + '">' + escapeHtml(r.group) + '</td>' +
+        '<td>' + renderStatusBadge(r.status) +
+          (r.isExpired ? ' <span class="badge badge-expired" title="Contract end date has passed">Expired</span>' : '') +
+        '</td>' +
+        '<td><span class="cell-date">' + renderIcon('calendar', 14) + escapeHtml(r.dateFiled) + '</span></td>' +
+        '<td class="cell-chevron">' + renderIcon('chevron-right', 18) + '</td>' +
+      '</tr>';
+  }).join('');
+
+  return '' +
+    '<div class="table-scroll">' +
+    '<table class="data-table">' +
+      '<thead><tr>' +
+        '<th>Request</th>' +
+        '<th>Project</th>' +
+        '<th>Requestor</th>' +
+        '<th>Group</th>' +
+        '<th>Status</th>' +
+        '<th>Filed</th>' +
+        '<th></th>' +
+      '</tr></thead>' +
+      '<tbody>' + tableRows + '</tbody>' +
+    '</table>' +
+    '</div>';
+}
+
+
 // ─── REQUEST TIMELINE ───────────────────────────────────────
 
 /*
@@ -364,6 +495,8 @@ function renderPagination(opts) {
 */
 function renderTimeline(timeline) {
   const entries = Array.isArray(timeline) ? timeline : [];
+  // Deliberate omission, not a missing empty state: every request has at least
+  // its SUBMITTED action, so an empty timeline means corrupt data — render less.
   if (!entries.length) return '';
 
   const label = function (e) {

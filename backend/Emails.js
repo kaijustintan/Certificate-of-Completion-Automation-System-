@@ -299,8 +299,10 @@ function getLatestRemark_(rowData) {
   LAYMAN    : I-load ang request galing sa sheet bilang madaling gamitin na
               object — kasama ang rowData, group, at approvers — para handa
               na ang lahat ng kailangan ng isang email function.
-  TECHNICAL : Reads 31 cols (NOTE: PREVIOUS_APPROVALS at col 34 is NOT included —
-              email functions that need it receive it as a param instead).
+  TECHNICAL : Reads the whole 25-col Requests row (getRange(rowNum, 1, 1,
+              CR.RESUBMIT_COUNT)). Approval history is NOT on the row anymore —
+              email functions that need it use getApprovalView_ or receive it
+              as a param.
   PARAMS    : requestId — the request to load.
   RETURNS   : { rowData, rowNum, group, approvers } — or null if not found.
 */
@@ -328,8 +330,8 @@ function getRequestData_(requestId) {
               approver). May deep-link para diretso mapuntahan ang review page.
   TECHNICAL : TO: getCurrentApprover_(step, group). Includes buildInfoBlock_,
               buildAttachmentList_, buildApprovalLog_, and the review deep-link.
-  FIRES     : submitNewRequest (first submit, no attachments) + handleApprove
-              (intermediate step, for the next approver) + checkAttachmentSync_.
+  FIRES     : submitNewRequest (first submit) + handleApprove
+              (intermediate step, for the next approver).
 */
 function sendApprovalRequest_(requestId) {
   const data = getRequestData_(requestId);
@@ -358,7 +360,7 @@ ${attachmentList}
 Approval Progress:
 ${approvalLog}
 
-Please review and act on this request (approve_, decline_, or return).
+Please review and act on this request (approve, decline, or return).
 Open this request: ${getPortalUrl_(requestId, "review")}`;
 
   // HTML twin — same content blocks, branded layout. Plain `body` stays the fallback.
@@ -370,7 +372,7 @@ Open this request: ${getPortalUrl_(requestId, "review")}`;
       emailInfoTable_(rowData) +
       emailSection_("Supporting Documents", emailAttachmentList_(requestId)) +
       emailSection_("Approval Progress", emailApprovalLog_(rowData, approvers)) +
-      emailP_("Please review and act on this request (approve_, decline_, or return)."),
+      emailP_("Please review and act on this request (approve, decline, or return)."),
     buttonUrl:   getPortalUrl_(requestId, "review"),
     buttonLabel: "Review this request",
   });
@@ -582,16 +584,16 @@ Open this request: ${getPortalUrl_(requestId, "review")}`;
               failure never blocks the approval email — it gracefully falls back to
               "provided separately". Includes buildApprovalLog_; links to the
               requestor 'request' page.
-  FIRES     : handleApprove (final step, newStatus === APPROVED). This is now the
-              ONLY live path: registerTrigger() is deliberately disabled, so the
-              legacy onSheetChange manual-edit route no longer runs (and would
-              fail generateCOC_'s identity guard anyway, since an installable
-              trigger resolves Session to the trigger owner). Generated once.
+  FIRES     : handleApprove (final step, newStatus === APPROVED). The only
+              path: the legacy onSheetChange manual-edit route was deleted
+              (it would have failed generateCOC_'s identity guard anyway,
+              since an installable trigger resolves Session to the trigger
+              owner). Generated once.
 
   STEPS
     Step 1 — Load request data
       Layman    : Kunin ang datos ng request; kung wala, huminto.
-      Technical : getRequestData_(requestId) (31-col read) → { rowData, approvers }.
+      Technical : getRequestData_(requestId) (25-col row read) → { rowData, approvers }.
     Step 2 — Generate the COC PDF (defensive)
       Layman    : Gawin ang COC PDF. Kung pumalpak, huwag i-block ang email.
       Technical : try/catch generateCOC_; keep pdfBlob on success, else log + null.
@@ -1014,13 +1016,19 @@ Thank you!`;
 /*
   Function Name: sendReturnToRequestor_
   LAYMAN    : Email sa requestor: "Ibinalik ang request mo — may baguhin pa."
-              Kasama kung sino ang nagbalik (e.g. "Approver 2") at ang dahilan.
+              Kasama kung sino ang nagbalik (e.g. "Approver 2"), ang dahilan,
+              at kung may mga specific na field/dokumentong minarkahan ng
+              approver, ang listahan ng mga iyon kasama ang komento bawat isa.
   TECHNICAL : TO: REQUESTOR. approverLabel param (captured in handleReturn before
               state is cleared) appears as "Approver N (email)" in the body.
-  PARAMS    : requestId; approverLabel — e.g. "Approver 2" (optional, from handleReturn).
+              flags (optional, server-validated items with resolved labels from
+              validateReturnFlags_) render as a "Flagged items to fix" section
+              in both formats; absent/empty → the email is unchanged.
+  PARAMS    : requestId; approverLabel — e.g. "Approver 2" (optional);
+              flags — optional [{label, targetType, comment}].
   FIRES     : handleReturn (on success).
 */
-function sendReturnToRequestor_(requestId, approverLabel) {
+function sendReturnToRequestor_(requestId, approverLabel, flags) {
   const data = getRequestData_(requestId);
   if (!data) return;
   const { rowData } = data;
@@ -1030,6 +1038,15 @@ function sendReturnToRequestor_(requestId, approverLabel) {
   const actioner      = Session.getActiveUser().getEmail();
   const reason        = getLatestRemark_(rowData);
   const returnerLine  = approverLabel ? `${approverLabel} (${actioner})` : actioner;
+
+  // Plain-text flagged-items block ("" when no flags — keeps the email identical
+  // to the pre-flags rendering for a plain return).
+  const flagItems = flags || [];
+  const flagBlock = flagItems.length
+    ? "\nFlagged items to fix:\n" + flagItems.map(function (f) {
+        return "- " + f.label + (f.targetType === "attachment" ? " (document)" : "") + ": " + f.comment;
+      }).join("\n") + "\n"
+    : "";
 
   const subject = emailSubject_(controlNumber, "Returned", "REQUESTOR");
 
@@ -1042,15 +1059,16 @@ ${buildInfoBlock_(rowData)}
 Returned by: ${returnerLine}
 Return Date: ${nowFormatted_()}
 Reason for Return: ${reason}
-
-Please review the comments, make the necessary changes, and resubmit_ your request.
+${flagBlock}
+Please review the comments, make the necessary changes, and resubmit your request.
 
 Request History:
 ${buildApprovalLog_(rowData)}
 
 Open this request: ${getPortalUrl_(requestId, "request")}`;
 
-  // HTML twin — amber accent; return reason in an amber callout box.
+  // HTML twin — amber accent; return reason in an amber callout box, flagged
+  // items (if any) in their own amber list right under it.
   const html = emailLayout_({
     accent:   "amber",
     bodyHtml:
@@ -1062,14 +1080,16 @@ Open this request: ${getPortalUrl_(requestId, "request")}`;
         ["Return Date", nowFormatted_()],
       ]) +
       emailRemarkBox_("Reason for Return", reason, "amber") +
-      emailP_("Please review the comments, make the necessary changes, and resubmit_ your request.") +
+      emailFlagList_(flagItems) +
+      emailP_("Please review the comments, make the necessary changes, and resubmit your request.") +
       emailSection_("Request History", emailApprovalLog_(rowData)),
     buttonUrl:   getPortalUrl_(requestId, "request"),
-    buttonLabel: "Update and resubmit_",
+    buttonLabel: "Update and resubmit",
   });
 
   sendBrandedEmail_(requestor, subject, body, html);
-  Logger.log(`sendReturnToRequestor_(): Return email sent to ${requestor}`);
+  Logger.log(`sendReturnToRequestor_(): Return email sent to ${requestor}` +
+             (flagItems.length ? ` (${flagItems.length} flagged item(s))` : ""));
 }
 
 
@@ -1277,7 +1297,7 @@ Open this request: ${getPortalUrl_(requestId, "request")}`;
               approver (e.g. Approver 1 agad nagbalik), walang pinapadala.
   TECHNICAL : TO: each entry.email in previousApprovals (BCC-style loop, one
               send per recipient). previousApprovals is passed from handleReturn
-              (NOT from getRequestData_ — col 34 is out of the 31-col read range).
+              (captured from getApprovalView_ BEFORE the return flipped state).
               The returner is never in the array → no double-send risk.
   PARAMS    : requestId; previousApprovals — [{step,email,date}]; reason — return
               reason; approverLabel — e.g. "Approver 2".
@@ -1346,7 +1366,7 @@ Open this request: ${getPortalUrl_(requestId, "review")}`;
 // ============================================================
 /*
   Function Name: sendResubmitConfirmToRequestor_
-  LAYMAN    : Resibo sa requestor: "Na-resubmit_ na, naghihintay na sa Approver 1."
+  LAYMAN    : Resibo sa requestor: "Na-resubmit na, naghihintay na sa Approver 1."
               Kasama ang dating dahilan ng pagbabalik para reference.
   TECHNICAL : TO: REQUESTOR. resubmitCount > 1 adds "(Resubmission #N)" to subject.
               returnReason and resubmitCount MUST be captured before resubmit_()
@@ -1420,13 +1440,15 @@ Open this request: ${getPortalUrl_(requestId, "request")}`;
               sa generic #1 sendApprovalRequest_, para alam ng approver ang context.
   TECHNICAL : TO: getCurrentApprover_(step, group) — always Approver 1 after resubmit_.
               countNote adds "#N" to the subject if resubmitCount > 1. Includes
-              the prior returnReason prominently in the body.
-  PARAMS    : requestId; returnReason — prior return reason; resubmitCount — new count.
-  NOTE      : Only fires if newStatus === PENDING_1. If SYNCING (attachments needed),
-              this email is deferred until checkAttachmentSync_ fires #1 instead.
-  FIRES     : handleResubmit (on success AND newStatus === PENDING_1).
+              the prior returnReason prominently in the body. changedLabels
+              (optional, from resubmit_'s field diff) renders a "What changed"
+              line so the approver reviews the edits, not just the files;
+              absent/empty → the email is unchanged (files-only resubmit).
+  PARAMS    : requestId; returnReason — prior return reason; resubmitCount — new
+              count; changedLabels — optional array of edited-field labels.
+  FIRES     : handleResubmit (on success; resubmit always lands on PENDING_1).
 */
-function sendResubmitApprovalRequest_(requestId, returnReason, resubmitCount) {
+function sendResubmitApprovalRequest_(requestId, returnReason, resubmitCount, changedLabels) {
   const data = getRequestData_(requestId);
   if (!data) return;
   const { rowData, approvers } = data;
@@ -1438,6 +1460,9 @@ function sendResubmitApprovalRequest_(requestId, returnReason, resubmitCount) {
   const controlNumber  = rowData[CR.CONTROL_NUMBER - 1];
   const attachmentList = buildAttachmentList_(requestId);
   const countNote      = ` #${resubmitCount}`;   // always show which resubmission (1st, 2nd, …)
+  const changedLine    = (changedLabels && changedLabels.length)
+    ? `\nWhat changed: ${changedLabels.join(", ")}\n`
+    : "";
 
   const subject = emailSubject_(controlNumber, `Resubmission${countNote} — Action Needed`, "APPROVER");
 
@@ -1448,11 +1473,11 @@ A previously returned request has been resubmitted${countNote} and requires your
 ${buildInfoBlock_(rowData)}
 
 Previous Return Reason: ${returnReason || "No reason provided."}
-
+${changedLine}
 Supporting Documents:
 ${attachmentList}
 
-Please review the updates made by the requestor and act on this request (approve_, decline_, or return).
+Please review the updates made by the requestor and act on this request (approve, decline, or return).
 
 Request History:
 ${buildApprovalLog_(rowData)}
@@ -1468,8 +1493,11 @@ Open this request: ${getPortalUrl_(requestId, "review")}`;
              "</strong> and requires your review.") +
       emailInfoTable_(rowData) +
       emailRemarkBox_("Previous Return Reason", returnReason || "No reason provided.", "amber") +
+      ((changedLabels && changedLabels.length)
+        ? emailRemarkBox_("What changed", changedLabels.join(", "), "blue")
+        : "") +
       emailSection_("Supporting Documents", emailAttachmentList_(requestId)) +
-      emailP_("Please review the updates made by the requestor and act on this request (approve_, decline_, or return).") +
+      emailP_("Please review the updates made by the requestor and act on this request (approve, decline, or return).") +
       emailSection_("Request History", emailApprovalLog_(rowData)),
     buttonUrl:   getPortalUrl_(requestId, "review"),
     buttonLabel: "Review this resubmission",

@@ -8,7 +8,7 @@
   Ito ang "single door" papunta sa normalized database. Lahat ng pagbasa ng
   approver chain, group, at approval history — at lahat ng pagsulat ng approval
   action — dito dumadaan. Dahil dito, kahit nagbago ang hugis ng database
-  (mula sa lumang 35-column monolith papunta sa 6 na hiwalay na sheets), ang
+  (mula sa lumang 35-column monolith papunta sa 9 na hiwalay na sheets), ang
   ibang code ay hindi na kailangang malaman kung saan eksaktong nakatago ang
   data. Ang frontend DTO ay PANATILING PAREHO — kaya hindi nasisira ang UI.
 
@@ -49,11 +49,18 @@
     - updateGroupFields_(groupId, fields) in-place name/active update
     - replaceGroupChain_(groupId, slots)  in-place update (append on grow, deactivate on shrink)
     - appendAdminLog_(admin, action, gid, details)  audit an admin action
+  REQUEST FLAGS (per-item flags raised on return)
+    - ensureRequestFlagsTab_()            self-healing tab creation
+    - getFlagsForRequest_(requestId)      every flag (open + resolved history)
+    - appendFlags_(id, cycle, by, items)  batched write on a flagged return
+    - resolveOpenFlags_(id, cycle)        stamp open flags on resubmit
   ROLE
     - detectRole_(email) / isAdmin_(email)
-  ACTIVITY_LOG — EXECUTION-SCOPED READ CACHE
-    - activityRows_() / invalidateActivityCache_()  memoized tab read; sole
-      invalidation point is appendAction_ (the sole writer)
+  ACTIVITY_LOG / ADMINS / ATTACHMENTS / FLAGS — EXECUTION-SCOPED READ CACHES
+    - activityRows_() / invalidateActivityCache_()  sole writer appendAction_
+    - adminRows_()                        no in-code writer (hand-managed tab)
+    - attachmentRows_() / invalidateAttachmentCache_()  sole writer writeAttachmentRows_
+    - flagRows_() / invalidateFlagCache_()  fail-soft [] when tab absent
   APPROVAL ACTIONS (read)
     - getApprovalActions_(requestId)      raw timeline rows
     - getApprovalView_(requestId)         derived per-step/history view (frozen-DTO source)
@@ -84,6 +91,10 @@ function generateCocId_() {
 function generateAdminLogId_() {
   return "ADL-" + Utilities.getUuid().replace(/-/g, "").substring(0, 8).toUpperCase();
 }
+/* generateFlagId_ — unique Request_Flags key (e.g. "FLG-1A2B3C4D"). */
+function generateFlagId_() {
+  return "FLG-" + Utilities.getUuid().replace(/-/g, "").substring(0, 8).toUpperCase();
+}
 /*
   generateGroupId_ — next sequential group id "G###".
   LAYMAN    : Susunod na G001, G002, … base sa pinakamataas na meron.
@@ -112,19 +123,31 @@ function generateGroupId_() {
   bawat execution, tapos gagamitin na lang ulit.
 
   TECHNICAL:
-  Memoized readers for the two small, rarely-written lookup tables, mirroring the
-  SCRIPT_PROPS_CACHE_ / scriptProps_() pattern in Constants.js. Apps Script
-  discards globals between executions, so the cache lives exactly one execution
-  and there is no cross-request staleness to reason about.
+  Memoized readers mirroring the SCRIPT_PROPS_CACHE_ / scriptProps_() pattern in
+  Constants.js. Apps Script discards globals between executions, so each cache
+  lives exactly one execution and there is no cross-request staleness to reason
+  about. The memo family now covers FOUR tabs, each with its writer-side
+  invalidation discipline:
+    - Groups / Group_Approvers  → groupRows_/groupApproverRows_; invalidated by
+      invalidateGroupCaches_() at every writer.
+    - Activity_Log              → activityRows_ (block below); sole writer
+      appendAction_ invalidates.
+    - Admins                    → adminRows_ (further below); NO in-code writer
+      exists (the sheet is managed by hand), so there is deliberately no
+      invalidation site. Any future admin-CRUD writer MUST add one.
+    - Request_Attachments       → attachmentRows_ (further below); sole writer
+      writeAttachmentRows_ (Attachments.js) invalidates.
+    - Request_Flags             → flagRows_ (further below); writers appendFlags_
+      and resolveOpenFlags_ both invalidate. Fail-soft: [] when the tab does
+      not exist yet (it self-heals on the first flagged return).
 
-  ⚠️ DELIBERATELY LIMITED TO THESE TWO SHEETS. Requests and Activity_Log are NOT
-  memoized: both have genuine read-after-write patterns inside a single execution
-  (submitNewRequest appends a row then re-resolves it by ID for rollback;
-  checkContractExpiries appends EXPIRY_* rows mid-loop). A stale cache there
-  would be a correctness bug, not an optimization.
+  ⚠️ Requests is DELIBERATELY NOT memoized: it has genuine read-after-write
+  patterns inside a single execution (submitNewRequest appends a row then
+  re-resolves it by ID for rollback; every mutator re-reads the row inside its
+  lock). A stale cache there would be a correctness bug, not an optimization.
 
-  ⚠️ THE RULE: read-only paths use these; WRITE paths read fresh and then call
-  invalidateGroupCaches_(). generateGroupId_/updateGroupFields_/replaceGroupChain_
+  ⚠️ THE RULE: read-only paths use these; WRITE paths read fresh and then
+  invalidate. generateGroupId_/updateGroupFields_/replaceGroupChain_
   deliberately keep their raw getDataRows_ calls because they compute sheet row
   numbers for an imminent write and run inside a lock.
 
@@ -199,6 +222,68 @@ function activityRows_() {
 /* invalidateActivityCache_ — drop the memo. Called by appendAction_ after every append. */
 function invalidateActivityCache_() {
   ACTIVITY_CACHE_ = null;
+}
+
+
+/*
+  ADMINS + REQUEST_ATTACHMENTS — EXECUTION-SCOPED READ CACHES
+
+  LAYMAN (Tropang Ex):
+  Ang Admins allowlist ay binabasa nang buo sa BAWAT security check — minsan
+  lima o anim na beses sa iisang page load. Ang Request_Attachments naman ay
+  binabasa nang dalawang beses kada email (plain-text at HTML na bersyon).
+  Pareho silang maliit at bihirang magbago, kaya isang basa na lang bawat
+  execution.
+
+  TECHNICAL:
+  Same pattern as the blocks above. Admins has NO in-code writer (managed by
+  hand in the sheet), so there is deliberately no invalidateAdminsCache_ — a
+  hand edit lands on the next execution anyway. If an admin-CRUD writer is ever
+  built, it MUST add and call one. Request_Attachments' sole writer is
+  writeAttachmentRows_ (Attachments.js), which calls
+  invalidateAttachmentCache_() after its batch write.
+*/
+var ADMINS_CACHE_ = null;
+var ATTACHMENTS_CACHE_ = null;
+
+/* adminRows_ — memoized data rows of the Admins tab (one read per execution). */
+function adminRows_() {
+  if (ADMINS_CACHE_ === null) ADMINS_CACHE_ = getDataRows_(SHEET_NAMES.ADMINS);
+  return ADMINS_CACHE_;
+}
+
+/* attachmentRows_ — memoized data rows of the Request_Attachments tab. */
+function attachmentRows_() {
+  if (ATTACHMENTS_CACHE_ === null) ATTACHMENTS_CACHE_ = getDataRows_(SHEET_NAMES.REQUEST_ATTACHMENTS);
+  return ATTACHMENTS_CACHE_;
+}
+
+/* invalidateAttachmentCache_ — drop the memo. Called by writeAttachmentRows_ after every batch write. */
+function invalidateAttachmentCache_() {
+  ATTACHMENTS_CACHE_ = null;
+}
+
+var REQUEST_FLAGS_CACHE_ = null;
+
+/*
+  flagRows_ — memoized data rows of the Request_Flags tab.
+  TECHNICAL : FAIL-SOFT: returns [] when the tab does not exist yet. Request_Flags
+              is the only self-healing-on-write tab that is also read on hot paths
+              (getRequestDetail), so reads must never require it — an un-migrated
+              spreadsheet simply has zero flags. Writers (appendFlags_ /
+              resolveOpenFlags_) create the tab via ensureRequestFlagsTab_.
+*/
+function flagRows_() {
+  if (REQUEST_FLAGS_CACHE_ === null) {
+    const sheet = getSheet_(SHEET_NAMES.REQUEST_FLAGS);
+    REQUEST_FLAGS_CACHE_ = sheet ? sheet.getDataRange().getValues().slice(1) : [];
+  }
+  return REQUEST_FLAGS_CACHE_;
+}
+
+/* invalidateFlagCache_ — drop the memo. Called by both Request_Flags writers. */
+function invalidateFlagCache_() {
+  REQUEST_FLAGS_CACHE_ = null;
 }
 
 
@@ -405,27 +490,37 @@ function createGroup_(name) {
               group_id ang naka-FK sa requests, hindi ang pangalan.
   TECHNICAL : Only writes the fields provided (setRequestCache_ style). active
               is stored as "TRUE"/"FALSE" strings to match the seeded sheet.
+              Read-then-write (row number resolved by scan, then setValue), so
+              the whole body runs under the script lock like createGroup_ /
+              replaceGroupChain_: an unserialized concurrent row insert could
+              otherwise shift the target row between the scan and the write.
   PARAMS    : groupId; fields — { name?, active?(bool) }.
   RETURNS   : true if the row was found and updated, false otherwise.
 */
 function updateGroupFields_(groupId, fields) {
   // Direct-call guard (reachable via google.script.run — see createGroup_).
   if (!isAdmin_(Session.getActiveUser().getEmail())) throw new Error("Unauthorized");
-  const sheet  = getSheet_(SHEET_NAMES.GROUPS);
-  const rows   = getDataRows_(SHEET_NAMES.GROUPS);
-  const target = String(groupId);
-  for (let i = 0; i < rows.length; i++) {
-    if (String(rows[i][GRP.GROUP_ID - 1]) === target) {
-      const rowNum = i + 2; // +1 header, +1 1-based
-      if (fields.name !== undefined)   sheet.getRange(rowNum, GRP.GROUP_NAME).setValue(fields.name);
-      if (fields.active !== undefined) sheet.getRange(rowNum, GRP.ACTIVE).setValue(fields.active ? "TRUE" : "FALSE");
-      // adminSetGroupActive reads the group name AFTER this call for its audit
-      // line, so the memo has to drop here or that line reads pre-edit values.
-      invalidateGroupCaches_();
-      return true;
+  const lock = LockService.getScriptLock();
+  lock.waitLock(10000);
+  try {
+    const sheet  = getSheet_(SHEET_NAMES.GROUPS);
+    const rows   = getDataRows_(SHEET_NAMES.GROUPS);
+    const target = String(groupId);
+    for (let i = 0; i < rows.length; i++) {
+      if (String(rows[i][GRP.GROUP_ID - 1]) === target) {
+        const rowNum = i + 2; // +1 header, +1 1-based
+        if (fields.name !== undefined)   sheet.getRange(rowNum, GRP.GROUP_NAME).setValue(fields.name);
+        if (fields.active !== undefined) sheet.getRange(rowNum, GRP.ACTIVE).setValue(fields.active ? "TRUE" : "FALSE");
+        // adminSetGroupActive reads the group name AFTER this call for its audit
+        // line, so the memo has to drop here or that line reads pre-edit values.
+        invalidateGroupCaches_();
+        return true;
+      }
     }
+    return false;
+  } finally {
+    lock.releaseLock();
   }
-  return false;
 }
 
 /*
@@ -585,6 +680,129 @@ function ensureAdminsLogTab_() {
 
 
 // ============================================================
+// REQUEST FLAGS — per-item flags raised on return
+// One row per flagged field/attachment. Written when an approver
+// returns with flags; RESOLVED_CYCLE is stamped when the requestor
+// resubmits. History is kept forever (rows are never deleted).
+// ============================================================
+
+/*
+  ensureRequestFlagsTab_ — return the Request_Flags sheet, creating it with
+  headers if the tab does not exist yet.
+  LAYMAN    : Kung wala pang "Request_Flags" tab, gagawin ito kasama ang headers.
+              Kaya walang manual na setup na kailangan — sa unang beses na may
+              approver na mag-flag, awtomatikong gagawa ng tab.
+  TECHNICAL : insertSheet + header row when missing (same 9-line pattern as
+              ensureAdminsLogTab_). Called only by the two writers; readers go
+              through the fail-soft flagRows_() and never need the tab.
+  RETURNS   : the Request_Flags Sheet object.
+*/
+function ensureRequestFlagsTab_() {
+  const ss = getSpreadsheet_();
+  let sheet = ss.getSheetByName(SHEET_NAMES.REQUEST_FLAGS);
+  if (!sheet) {
+    sheet = ss.insertSheet(SHEET_NAMES.REQUEST_FLAGS);
+    sheet.appendRow(["flag_id", "request_id", "cycle", "target_type", "target_key",
+                     "comment", "flagged_by", "flagged_at", "resolved_cycle"]);
+  }
+  return sheet;
+}
+
+/*
+  getFlagsForRequest_ — every flag ever raised on a request, in append order.
+  LAYMAN    : Lahat ng markang "ayusin ito" na natanggap ng isang request, kasama
+              na ang mga naayos na (kasaysayan sila, hindi binubura).
+  TECHNICAL : Filters flagRows_() by REQUEST_ID (string-compared). resolvedCycle
+              is null when the flag is still open, else the resolving cycle int.
+  PARAMS    : requestId — the parent request's ID.
+  RETURNS   : [{ flagId, cycle, targetType, targetKey, comment, flaggedBy,
+                 flaggedAt, resolvedCycle }] — [] when none / tab absent.
+*/
+function getFlagsForRequest_(requestId) {
+  const target = String(requestId);
+  return flagRows_()
+    .filter(function (r) { return String(r[FLG.REQUEST_ID - 1]) === target; })
+    .map(function (r) {
+      const resolvedRaw = r[FLG.RESOLVED_CYCLE - 1];
+      return {
+        flagId:        r[FLG.FLAG_ID - 1],
+        cycle:         parseInt(r[FLG.CYCLE - 1], 10) || 0,
+        targetType:    r[FLG.TARGET_TYPE - 1] || "field",
+        targetKey:     r[FLG.TARGET_KEY - 1] || "",
+        comment:       r[FLG.COMMENT - 1] || "",
+        flaggedBy:     r[FLG.FLAGGED_BY - 1] || "",
+        flaggedAt:     r[FLG.FLAGGED_AT - 1] || "",
+        resolvedCycle: (resolvedRaw === "" || resolvedRaw === null || resolvedRaw === undefined)
+                         ? null : (parseInt(resolvedRaw, 10) || 0),
+      };
+    });
+}
+
+/*
+  appendFlags_ — record a return's flagged items (one batched write).
+  LAYMAN    : Isulat ang lahat ng minarkahan ng approver sa isang lakad. Tinatawag
+              lang ito PAGKATAPOS mag-succeed ang mismong return.
+  TECHNICAL : Batched setValues at getLastRow()+1 (mirrors writeAttachmentRows_).
+              FLAG_ID from generateFlagId_() ("FLG-…", this file's convention).
+              Caller (handleReturn) validates items BEFORE the return commits;
+              this writer is mechanical. Invalidates the memo.
+  PARAMS    : requestId; cycle — the request's resubmit_count at return time;
+              flaggedBy — the returning approver's email;
+              items — [{targetType, targetKey, comment}] (already validated).
+  RETURNS   : (void).
+*/
+function appendFlags_(requestId, cycle, flaggedBy, items) {
+  if (!items || items.length === 0) return;
+  const sheet = ensureRequestFlagsTab_();
+  const now   = new Date();
+  const rows2D = items.map(function (it) {
+    const r = new Array(9).fill("");
+    r[FLG.FLAG_ID - 1]     = generateFlagId_();
+    r[FLG.REQUEST_ID - 1]  = requestId;
+    r[FLG.CYCLE - 1]       = parseInt(cycle, 10) || 0;
+    r[FLG.TARGET_TYPE - 1] = it.targetType;
+    r[FLG.TARGET_KEY - 1]  = it.targetKey;
+    r[FLG.COMMENT - 1]     = String(it.comment).trim();
+    r[FLG.FLAGGED_BY - 1]  = flaggedBy || "";
+    r[FLG.FLAGGED_AT - 1]  = now;
+    return r;
+  });
+  sheet.getRange(sheet.getLastRow() + 1, 1, rows2D.length, 9).setValues(rows2D);
+  invalidateFlagCache_();
+  Logger.log("appendFlags_(): wrote " + rows2D.length + " flag(s) for " + requestId);
+}
+
+/*
+  resolveOpenFlags_ — stamp every open flag of a request as addressed.
+  LAYMAN    : Pag nag-resubmit ang requestor, lahat ng bukas na marka ay
+              tatatakan ng "naayos sa Resubmit #N". Hindi binubura ang rows —
+              nagiging kasaysayan sila na makikita pa rin sa detail page.
+  TECHNICAL : Iterates the raw tab (getDataRange, header included) for real row
+              numbers, setValue on FLG.RESOLVED_CYCLE where blank and REQUEST_ID
+              matches. The DTO also self-heals (a flag with cycle <
+              resubmitCount renders as resolved even if this write was missed),
+              so a failure here degrades display, never correctness. Invalidates.
+  PARAMS    : requestId; resolvedCycle — the new resubmit cycle number.
+  RETURNS   : (void).
+*/
+function resolveOpenFlags_(requestId, resolvedCycle) {
+  const sheet = getSheet_(SHEET_NAMES.REQUEST_FLAGS);
+  if (!sheet) return;   // no tab yet → nothing was ever flagged
+  const data   = sheet.getDataRange().getValues();
+  const target = String(requestId);
+  for (let i = 1; i < data.length; i++) {
+    const isTarget = String(data[i][FLG.REQUEST_ID - 1]) === target;
+    const raw      = data[i][FLG.RESOLVED_CYCLE - 1];
+    const isOpen   = raw === "" || raw === null || raw === undefined;
+    if (isTarget && isOpen) {
+      sheet.getRange(i + 1, FLG.RESOLVED_CYCLE).setValue(parseInt(resolvedCycle, 10) || 0);
+    }
+  }
+  invalidateFlagCache_();
+}
+
+
+// ============================================================
 // ROLE
 // ============================================================
 /*
@@ -606,12 +824,15 @@ function detectRole_(email) {
 
 /*
   isAdmin_ — is this email an active admin?
-  TECHNICAL : Scans the Admins allowlist (active only). Server-side identity
-              only — never trust a role flag from the frontend.
+  TECHNICAL : Scans the Admins allowlist (active only) via the adminRows_()
+              memo — this is called from every admin guard plus getCurrentUser/
+              getRequestDetail/downloadAttachment, so an un-memoized read cost
+              up to six full-tab reads per request. Server-side identity only —
+              never trust a role flag from the frontend.
 */
 function isAdmin_(email) {
   if (!email) return false;
-  return getDataRows_(SHEET_NAMES.ADMINS).some(function (r) {
+  return adminRows_().some(function (r) {
     return sameEmail_(r[ADM.EMAIL - 1], email) &&
            String(r[ADM.ACTIVE - 1]).toUpperCase() !== "FALSE";
   });

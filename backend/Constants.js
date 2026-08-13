@@ -9,13 +9,13 @@
   na tandaan kung saang column nakalagay ang bawat field (delikado sa typo),
   iisang sentral na listahan lang dito ang sinasandalan ng lahat. NORMALIZED
   na ang database: hiwalay nang sheets ang requests, approval actions, groups,
-  approvers, attachments, admins, at COC PDFs — kaya mas malinis at walang
-  3-approver cap.
+  approvers, attachments, admins, admin audit log, COC PDFs, at return flags.
 
   TECHNICAL:
-  Central column-index maps + enums for the NORMALIZED 7-sheet schema.
+  Central column-index maps + enums for the NORMALIZED 9-sheet schema.
   Top-level const objects; Apps Script shares ONE global scope so these are
-  visible everywhere with no import.
+  visible everywhere with no import. Note: approver STORAGE is N rows, but
+  ROUTING is hard-capped at 3 (approve_/isChainApprover_/getApprovers_).
 
   ⚠️ TWO NUMBER SYSTEMS (the #1 footgun here):
     1-based → Sheet API:    sheet.getRange(row, CR.STATUS)   // CR.STATUS = 3
@@ -29,13 +29,16 @@
   ────────────────────────────────────────────────────────────
   OUTLINE
   ────────────────────────────────────────────────────────────
-  SHEET_NAMES — exact tab names for the 6 sheets
+  SHEET_NAMES — exact tab names for the 9 sheets
   CR          — Requests columns (25 cols; status/current_step/resubmit_count are CACHE)
   ACT         — Activity_Log columns (append-only timeline / audit log; 9 cols)
   GRP         — Groups columns (registry; surrogate group_id)
-  GAP         — Group_Approvers columns (normalized chain; unlimited approvers)
+  GAP         — Group_Approvers columns (N stored; routing hard-capped at 3)
   RA          — Request_Attachments columns
+  FLG         — Request_Flags columns (per-item flags raised on return)
+  FLAGGABLE_FIELDS — the flaggable/editable field set (single source of truth)
   ADM         — Admins columns (allowlist)
+  ADL         — Admins_Log columns (append-only admin audit)
   COCPDF      — COC_PDFs columns (one row per generated certificate PDF)
   STATUS      — request status strings (frozen DTO contract)
   ACTION      — Approval_Actions.action enum
@@ -58,6 +61,7 @@ const SHEET_NAMES = {
   ADMINS:              "Admins",
   ADMINS_LOG:          "Admins_Log",          // append-only audit of admin group/chain actions
   COC_PDFS:            "COC_PDFs",            // one row per generated certificate PDF
+  REQUEST_FLAGS:       "Request_Flags",       // per-field/per-attachment flags raised on return (self-healing tab)
 };
 
 
@@ -162,12 +166,19 @@ const GRP = {
 
 
 /*
-  GAP — Group_Approvers column map (normalized chain — unlimited approvers).
+  GAP — Group_Approvers column map (normalized chain).
   LAYMAN    : Sino-sino ang approvers bawat group, at anong pagkakasunod.
-              Dating 3-slot lang; ngayon kasing-dami ng rows ang gusto mo.
-              Ito ang ina-CRUD ng Admin role.
+              Ito ang ina-CRUD ng Admin role. ⚠️ Kahit kaya ng SHEET na mag-imbak
+              ng maraming approver, TATLO pa rin ang maximum na ginagamit ng
+              routing — huwag magdagdag ng sequence 4 nang kamay.
   TECHNICAL : 1-based. (GROUP_ID, SEQUENCE) is the composite key. SEQUENCE is
               the 1-based order in the chain. ACTIVE soft-disables a slot.
+              ⚠️ Storage is N rows but ROUTING IS HARD-CAPPED AT 3: getApprovers_
+              reads sequences 1-3 only, approve_ branches steps 1-3 only, and
+              isChainApprover_ checks slots 1-3 only. A hand-added sequence=4 row
+              resolves in getCurrentApprover_ but fails isChainApprover_,
+              silently locking that request out permanently. adminSaveChain
+              enforces the cap for UI edits.
 */
 const GAP = {
   ID:             1,  // A  ← KEY
@@ -197,6 +208,82 @@ const RA = {
   UPLOADED_BY:    7,  // G
   UPLOADED_AT:    8,  // H
 };
+
+
+/*
+  FLG — Request_Flags column map (per-item flags raised when a request is returned).
+  LAYMAN    : Kapag ibinalik ng approver ang request, pwede niyang markahan ang
+              mga SPECIFIC na field o attachment na may problema, may komento
+              bawat isa. Isang row bawat markang iyon. Kapag nag-resubmit ang
+              requestor, mamamarkahan ang mga ito na "resolved" (hindi binubura
+              — nananatili silang kasaysayan).
+  TECHNICAL : 1-based, 9 cols. Append-only EXCEPT the single RESOLVED_CYCLE cell
+              write done by resolveOpenFlags_() on resubmit. CYCLE = the request's
+              resubmit_count at the moment of the return (which cycle the flag
+              belongs to). TARGET_TYPE = 'field' | 'attachment'. TARGET_KEY = a
+              FLAGGABLE_FIELDS key (field) or an RA.ATTACHMENT_ID (attachment).
+              RESOLVED_CYCLE blank = open; set to the resolving resubmit's cycle.
+              The tab is SELF-HEALING (ensureRequestFlagsTab_ in Accessors.js):
+              it is created on the first flagged return, and flagRows_() reads
+              fail-soft to [] when it does not exist yet.
+*/
+const FLG = {
+  FLAG_ID:        1,  // A  ← KEY (e.g. "REQ-…-FLG")
+  REQUEST_ID:     2,  // B  ← FK → CR.REQUEST_ID
+  CYCLE:          3,  // C  (resubmit cycle the return happened in; 0 = original)
+  TARGET_TYPE:    4,  // D  'field' | 'attachment'
+  TARGET_KEY:     5,  // E  FLAGGABLE_FIELDS key or RA.ATTACHMENT_ID
+  COMMENT:        6,  // F  the approver's per-item comment
+  FLAGGED_BY:     7,  // G  approver email
+  FLAGGED_AT:     8,  // H  server time
+  RESOLVED_CYCLE: 9,  // I  blank = open; the cycle of the resubmit that addressed it
+};
+
+
+/*
+  FLAGGABLE_FIELDS — the request fields an approver may flag and a requestor may
+  edit on resubmit. THE single source of truth for that set.
+
+  LAYMAN    : Listahan ng mga field na pwedeng markahan ng approver na "ito ang
+              ayusin mo" at pwedeng i-edit ng requestor pag nag-resubmit. Ang
+              'group' ay SADYANG WALA dito: hindi pwedeng palitan ang approver
+              group sa kalagitnaan (ibang chain na yun — mag-decline na lang ang
+              approver at mag-file ulit ang requestor).
+  TECHNICAL : key = the frontend field name (same keys as the submit payload) →
+              { label (display, also used in emails/error copy), col (CR.*) }.
+              Drives four things: flag-target validation (validateReturnFlags_),
+              the resubmit edit-payload allowlist (validateResubmitPayload_),
+              the field-column mapping for the resubmit write, and display labels
+              (DTO flaggableFields). 17 of the 18 user-entered fields — 'group'
+              is deliberately excluded: ACT.GROUP_ID is denormalized per action,
+              so a mid-history group change would make the audit log contradict
+              itself, and the whole prior-approver machinery assumes one chain.
+              Server-derived columns (id/control/status/step/dates/requestor/
+              resubmit_count) are structurally absent.
+*/
+const FLAGGABLE_FIELDS = {
+  projectTitle:      { label: "Project title",       col: CR.PROJECT_TITLE },
+  requestorDesig:    { label: "Requestor designation", col: CR.REQUESTOR_DESIG },
+  accountablePerson: { label: "Accountable person",  col: CR.ACCOUNTABLE_PERSON },
+  department:        { label: "Department",          col: CR.DEPARTMENT },
+  location:          { label: "Location",            col: CR.LOCATION },
+  pcName:            { label: "PC name",             col: CR.PC_NAME },
+  prism:             { label: "PRISM",               col: CR.PRISM },
+  purchaseOrder:     { label: "Purchase Order",      col: CR.PURCHASE_ORDER },
+  ihelpNumber:       { label: "IHelp number",        col: CR.IHELP_NUMBER },
+  productType:       { label: "Product type",        col: CR.PRODUCT_TYPE },
+  productName:       { label: "Product name",        col: CR.PRODUCT_NAME },
+  typeOfPurchase:    { label: "Type of purchase",    col: CR.TYPE_OF_PURCHASE },
+  typeOfLicense:     { label: "Type of license",     col: CR.TYPE_OF_LICENSE },
+  contractStart:     { label: "Contract start date", col: CR.CONTRACT_START },
+  contractEnd:       { label: "Contract end date",   col: CR.CONTRACT_END },
+  supplierName:      { label: "Supplier name",       col: CR.SUPPLIER_NAME },
+  requestorRemark:   { label: "Purpose / remark",    col: CR.REQUESTOR_REMARK },
+};
+
+// Flag payload ceilings (server-enforced in validateReturnFlags_).
+const FLAG_MAX_ITEMS   = 25;    // fields (17) + attachments — generous but bounded
+const FLAG_MAX_COMMENT = 500;   // per-item comment; the overall return remark carries the essay
 
 
 /*

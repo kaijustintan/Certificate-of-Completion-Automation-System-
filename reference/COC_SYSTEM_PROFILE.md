@@ -8,6 +8,19 @@
 
 > **Read this first.** This document describes the system *as built*, including things that are wrong with it. It is not a sales pitch and not a spec. Where the code and its own documentation disagree, this document follows the code and says so. Section 12 lists weaknesses, including one live regression that is currently in `main` and pushed to the Apps Script project.
 
+> ## ⚠️ ADDENDUM — final audit batch (2026-08-13). Read before trusting counts below.
+>
+> A final pre-handover batch landed after this profile was written. `reference/FINAL_AUDIT_REPORT.md` is the authoritative account; the deltas that invalidate statements below:
+>
+> 1. **New feature: per-field/per-attachment flagging on return + fully editable resubmit.** A 9th sheet `Request_Flags` (self-healing tab, `FLG.*`), `FLAGGABLE_FIELDS` allowlist in `Constants.js` (17 fields; `group` deliberately excluded), optional 3rd args on `handleReturn`/`handleResubmit` (no new callables), a full prefilled edit form on resubmit, flag highlights + "What needs fixing" card on both detail pages, flag list in the return email, and a "Changed: <fields>" summary on the RESUBMITTED timeline action. This retires 12.12's "requestors can only re-upload, not edit" limitation.
+> 2. **The database is now 9 tabs**, not 8 (§1, §4 counts are stale by one).
+> 3. **The callable surface is now exactly 27**, not 31: the dormant `onSheetChange` trigger family (`handleCertificateRequestChange`'s parallel email path, `handleAttachmentChange`, `registerTrigger`) was DELETED, along with `checkAttachmentSync_`, `deleteAttachment_`, `countAttachments_`, frontend `emotionFor`, and `backend/Code.js`. This resolves 12.9 entirely. The call-graph checker is now COMMITTED at `tools/callable-surface.js` (partially addresses 12.8).
+> 4. **Concurrency (12.5 adjacent):** `submitNewRequest` now takes the script lock around its sheet writes; `writeAttachmentRows_` runs inside `resubmit_`'s lock (the racy `getLastRow()+1` interleave is closed); `updateGroupFields_` is locked.
+> 5. **Performance (12.4):** `getRowNumberByRequestId_` is now a `createTextFinder` lookup (the "still open" linear scan is closed); `isAdmin_` and `Request_Attachments` reads are execution-memoized with writer-side invalidation.
+> 6. **Validation (12.13):** leading-`=` formula injection is now REJECTED at every free-text write path (fields, remarks, file descriptions, flag comments, admin group names/designations); admin group name (80), approver email (254), and designation (200) now have server-side caps.
+> 7. **12.10 (documentation drift) and 12.14 (frontend copies of the request table / filter builders) are substantially resolved**; the three near-identical tables now share `renderRequestTable` in `UI.html`.
+> 8. Still true and still the largest risk: **none of this has ever executed** (12.2). The consolidated execution order is `reference/TEST_SCRIPT.md`, now with Phase 8 for this batch.
+
 ---
 
 ## 1. What this system is

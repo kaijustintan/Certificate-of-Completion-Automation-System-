@@ -136,15 +136,36 @@ function renderProgressSteps(detail) {
   PARAMS    : key — label; value — display value (— when empty);
               full — optional bool, span both grid columns.
 */
-function renderDetailRow(key, value, full) {
+function renderDetailRow(key, value, full, flag) {
   const v = (value === null || value === undefined || value === '')
     ? '<span class="text-muted">—</span>'
     : escapeHtml(value);
+  // flag (optional, additive): an OPEN return flag on this field → amber
+  // highlight + the approver's comment pinned under the value.
+  const flagPin = flag
+    ? '<div class="flag-pin">' + renderIcon('flag', 12) + ' ' + escapeHtml(flag.comment) + '</div>'
+    : '';
   return '' +
-    '<div class="detail-row' + (full ? ' detail-row--full' : '') + '">' +
+    '<div class="detail-row' + (full ? ' detail-row--full' : '') + (flag ? ' detail-row--flagged' : '') + '">' +
       '<div class="detail-key">'   + escapeHtml(key) + '</div>' +
-      '<div class="detail-value">' + v               + '</div>' +
+      '<div class="detail-value">' + v + flagPin     + '</div>' +
     '</div>';
+}
+
+/*
+  Function Name: openFieldFlags
+  LAYMAN    : Mula sa detail DTO, kunin ang mga BUKAS pang field flag bilang
+              { fieldKey: flag } — para madaling itanong ng bawat row kung
+              minarkahan ba siya.
+  TECHNICAL : Filters detail.flags to open (resolved=false) field-type flags.
+              Attachment flags are surfaced by renderFlagsCard, not per-row.
+*/
+function openFieldFlags(detail) {
+  const map = {};
+  (detail.flags || []).forEach(function (f) {
+    if (!f.resolved && f.targetType === 'field') map[f.targetKey] = f;
+  });
+  return map;
 }
 
 
@@ -161,21 +182,24 @@ function renderDetailRow(key, value, full) {
               (shared global scope).
 */
 function renderRequestSummaryCards(detail) {
+  // Open field flags (returned-for-revision marks) highlight their rows on
+  // BOTH the requestor and approver views — everyone sees the same marks.
+  const fl = openFieldFlags(detail);
   return '' +
     '<div class="card">' +
       '<div class="card-header"><div class="card-title">Request information</div></div>' +
       '<div class="detail-grid">' +
-        renderDetailRow('Project title',         detail.projectTitle, true) +
+        renderDetailRow('Project title',         detail.projectTitle, true, fl.projectTitle) +
         renderDetailRow('Requestor',             detail.requestor) +
-        renderDetailRow('Requestor designation', detail.requestorDesig) +
+        renderDetailRow('Requestor designation', detail.requestorDesig, false, fl.requestorDesig) +
         renderDetailRow('Group',                 detail.group) +
-        renderDetailRow('Accountable person',    detail.accountablePerson) +
-        renderDetailRow('Department',            detail.department) +
-        renderDetailRow('Location',              detail.location) +
-        renderDetailRow('PC name',               detail.pcName) +
-        renderDetailRow('PRISM',                 detail.prism) +
-        renderDetailRow('Purchase Order',        detail.purchaseOrder) +
-        renderDetailRow('IHelp number',          detail.ihelpNumber) +
+        renderDetailRow('Accountable person',    detail.accountablePerson, false, fl.accountablePerson) +
+        renderDetailRow('Department',            detail.department, false, fl.department) +
+        renderDetailRow('Location',              detail.location, false, fl.location) +
+        renderDetailRow('PC name',               detail.pcName, false, fl.pcName) +
+        renderDetailRow('PRISM',                 detail.prism, false, fl.prism) +
+        renderDetailRow('Purchase Order',        detail.purchaseOrder, false, fl.purchaseOrder) +
+        renderDetailRow('IHelp number',          detail.ihelpNumber, false, fl.ihelpNumber) +
         renderDetailRow('Date of filing',        detail.dateFiled) +
       '</div>' +
     '</div>' +
@@ -183,19 +207,19 @@ function renderRequestSummaryCards(detail) {
     '<div class="card">' +
       '<div class="card-header"><div class="card-title">Product details</div></div>' +
       '<div class="detail-grid">' +
-        renderDetailRow('Product type',          detail.productType) +
-        renderDetailRow('Product name',          detail.productName) +
-        renderDetailRow('Type of purchase',      detail.typeOfPurchase) +
-        renderDetailRow('Type of license',       detail.typeOfLicense) +
+        renderDetailRow('Product type',          detail.productType, false, fl.productType) +
+        renderDetailRow('Product name',          detail.productName, false, fl.productName) +
+        renderDetailRow('Type of purchase',      detail.typeOfPurchase, false, fl.typeOfPurchase) +
+        renderDetailRow('Type of license',       detail.typeOfLicense, false, fl.typeOfLicense) +
       '</div>' +
     '</div>' +
 
     '<div class="card">' +
       '<div class="card-header"><div class="card-title">Contract</div></div>' +
       '<div class="detail-grid">' +
-        renderDetailRow('Supplier',              detail.supplierName) +
-        renderDetailRow('Contract start',        detail.contractStart) +
-        renderDetailRow('Contract end',          detail.contractEnd) +
+        renderDetailRow('Supplier',              detail.supplierName, false, fl.supplierName) +
+        renderDetailRow('Contract start',        detail.contractStart, false, fl.contractStart) +
+        renderDetailRow('Contract end',          detail.contractEnd, false, fl.contractEnd) +
       '</div>' +
     '</div>' +
 
@@ -203,7 +227,73 @@ function renderRequestSummaryCards(detail) {
       '<div class="card-header"><div class="card-title">Purpose / remark</div></div>' +
       '<div>' + (detail.requestorRemark
         ? escapeHtml(detail.requestorRemark)
-        : '<span class="text-muted">No remark provided.</span>') + '</div>' +
+        : '<span class="text-muted">No remark provided.</span>') +
+        (fl.requestorRemark
+          ? '<div class="flag-pin">' + renderIcon('flag', 12) + ' ' + escapeHtml(fl.requestorRemark.comment) + '</div>'
+          : '') +
+      '</div>' +
+    '</div>';
+}
+
+/*
+  Function Name: renderFlagsCard
+
+  LAYMAN (Tropang Ex):
+  Ang "What needs fixing" card. Kapag may mga BUKAS na marka (kaka-return lang),
+  nakalista dito lahat: aling field o dokumento, ano ang komento ng approver,
+  sino at kailan nag-marka. Kapag KAKA-RESUBMIT lang naman (wala nang bukas na
+  marka), ipinapakita ang mga markang inayos ng huling resubmit bilang "marked
+  as fixed" — para sa approver na nagre-review, listahan ito ng dapat niyang
+  i-double-check. Wala pareho? Walang card.
+
+  TECHNICAL:
+  Same function on BOTH detail pages (global scope, like renderResubmitBanner).
+  Open flags take precedence; else flags with cycle === resubmitCount - 1
+  (addressed by the current cycle's resubmit) render in the resolved style.
+  Attachment flags are included with a "(document)" tag. Everything escaped.
+
+  PARAMS    : detail — the getRequestDetail DTO.
+  RETURNS   : .card HTML string or ''.
+*/
+function renderFlagsCard(detail) {
+  const flags = detail.flags || [];
+  if (!flags.length) return '';
+
+  const open = flags.filter(function (f) { return !f.resolved; });
+  const currentCycle = Number(detail.resubmitCount) || 0;
+  const justFixed = flags.filter(function (f) { return f.resolved && f.cycle === currentCycle - 1; });
+
+  let title, items, resolvedStyle;
+  if (open.length) {
+    title = 'What needs fixing';
+    items = open;
+    resolvedStyle = false;
+  } else if (justFixed.length && String(detail.status || '').indexOf('Pending') !== -1) {
+    title = 'Flagged last cycle — marked as fixed';
+    items = justFixed;
+    resolvedStyle = true;
+  } else {
+    return '';
+  }
+
+  const rows = items.map(function (f) {
+    const tag = f.targetType === 'attachment' ? ' (document)' : '';
+    return '' +
+      '<div class="flags-card-item' + (resolvedStyle ? ' flags-card-resolved' : '') + '">' +
+        '<div class="flags-card-label">' +
+          '<span class="flag-icon">' + renderIcon(resolvedStyle ? 'check' : 'flag', 13) + '</span>' +
+          escapeHtml(f.label + tag) +
+        '</div>' +
+        '<div class="flags-card-comment">' + escapeHtml(f.comment) + '</div>' +
+        '<div class="flags-card-meta">Flagged by ' + escapeHtml(f.flaggedBy) +
+          (f.flaggedAt ? ' · ' + escapeHtml(f.flaggedAt) : '') + '</div>' +
+      '</div>';
+  }).join('');
+
+  return '' +
+    '<div class="card">' +
+      '<div class="card-header"><div class="card-title">' + title + '</div></div>' +
+      rows +
     '</div>';
 }
 
@@ -235,7 +325,16 @@ function renderRequestSummaryCards(detail) {
 */
 function renderApproversChain(detail, blurFutureEmails) {
   const slots = getConfiguredApproverSlots(detail);
-  if (slots.length === 0) return '';
+  if (slots.length === 0) {
+    // A silent empty rail reads as a rendering bug; name the real condition.
+    // (Reachable when a group's chain was emptied/deactivated after filing.)
+    return '' +
+      '<div class="card">' +
+        '<div class="card-header"><div class="card-title">Approvers</div></div>' +
+        '<div class="text-small text-muted">No approver chain is configured for this request\'s group. ' +
+        'Please contact your administrator.</div>' +
+      '</div>';
+  }
 
   const status = detail.status || '';
   const step   = Number(detail.step) || 0;
@@ -636,32 +735,12 @@ async function renderRequestDetailPage(params) {
   const isOwner       = state.user && detail.requestor && sameEmail(state.user.email, detail.requestor);
   const canResubmit   = isOwner && detail.status === 'Returned to Requestor';
 
-  // Resubmit panel (main column): lets the requestor add/replace corrected or
-  // missing documents (optional) before routing back to Approver 1. The file
-  // picker reuses the same global helpers + DOM ids as the new-request form —
-  // safe because only one page renders at a time. Wired in afterRender_request().
-  const resubmitPanel = canResubmit
-    ? '<div class="card">' +
-        '<div class="card-header"><div class="card-title">Resubmit request</div></div>' +
-        '<p class="text-small text-muted" style="margin:0 0 12px;">' +
-          'Add or replace any corrected or missing documents below (optional). ' +
-          'Your original attachments are kept. Resubmitting routes the request ' +
-          'back to Approver 1 from the start of the approval chain.' +
-        '</p>' +
-        '<div id="attachment-list"></div>' +
-        '<div class="attachment-add-row">' +
-          '<label class="btn btn-secondary file-input-label">' +
-            '<input type="file" id="attachment-file-input" multiple style="display:none" ' +
-                   'accept=".pdf,.doc,.docx,.xls,.xlsx,.jpg,.jpeg,.png">' +
-            '+ Add file' +
-          '</label>' +
-          '<span class="text-tiny text-muted">Max 5 MB per file · 15 MB total · 10 files max</span>' +
-        '</div>' +
-        '<div class="form-actions">' +
-          '<button class="btn btn-primary" onclick="onResubmitClick(\'' + escapeHtml(id) + '\')">Resubmit request</button>' +
-        '</div>' +
-      '</div>'
-    : '';
+  // Resubmit panel (main column): a FULL edit form — every field prefilled and
+  // editable (except the approver group), flagged fields marked with the
+  // approver's comment, plus the optional add-documents picker. The file picker
+  // reuses the same global helpers + DOM ids as the new-request form — safe
+  // because only one page renders at a time. Wired in afterRender_request().
+  const resubmitPanel = canResubmit ? renderResubmitEditForm(detail, id) : '';
 
   return `
     <div class="page-header">
@@ -675,6 +754,7 @@ async function renderRequestDetailPage(params) {
 
     ${renderProgressSteps(detail)}
     ${renderResubmitBanner(detail)}
+    ${renderFlagsCard(detail)}
 
     <div class="detail-layout">
 
@@ -691,6 +771,157 @@ async function renderRequestDetailPage(params) {
 
     </div>
   `;
+}
+
+/*
+  Function Name: renderResubmitEditForm
+
+  LAYMAN (Tropang Ex):
+  Ang resubmit panel, ngayon isa nang buong edit form. Lahat ng field ng
+  request ay naka-prefill at pwedeng baguhin (maliban sa approver group — hindi
+  iyon napapalitan sa kalagitnaan). Ang mga field na minarkahan ng approver ay
+  may amber na highlight at makikita ang komento sa ilalim mismo ng input. May
+  file picker pa rin para sa dagdag na dokumento. Ligtas ito dahil laging
+  bumabalik sa Approver 1 ang resubmit — lahat ng approver, makikita ulit ang
+  bagong values.
+
+  TECHNICAL:
+  Fields render from detail.flaggableFields could not carry input types, so the
+  layout mirrors NewRequest.html's markup/ids by hand (same field names, same
+  .form-grid structure, same #location-select / #location-other pair reusing the
+  global onLocationChange). Dates prefill from the raw contractStartInput /
+  contractEndInput DTO keys. Unknown stored locations route through the Other +
+  free-text path so a legitimate free-text location is never blanked. Flagged
+  fields get .flag-pin under the input. Server-side validateResubmitPayload_ is
+  the control; collectResubmitFields + validateResubmitForm are UX mirrors.
+
+  PARAMS    : detail — DTO; id — requestId for the submit button.
+  RETURNS   : the .card HTML string.
+*/
+function renderResubmitEditForm(detail, id) {
+  const fl = openFieldFlags(detail);
+  const KNOWN_LOCATIONS = ['AGT - Pending', 'GCP - Pending', 'EGP - Pending', 'TWS - Pending'];
+  const locationKnown = KNOWN_LOCATIONS.indexOf(detail.location) !== -1;
+  const locationBlank = !detail.location;
+
+  const pin = function (key) {
+    return fl[key]
+      ? '<div class="flag-pin">' + renderIcon('flag', 12) + ' ' + escapeHtml(fl[key].comment) + '</div>'
+      : '';
+  };
+  const rowCls = function (key) { return 'form-row' + (fl[key] ? ' detail-row--flagged' : ''); };
+  const textRow = function (key, label, required, value) {
+    return '' +
+      '<div class="' + rowCls(key) + '">' +
+        '<label class="form-label" for="' + key + '">' + escapeHtml(label) +
+          (required ? ' <span class="required">*</span>' : '') + '</label>' +
+        '<input type="text" class="form-input" id="' + key + '" name="' + key + '" value="' + escapeHtml(value == null ? '' : value) + '">' +
+        pin(key) +
+      '</div>';
+  };
+
+  const locationRow = '' +
+    '<div class="' + rowCls('location') + '">' +
+      '<label class="form-label" for="location-select">Location <span class="required">*</span></label>' +
+      '<select class="form-select" name="location" id="location-select" onchange="onLocationChange(this.value)">' +
+        '<option value=""' + (locationBlank ? ' selected' : '') + '>Select a location…</option>' +
+        KNOWN_LOCATIONS.map(function (loc) {
+          return '<option value="' + escapeHtml(loc) + '"' + (detail.location === loc ? ' selected' : '') + '>' + escapeHtml(loc) + '</option>';
+        }).join('') +
+        '<option value="Other"' + (!locationKnown && !locationBlank ? ' selected' : '') + '>Other</option>' +
+      '</select>' +
+      pin('location') +
+    '</div>';
+  const locationOtherRow = '' +
+    '<div class="form-row' + (locationKnown || locationBlank ? ' hidden' : '') + '" id="location-other-row">' +
+      '<label class="form-label" for="location-other">Specify location <span class="required">*</span></label>' +
+      '<input type="text" class="form-input" name="locationOther" id="location-other" placeholder="Enter the location" ' +
+        'value="' + (!locationKnown && !locationBlank ? escapeHtml(detail.location) : '') + '">' +
+    '</div>';
+
+  return '' +
+    '<div class="card">' +
+      '<div class="card-header"><div class="card-title">Update and resubmit</div></div>' +
+      '<p class="text-small text-muted" style="margin:0 0 12px;">' +
+        'Every field below is editable and prefilled with the current values. ' +
+        'Flagged fields are highlighted with the approver\'s comment. ' +
+        'Add corrected or missing documents if needed (your original attachments are kept). ' +
+        'Resubmitting routes the request back to Approver 1 from the start of the approval chain.' +
+      '</p>' +
+      '<form id="resubmit-form" autocomplete="off" onsubmit="return false;">' +
+        '<div class="form-section-title">Request information</div>' +
+        textRow('projectTitle', 'Project title', true, detail.projectTitle) +
+        '<div class="form-grid">' +
+          '<div class="form-row">' +
+            '<label class="form-label">Approver group</label>' +
+            '<input type="text" class="form-input" value="' + escapeHtml(detail.group || '') + '" disabled>' +
+            '<span class="text-tiny text-muted">The approver group cannot be changed on resubmit.</span>' +
+          '</div>' +
+          textRow('requestorDesig', 'Requestor designation', false, detail.requestorDesig) +
+        '</div>' +
+        '<div class="form-grid">' +
+          textRow('accountablePerson', 'Accountable person', true, detail.accountablePerson) +
+          textRow('department', 'Department', true, detail.department) +
+        '</div>' +
+        '<div class="form-grid">' +
+          locationRow +
+          textRow('pcName', 'PC name', true, detail.pcName) +
+        '</div>' +
+        locationOtherRow +
+        '<div class="form-grid">' +
+          textRow('prism', 'PRISM', false, detail.prism) +
+          textRow('purchaseOrder', 'Purchase Order', true, detail.purchaseOrder) +
+        '</div>' +
+        '<div class="form-grid">' +
+          textRow('ihelpNumber', 'IHelp number', false, detail.ihelpNumber) +
+          textRow('supplierName', 'Supplier name', true, detail.supplierName) +
+        '</div>' +
+        '<div class="form-section-title">Product</div>' +
+        '<div class="form-grid">' +
+          textRow('productType', 'Product type', true, detail.productType) +
+          textRow('productName', 'Product name', true, detail.productName) +
+        '</div>' +
+        '<div class="form-grid">' +
+          textRow('typeOfPurchase', 'Type of purchase', true, detail.typeOfPurchase) +
+          textRow('typeOfLicense', 'Type of license', true, detail.typeOfLicense) +
+        '</div>' +
+        '<div class="form-section-title">Contract</div>' +
+        '<div class="form-grid">' +
+          '<div class="' + rowCls('contractStart') + '">' +
+            '<label class="form-label" for="contractStart">Contract start date <span class="required">*</span></label>' +
+            '<input type="date" class="form-input" id="contractStart" name="contractStart" ' +
+              'value="' + escapeHtml(detail.contractStartInput || '') + '" ' +
+              'oninput="var e=document.getElementById(\'contractEnd\'); if(e) e.min=this.value;">' +
+            pin('contractStart') +
+          '</div>' +
+          '<div class="' + rowCls('contractEnd') + '">' +
+            '<label class="form-label" for="contractEnd">Contract end date <span class="required">*</span></label>' +
+            '<input type="date" class="form-input" id="contractEnd" name="contractEnd" ' +
+              'value="' + escapeHtml(detail.contractEndInput || '') + '">' +
+            pin('contractEnd') +
+          '</div>' +
+        '</div>' +
+        '<div class="form-section-title">Purpose</div>' +
+        '<div class="' + rowCls('requestorRemark') + '">' +
+          '<label class="form-label" for="requestorRemark">Purpose / remark <span class="required">*</span></label>' +
+          '<textarea class="form-textarea" id="requestorRemark" name="requestorRemark">' + escapeHtml(detail.requestorRemark || '') + '</textarea>' +
+          pin('requestorRemark') +
+        '</div>' +
+      '</form>' +
+      '<div class="form-section-title">Documents</div>' +
+      '<div id="attachment-list"></div>' +
+      '<div class="attachment-add-row">' +
+        '<label class="btn btn-secondary file-input-label">' +
+          '<input type="file" id="attachment-file-input" multiple style="display:none" ' +
+                 'accept=".pdf,.doc,.docx,.xls,.xlsx,.jpg,.jpeg,.png">' +
+          '+ Add file' +
+        '</label>' +
+        '<span class="text-tiny text-muted">Max 5 MB per file · 15 MB total · 10 files max</span>' +
+      '</div>' +
+      '<div class="form-actions">' +
+        '<button class="btn btn-primary" onclick="onResubmitClick(\'' + escapeHtml(id) + '\')">Resubmit request</button>' +
+      '</div>' +
+    '</div>';
 }
 
 
@@ -724,15 +955,81 @@ function afterRender_request(params) {
 
 
 /*
+  Function Name: collectResubmitFields
+  LAYMAN    : Basahin ang lahat ng values sa edit form, i-collapse ang Location
+              "Other" sa isang value, at ibalik bilang { fieldKey: value }.
+  TECHNICAL : Reads by element id for the 17 editable keys (same key set as
+              FLAGGABLE_FIELDS server-side). Mirrors NewRequest's locationOther
+              collapse. Returns null when the form is absent (defensive).
+*/
+function collectResubmitFields() {
+  const form = document.getElementById('resubmit-form');
+  if (!form) return null;
+  const val = function (id) {
+    const el = document.getElementById(id);
+    return el ? String(el.value).trim() : '';
+  };
+  const fields = {
+    projectTitle:      val('projectTitle'),
+    requestorDesig:    val('requestorDesig'),
+    accountablePerson: val('accountablePerson'),
+    department:        val('department'),
+    location:          val('location-select'),
+    pcName:            val('pcName'),
+    prism:             val('prism'),
+    purchaseOrder:     val('purchaseOrder'),
+    ihelpNumber:       val('ihelpNumber'),
+    productType:       val('productType'),
+    productName:       val('productName'),
+    typeOfPurchase:    val('typeOfPurchase'),
+    typeOfLicense:     val('typeOfLicense'),
+    contractStart:     val('contractStart'),
+    contractEnd:       val('contractEnd'),
+    supplierName:      val('supplierName'),
+    requestorRemark:   val('requestorRemark'),
+  };
+  if (fields.location === 'Other') fields.location = val('location-other');
+  return fields;
+}
+
+/*
+  Function Name: validateResubmitForm
+  LAYMAN    : Chinecheck bago ipadala: kumpleto ba ang mga required na field at
+              tama ba ang date order. UX mirror lang ito — ang server pa rin
+              (validateResubmitPayload_) ang tunay na kontrol.
+  TECHNICAL : Required set = NewRequest's required fields minus group. Returns
+              an error string or null.
+*/
+function validateResubmitForm(fields) {
+  const required = {
+    projectTitle: 'Project title', accountablePerson: 'Accountable person',
+    department: 'Department', location: 'Location', pcName: 'PC name',
+    purchaseOrder: 'Purchase Order', supplierName: 'Supplier name',
+    productType: 'Product type', productName: 'Product name',
+    typeOfPurchase: 'Type of purchase', typeOfLicense: 'Type of license',
+    contractStart: 'Contract start date', contractEnd: 'Contract end date',
+    requestorRemark: 'Purpose / remark',
+  };
+  const missing = Object.keys(required)
+    .filter(function (k) { return !fields[k]; })
+    .map(function (k) { return required[k]; });
+  if (missing.length) return 'Please fill in: ' + missing.join(', ');
+  if (fields.contractStart && fields.contractEnd && fields.contractEnd < fields.contractStart) {
+    return 'Contract end date cannot be earlier than the contract start date.';
+  }
+  return null;
+}
+
+/*
   Function Name: onResubmitClick
-  LAYMAN    : Pag pinindot ang "Resubmit request": kung may idinagdag na files,
-              i-validate ang descriptions, kumpirmahin, i-read bilang base64,
-              tapos ipadala sa server kasama ang requestId. Walang files? Ok lang
-              — gagamitin ang dating attachments. Refresh para makita ang status.
-  TECHNICAL : Validates descriptions for any window._newRequestFiles → showConfirm
-              (message adapts to file count) → Promise.all(readFileAsBase64) →
-              callServer('handleResubmit', requestId, files). hideLoading + toast
-              in every branch.
+  LAYMAN    : Pag pinindot ang "Resubmit request": i-validate ang edit form at
+              ang descriptions ng bagong files, kumpirmahin (sinasabi kung may
+              field edits at/o files), i-read ang files bilang base64, tapos
+              ipadala sa server. Refresh para makita ang status.
+  TECHNICAL : collectResubmitFields + validateResubmitForm (UX mirrors of
+              validateResubmitPayload_) → showConfirm → Promise.all(
+              readFileAsBase64) → callServer('handleResubmit', requestId, files,
+              fields). hideLoading + toast in every branch.
   PARAMS    : requestId — the request to resubmit.
 */
 async function onResubmitClick(requestId) {
@@ -746,11 +1043,20 @@ async function onResubmitClick(requestId) {
     }
   }
 
+  // The edit form: required fields + date order (server re-validates).
+  const fields = collectResubmitFields();
+  if (fields) {
+    const err = validateResubmitForm(fields);
+    if (err) { showToast(err, 'error'); return; }
+  }
+
+  const fileNote = files.length
+    ? files.length + ' document(s) will be added (your original attachments are kept). '
+    : 'No new documents added — your original attachments will be reused. ';
   const ok = await showConfirm({
     title:        'Resubmit request',
-    message:      files.length
-      ? files.length + ' document(s) will be added (your original attachments are kept), and the request routed back to Approver 1 from the start. Continue?'
-      : 'No new documents added — your original attachments will be reused. The request will be routed back to Approver 1 from the start. Continue?',
+    message:      'Your field values will be saved as shown in the form. ' + fileNote +
+                  'The request will be routed back to Approver 1 from the start. Continue?',
     confirmLabel: 'Resubmit',
   });
   if (!ok) return;
@@ -777,7 +1083,7 @@ async function onResubmitClick(requestId) {
   }
 
   try {
-    const result = await callServer('handleResubmit', requestId, filePayloads);
+    const result = await callServer('handleResubmit', requestId, filePayloads, fields);
     if (result && result.success) {
       hideLoading();
       showToast('Request resubmitted.', 'success');

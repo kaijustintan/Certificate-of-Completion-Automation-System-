@@ -516,6 +516,46 @@ function emailRemarkBox_(label, text, tone) {
   );
 }
 
+/*
+  Function Name: emailFlagList_
+
+  LAYMAN (Tropang Ex):
+  HTML na listahan ng mga item na minarkahan ng approver sa isang return:
+  bawat isa may pangalan ng field (o filename ng dokumento) at ang komento
+  kung ano ang mali. Amber ang kulay para tugma sa "returned" na email.
+
+  TECHNICAL:
+  One amber callout containing a row per flag. Labels arrive server-resolved
+  from handleReturn (never client-supplied), but are STILL escaped here per
+  the EmailHtml.js convention — attachment labels are user-uploaded filenames.
+  Attachment flags get a "(document)" suffix so the reader knows to re-upload
+  rather than re-type.
+
+  PARAMS:
+  - flags — [{label, targetType, comment}]; empty/absent → "".
+
+  RETURNS:
+  HTML string — the flagged-items callout, or "" when there is nothing to show.
+*/
+function emailFlagList_(flags) {
+  if (!flags || flags.length === 0) return "";
+  const rows = flags.map(function (f) {
+    const suffix = f.targetType === "attachment" ? " (document)" : "";
+    return '<div style="margin: 0 0 8px;">' +
+      '<div style="font-weight: 600; color:' + EMAIL_THEME.text + ';">' +
+        escapeHtml_(f.label) + escapeHtml_(suffix) + "</div>" +
+      '<div style="color:' + EMAIL_THEME.text + ';">' + escapeHtml_(f.comment) + "</div>" +
+    "</div>";
+  }).join("");
+  return (
+    '<div style="background-color:' + EMAIL_THEME.amberTint + "; border-radius: 6px; padding: 12px 16px; margin: 0 0 16px; " +
+      "font-family:" + EMAIL_THEME.fontStack + '; font-size: 13px; line-height: 1.5;">' +
+      '<div style="font-weight: 600; color:' + EMAIL_THEME.amber + '; margin-bottom: 8px;">Flagged items to fix</div>' +
+      rows +
+    "</div>"
+  );
+}
+
 
 // ─── SEND ───────────────────────────────────────────────────
 

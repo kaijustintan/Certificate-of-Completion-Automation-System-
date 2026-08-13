@@ -245,6 +245,10 @@ function validateRemark_(remark) {
   if (String(remark).length > MAX_REMARK) {
     return { ok: false, message: "Your remark is too long (max " + MAX_REMARK + " characters)." };
   }
+  // Formula-injection guard: this string is written verbatim into ACT.REMARK.
+  if (startsWithFormula_(remark)) {
+    return { ok: false, message: 'Your reason must not start with "=".' };
+  }
   return { ok: true };
 }
 
@@ -312,15 +316,34 @@ function returnRequest_(requestId, approverRemark) {
               resubmit_ count, at babalik sa Step 1 / Pending Approver 1. Hindi na
               kailangang magbura ng dating approval — naka-tag sila sa lumang
               cycle, at ang bagong cycle ay malinis na simula.
-  TECHNICAL : newCount = resubmit_count + 1. appendAction_(RESUBMITTED) tagged with
-              the NEW cycle (so getApprovalView_ pairs each RETURNED with its
-              resubmit_). setRequestCache_(status=PENDING_1, step=1, resubmitCount).
-              The frozen-DTO per-step/history fields recompute automatically off
-              the cycle tag — no column clears.
+  TECHNICAL : newCount = resubmit_count + 1. Optional updatedFields (validated
+              upstream by validateResubmitPayload_) are DIFFED against the
+              stored row inside the lock; changed cells are written with ONE
+              batched setValues over cols PROJECT_TITLE..REQUESTOR_REMARK
+              (REQUESTOR/GROUP cells are re-written with their just-read values
+              — safe under the lock), and the changed-field LABELS become the
+              RESUBMITTED action's remark ("Changed: Project title, …") so the
+              timeline shows what was edited. Dates are compared via formatted
+              yyyy-MM-dd (the DTO ships that same format) and stored as the raw
+              yyyy-MM-dd string exactly like submitNewRequest. Then
+              appendAction_(RESUBMITTED) tagged with the NEW cycle (so
+              getApprovalView_ pairs each RETURNED with its resubmit_),
+              setRequestCache_(status=PENDING_1, step=1, resubmitCount), and the
+              new attachment rows — all INSIDE the lock (writeAttachmentRows_
+              computes its start row from getLastRow()+1, so an unserialized
+              write could interleave with a concurrent submit). Field writes
+              happen BEFORE appendAction_: a write failure aborts the whole
+              resubmit cleanly instead of stranding an un-unwritable action row.
   PARAMS    : requestId — the returned request to resubmit_.
-  RETURNS   : { success:true, newStatus:"Pending Approver 1", newCount } or { success:false, message }.
+              uploadedFiles — optional Array<{fileId,url,filename,description}>
+                          of already-uploaded Drive files to record for the new
+                          cycle. May be empty/omitted.
+              updatedFields — optional trimmed { fieldKey: value } over
+                          FLAGGABLE_FIELDS keys (from validateResubmitPayload_).
+  RETURNS   : { success:true, newStatus:"Pending Approver 1", newCount,
+                changedLabels:[…] } or { success:false, message }.
 */
-function resubmit_(requestId) {
+function resubmit_(requestId, uploadedFiles, updatedFields) {
   const lock = LockService.getScriptLock();
   try { lock.waitLock(10000); }
   catch (e) { return { success: false, message: "System is busy. Please try again." }; }
@@ -344,11 +367,52 @@ function resubmit_(requestId) {
       return { success: false, message: "Unauthorized" };
     }
 
-    appendAction_(requestId, groupId, newCount, null, caller, ACTION.RESUBMITTED, "");
+    // Field edits: diff stored vs payload, overlay changed values onto the
+    // freshly-read row span, and write once. Runs BEFORE appendAction_ so a
+    // failure here aborts the resubmit with no state half-applied.
+    const changedLabels = [];
+    if (updatedFields) {
+      const spanStart = CR.PROJECT_TITLE;
+      const spanWidth = CR.REQUESTOR_REMARK - CR.PROJECT_TITLE + 1;
+      const span = rowData.slice(spanStart - 1, spanStart - 1 + spanWidth);
+      Object.keys(FLAGGABLE_FIELDS).forEach(function (key) {
+        if (!(key in updatedFields)) return;
+        const def      = FLAGGABLE_FIELDS[key];
+        const stored   = rowData[def.col - 1];
+        const incoming = updatedFields[key];   // already trimmed strings
+        const isDate   = key === "contractStart" || key === "contractEnd";
+        const storedComparable = isDate
+          ? (stored ? Utilities.formatDate(new Date(stored), "Asia/Manila", "yyyy-MM-dd") : "")
+          : String(stored == null ? "" : stored).trim();
+        if (storedComparable !== incoming) {
+          span[def.col - spanStart] = incoming;
+          changedLabels.push(def.label);
+        }
+      });
+      if (changedLabels.length > 0) {
+        sheet.getRange(rowNum, spanStart, 1, spanWidth).setValues([span]);
+      }
+    }
+
+    // The changed-field summary rides the RESUBMITTED remark: nothing parses
+    // this remark structurally (verified — resubmitHistory pairs RESUBMITTED by
+    // cycle only), and the timeline shows it to requestor, approvers, and email.
+    const changedSummary = changedLabels.length ? "Changed: " + changedLabels.join(", ") : "";
+
+    appendAction_(requestId, groupId, newCount, null, caller, ACTION.RESUBMITTED, changedSummary);
     setRequestCache_(requestId, { status: STATUS.PENDING_1, step: 1, resubmitCount: newCount });
 
-    Logger.log(`resubmit_(): ${requestId} resubmitted (count: ${newCount}) → ${STATUS.PENDING_1}`);
-    return { success: true, newStatus: STATUS.PENDING_1, newCount };
+    // Record the new cycle's attachment rows (append — old rows are kept as the
+    // audit trail). Same ordering as before the lock move: the state flip commits
+    // first, so a write failure here leaves a real resubmit with the file rows
+    // missing (loud log) rather than phantom rows for a resubmit that never happened.
+    if (uploadedFiles && uploadedFiles.length > 0) {
+      writeAttachmentRows_(requestId, uploadedFiles, newCount);
+    }
+
+    Logger.log(`resubmit_(): ${requestId} resubmitted (count: ${newCount}) → ${STATUS.PENDING_1}` +
+               (changedLabels.length ? ` [${changedSummary}]` : ""));
+    return { success: true, newStatus: STATUS.PENDING_1, newCount, changedLabels: changedLabels };
   } finally {
     lock.releaseLock();
   }
