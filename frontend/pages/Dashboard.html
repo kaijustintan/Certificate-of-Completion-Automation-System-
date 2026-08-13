@@ -142,24 +142,8 @@ function renderDashboardControls(requests) {
     { value: 'declined', label: 'Declined' },
     { value: 'expired',  label: 'Expired'  }, // #10 — contract end date lapsed (any status)
   ];
-  const sortOptions = [
-    { value: 'newest',  label: 'Most Recent'  },
-    { value: 'oldest',  label: 'Oldest First' },
-    { value: 'project', label: 'Project A→Z' },
-    { value: 'group',   label: 'Group A→Z'   },
-  ];
-
-  const filterHtml = filterOptions.map(function (o) {
-    return '<option value="' + o.value + '"' +
-      (o.value === _dashboardCurrentFilter ? ' selected' : '') + '>' +
-      o.label + ' (' + counts[o.value] + ')</option>';
-  }).join('');
-
-  const sortHtml = sortOptions.map(function (o) {
-    return '<option value="' + o.value + '"' +
-      (o.value === _dashboardCurrentSort ? ' selected' : '') + '>' +
-      o.label + '</option>';
-  }).join('');
+  const filterHtml = renderCountedOptions(filterOptions, counts, _dashboardCurrentFilter);   // shared (UI.html)
+  const sortHtml   = renderSortOptions(_dashboardCurrentSort);                               // shared (UI.html)
 
   // Search on the left, status + sort pushed to the right (controls-bar).
   return '<div class="controls-bar">' +
@@ -384,18 +368,11 @@ function countFiledThisMonth(requests, pred) {
   LAYMAN    : Bilang ng requests sa bawat bucket para ipakita sa dropdown options.
               Ang "expired" ay hiwalay na bilang — cross-cutting sa status (isang
               request ay pwedeng Pending AT expired sabay).
-  TECHNICAL : Returns {all, pending, approved, returned, declined, expired} counts.
-              Status buckets via getDashboardFilter; expired via the server-computed
-              r.isExpired flag (#10) — orthogonal to status, so counted separately.
+  TECHNICAL : Thin wrapper over the shared computeStatusCounts (UI.html).
+              Returns {all, pending, approved, returned, declined, expired}.
 */
 function computeDashboardTabCounts(requests) {
-  const counts = { all: 0, pending: 0, approved: 0, returned: 0, declined: 0, expired: 0 };
-  for (const r of requests) {
-    counts.all++;
-    counts[getDashboardFilter(r.status)]++;
-    if (r.isExpired) counts.expired++;
-  }
-  return counts;
+  return computeStatusCounts(requests, ['all', 'pending', 'approved', 'returned', 'declined', 'expired']);
 }
 
 /*

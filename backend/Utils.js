@@ -30,7 +30,9 @@
 
   ATTACHMENT HELPERS
     - getAttachmentsForRequest_(id)      attachment rows for one request
-    - countAttachments_(id)              how many were uploaded
+
+  INPUT SAFETY
+    - startsWithFormula_(value)          formula-injection check (leading "=")
 
   ROW FINDER
     - getRowNumberByRequestId_(id)       array index → real Sheet row number
@@ -122,25 +124,46 @@ function getDataRows_(sheetName) {
   Function Name: getAttachmentsForRequest_
   LAYMAN    : Kunin lahat ng files na naka-attach sa isang request.
   TECHNICAL : Filters Request_Attachments by REQUEST_ID (string-compared to
-              survive numeric/string ID drift between sheets).
+              survive numeric/string ID drift between sheets). Reads via the
+              attachmentRows_() memo (Accessors.js) — every email builds its
+              attachment list twice (text + HTML twin), so an un-memoized read
+              cost two full-tab reads per email.
   PARAMS    : requestId — the parent request's ID.
   RETURNS   : Array of attachment rows (empty array if none).
 */
 function getAttachmentsForRequest_(requestId) {
-  const rows   = getDataRows_(SHEET_NAMES.REQUEST_ATTACHMENTS);
+  const rows   = attachmentRows_();
   const target = String(requestId);
   return rows.filter(row => String(row[RA.REQUEST_ID - 1]) === target);
 }
 
+// REMOVED: countAttachments_(requestId) — a one-line length wrapper whose only
+// consumer was the deleted SYNCING/expected-attachments flow. Call
+// getAttachmentsForRequest_(requestId).length directly if a count is ever needed.
+
+
+// =========================================================================================================
+// INPUT SAFETY
+// =========================================================================================================
+
 /*
-  Function Name: countAttachments_
-  LAYMAN    : Ilang files ba ang na-upload para sa request na ito?
-  TECHNICAL : Length of getAttachmentsForRequest_(requestId).
-  PARAMS    : requestId — the parent request's ID.
-  RETURNS   : Number — count of attachments.
+  Function Name: startsWithFormula_
+  LAYMAN    : Nagsisimula ba sa "=" ang tinype ng user? Bawal yun: sa Google
+              Sheets, ang cell na nagsisimula sa "=" ay nagiging LIVE FORMULA —
+              ibig sabihin, kaya nitong magbasa ng ibang cells o tumawag ng
+              IMPORTRANGE papalabas ng spreadsheet. Text lang dapat ang laman.
+  TECHNICAL : Range.setValue()/setValues() interpret a leading "=" (after
+              optional whitespace) as a formula, so any user-controlled string
+              written to a cell is a formula-injection vector. Every validator
+              that accepts free text calls this and REJECTS the value (lossless,
+              unlike prefixing an apostrophe). Only "=" is checked: "+" and "@"
+              are typed-entry hazards in the Sheets UI, not API-write hazards,
+              and "+" legitimately starts phone numbers.
+  PARAMS    : value — any candidate cell value.
+  RETURNS   : true when String(value) matches /^\s*=/.
 */
-function countAttachments_(requestId) {
-  return getAttachmentsForRequest_(requestId).length;
+function startsWithFormula_(value) {
+  return /^\s*=/.test(String(value == null ? "" : value));
 }
 
 
@@ -155,21 +178,15 @@ function countAttachments_(requestId) {
   LAYMAN    : Sa anong Sheet row number (yung totoong nakikita sa Sheets, may
               header) nakaupo ang isang Request ID? Kailangan ito kasi ang
               getRange() ay row NUMBER ang hinihingi, hindi array index.
-  TECHNICAL : Scans Certificate_Requests for the row whose REQUEST_ID matches
-              and returns its 1-based Sheet row number.
+  TECHNICAL : createTextFinder on the REQUEST_ID column only, matchEntireCell —
+              Sheets does the lookup server-side instead of shipping the whole
+              tab to Apps Script (this was a full-table linear scan called up
+              to ~6 times per approval). matchEntireCell means the header text
+              ("request_id") and partial matches can never collide with a real
+              "REQ-…" ID. TextFinder matches DISPLAY text; request IDs are
+              plain alphanumeric strings, so display === stored.
   PARAMS    : requestId — the ID to locate.
   RETURNS   : 1-based Sheet row number, or -1 if not found.
-
-  STEPS
-    Step 1 — Read all data (header included)
-      Layman    : Kunin lahat para tugma ang indexing sa totoong row numbers.
-      Technical : getAllData_() keeps the header, so allData[i] = Sheet row i+1.
-    Step 2 — Loop from the first data row
-      Layman    : Simula sa i=1 (laktawan ang header), hanapin ang tugma.
-      Technical : for i = 1..n-1; string-compare REQUEST_ID.
-    Step 3 — Return the Sheet row number
-      Layman    : Pag tugma, ibalik i+1 (kasi 1-based ang Sheets).
-      Technical : return i + 1; fall through to -1 if no match.
 
   EXAMPLE
     // REQ-9b1 is stored in Sheet row 5 (header is row 1)
@@ -177,14 +194,13 @@ function countAttachments_(requestId) {
     getRowNumberByRequestId_("nope")     →  -1
 */
 function getRowNumberByRequestId_(requestId) {
-  const allData = getAllData_(SHEET_NAMES.REQUESTS);
-  const target  = String(requestId);
-  for (let i = 1; i < allData.length; i++) {
-    if (String(allData[i][CR.REQUEST_ID - 1]) === target) {
-      return i + 1;
-    }
-  }
-  return -1;
+  const sheet = getSheet_(SHEET_NAMES.REQUESTS);
+  if (!sheet) return -1;
+  const cell = sheet.getRange(1, CR.REQUEST_ID, sheet.getMaxRows(), 1)
+    .createTextFinder(String(requestId))
+    .matchEntireCell(true)
+    .findNext();
+  return cell ? cell.getRow() : -1;
 }
 
 

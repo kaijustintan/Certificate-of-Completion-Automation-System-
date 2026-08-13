@@ -19,7 +19,6 @@
     "backend/Attachments.js",
     "backend/Triggers.js",
     "backend/WebApp.js",
-    "backend/Code.js",
     "frontend/Index.html",
     "frontend/Stylesheet.html",
     "frontend/JavaScript.html",

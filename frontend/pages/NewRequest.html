@@ -77,6 +77,24 @@ async function renderNewRequestPage() {
   // chain edits that empty a group) are reflected the next time the form opens.
   state.approverGroups = await callServer('getApproverGroups');
 
+  // No routable group → no form. Without this the group dropdown renders with
+  // only "Select a group…" and submit dead-ends on a generic required-field
+  // toast, which reads as a bug rather than a setup gap.
+  if (!state.approverGroups || state.approverGroups.length === 0) {
+    return `
+      <div class="page-header">
+        <div>
+          <div class="page-title">New e-certificate request</div>
+        </div>
+        <button class="btn btn-secondary" onclick="navigateTo('home')">← Back</button>
+      </div>
+      ${renderEmptyState({
+        title: 'No approver groups available',
+        message: 'Requests cannot be filed until an administrator sets up an approver group with at least one approver. Please contact your administrator.',
+        emotion: 'default',
+      })}`;
+  }
+
   // getApproverGroups() returns [{id, name}] — the option VALUE is the group_id
   // (what submitNewRequest stores in CR.GROUP); the LABEL is the display name.
   const groupOptions = (state.approverGroups || [])

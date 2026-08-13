@@ -271,22 +271,8 @@ function renderAdminControls() {
     { value: 'returned', label: 'Returned' },
     { value: 'expired',  label: 'Expired'  },
   ];
-  const statusHtml = statusOptions.map(function (o) {
-    return '<option value="' + o.value + '"' +
-      (o.value === _adminStatusFilter ? ' selected' : '') + '>' +
-      o.label + ' (' + counts[o.value] + ')</option>';
-  }).join('');
-
-  const sortOptions = [
-    { value: 'newest',  label: 'Most Recent'  },
-    { value: 'oldest',  label: 'Oldest First' },
-    { value: 'project', label: 'Project A→Z' },
-    { value: 'group',   label: 'Group A→Z'   },
-  ];
-  const sortHtml = sortOptions.map(function (o) {
-    return '<option value="' + o.value + '"' +
-      (o.value === _adminCurrentSort ? ' selected' : '') + '>' + o.label + '</option>';
-  }).join('');
+  const statusHtml = renderCountedOptions(statusOptions, counts, _adminStatusFilter);   // shared (UI.html)
+  const sortHtml   = renderSortOptions(_adminCurrentSort);                              // shared (UI.html)
 
   return '<div class="controls-bar">' +
     renderSearchBar({
@@ -312,18 +298,10 @@ function renderAdminControls() {
   Function Name: computeAdminRequestCounts
   LAYMAN    : Bilangin ang requests kada status bucket (at expired) para sa
               stat cards at Status dropdown.
-  TECHNICAL : One pass over _adminRequestsCache; buckets via getDashboardFilter;
-              expired via the server-computed isExpired flag (cross-cutting).
+  TECHNICAL : Thin wrapper over the shared computeStatusCounts (UI.html).
 */
 function computeAdminRequestCounts() {
-  const counts = { all: 0, pending: 0, approved: 0, declined: 0, returned: 0, expired: 0 };
-  for (const r of _adminRequestsCache) {
-    counts.all++;
-    const bucket = getDashboardFilter(r.status);
-    if (counts[bucket] !== undefined) counts[bucket]++;
-    if (r.isExpired) counts.expired++;
-  }
-  return counts;
+  return computeStatusCounts(_adminRequestsCache, ['all', 'pending', 'approved', 'declined', 'returned', 'expired']);
 }
 
 function adminSortChange(el) {
@@ -435,49 +413,12 @@ function syncAdminStatCards() {
   LAYMAN    : Table ng requests (kasalukuyang page lang). Bawat row clickable
               papunta sa READ-ONLY detail page (yung 'request' route — hindi
               'review', kasi hindi naman ikaw ang aaprove; tingin lang).
-  TECHNICAL : Same row shape as renderApproverTable (request-icon cell + chevron)
-              but the click goes to navigateTo('request', {id}). The detail page
-              hides the resubmit panel for non-owners, so admin lands read-only.
+  TECHNICAL : Delegates to the shared renderRequestTable(rows, 'request')
+              (UI.html). The detail page hides the resubmit panel for
+              non-owners, so admin lands read-only.
 */
 function renderAdminRequestTable(rows) {
-  const tableRows = rows.map(function (r) {
-    const idAttr = escapeHtml(r.requestId);
-    return '' +
-      '<tr tabindex="0" onclick="navigateTo(\'request\', {id: \'' + idAttr + '\'})" onkeydown="uiKeyActivate(event)">' +
-        '<td>' +
-          '<div class="cell-request">' +
-            '<div class="cell-request-icon">' + renderIcon('file', 16) + '</div>' +
-            '<div class="cell-request-text">' +
-              '<div class="cell-primary">' + escapeHtml(r.controlNumber) + '</div>' +
-            '</div>' +
-          '</div>' +
-        '</td>' +
-        '<td class="cell-clip" title="' + escapeHtml(r.projectTitle) + '">' + escapeHtml(r.projectTitle) + '</td>' +
-        '<td class="cell-clip" title="' + escapeHtml(r.requestor) + '">' + escapeHtml(r.requestor) + '</td>' +
-        '<td class="cell-clip" title="' + escapeHtml(r.group) + '">' + escapeHtml(r.group) + '</td>' +
-        '<td>' + renderStatusBadge(r.status) +
-          (r.isExpired ? ' <span class="badge badge-expired" title="Contract end date has passed">Expired</span>' : '') +
-        '</td>' +
-        '<td><span class="cell-date">' + renderIcon('calendar', 14) + escapeHtml(r.dateFiled) + '</span></td>' +
-        '<td class="cell-chevron">' + renderIcon('chevron-right', 18) + '</td>' +
-      '</tr>';
-  }).join('');
-
-  return '' +
-    '<div class="table-scroll">' +
-    '<table class="data-table">' +
-      '<thead><tr>' +
-        '<th>Request</th>' +
-        '<th>Project</th>' +
-        '<th>Requestor</th>' +
-        '<th>Group</th>' +
-        '<th>Status</th>' +
-        '<th>Filed</th>' +
-        '<th></th>' +
-      '</tr></thead>' +
-      '<tbody>' + tableRows + '</tbody>' +
-    '</table>' +
-    '</div>';
+  return renderRequestTable(rows, 'request');
 }
 
 

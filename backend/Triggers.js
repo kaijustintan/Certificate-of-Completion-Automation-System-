@@ -5,243 +5,36 @@
   ════════════════════════════════════════════════════════════
 
   LAYMAN (Tropang Ex):
-  Ito ang "sentry" ng system. Naghihintay siya sa bawat pagbabago sa Sheet —
-  at kapag nagbago ang STATUS ng isang request o may nadagdag na attachment,
-  tinatawag niya ang tamang functions. Kapalit ito ng lahat ng 5 AppSheet bots.
-  ⚠️ IMPORTANTE: hindi sapat na may code dito — kailangan pang i-register
-  ang trigger MINSAN sa Apps Script UI (basa ang registerTrigger() docs below).
+  Ito ang mga "alarm clock" ng system. Dalawang araw-araw na 8am na trabaho:
+  (1) paalala sa requestor kapag malapit nang mag-expire ang contract, at
+  (2) paalala sa approver na may hinihintay pang pirma sa kanya.
+  ⚠️ IMPORTANTE: hindi sapat na may code dito — kailangan pang i-run ang
+  DALAWANG register functions MINSAN kada Google account.
 
   TECHNICAL:
-  Two trigger kinds live here. (1) An installable onEdit trigger entry point that
-  routes to sheet-specific handlers by tab name (STATUS-column changes only). (2)
-  TWO daily TIME-BASED triggers (both ~8am Manila): checkContractExpiries (#10)
-  emails the requestor about lapsing contracts; checkPendingApprovals emails the
-  current approver a digest of requests still awaiting their action.
+  TWO daily TIME-BASED triggers live here (both ~8am Manila):
+  checkContractExpiries (#10) emails the requestor about lapsing contracts;
+  checkPendingApprovals emails the current approver a digest of requests still
+  awaiting their action. The legacy installable onEdit path (onSheetChange and
+  its handlers) was DELETED: it was dormant by design, held a complete parallel
+  email implementation (double-send hazard), and inside an installable trigger
+  Session.getActiveUser() resolves to the trigger owner, not the acting user.
+  Recover from git history (commit 06de263 and earlier) if ever needed.
 
   ⚠️ TWO registrations exist, and both must be run once per Google account:
-  registerExpiryTrigger() and registerApproverReminderTrigger(). registerTrigger()
-  is NOT a third — it throws on purpose (registering onSheetChange would
-  double-send every workflow email). All four of those entry points are guarded
-  by isOwnerContext_(), because a bare global is callable via google.script.run
-  and checkPendingApprovals in particular has no idempotency flag by design.
+  registerExpiryTrigger() and registerApproverReminderTrigger(). All entry
+  points are guarded by isOwnerContext_(), because a bare global is callable
+  via google.script.run and checkPendingApprovals in particular has no
+  idempotency flag by design.
 
   ────────────────────────────────────────────────────────────
   OUTLINE
   ────────────────────────────────────────────────────────────
-  - onSheetChange(e)                       entry point; routes by sheet name
-  - handleCertificateRequestChange         STATUS-column watcher; fires emails
-  - handleAttachmentChange                 new-row detector; calls sync check
-  - registerTrigger()                      ⚠️ DISABLED — throws; do NOT run
   - checkContractExpiries()                daily 8am clock handler; expiry reminders (#10)
   - registerExpiryTrigger()                one-time setup for the expiry trigger
   - checkPendingApprovals()                daily 8am clock handler; approver nudge digest
   - registerApproverReminderTrigger()      one-time setup for the approver-reminder trigger
 */
-
-
-// ============================================================
-// MAIN CHANGE HANDLER
-// This is the function Google calls every time the Sheet changes.
-// The 'e' parameter is the event object — it tells us what changed.
-// ============================================================
-/*
-  Function Name: onSheetChange
-  LAYMAN    : Entry point — Google ang tumatawag dito sa bawat edit sa Sheet.
-              Tinitignan niya kung anong tab ang nagbago, tapos pinapasa sa
-              tamang handler. Error sa loob ay nilo-log (hindi nagcrash ang buong trigger).
-  TECHNICAL : Registered installable onEdit handler. Routes by sheetName to
-              handleCertificateRequestChange or handleAttachmentChange. Wrapped
-              in try/catch so one bad row doesn't kill the trigger.
-  PARAMS    : e — Apps Script onEdit event (source, range, value, etc.).
-  RETURNS   : (void)
-*/
-function onSheetChange(e) {
-  try {
-    const sheet     = e.source.getActiveSheet();
-    const sheetName = sheet.getName();
-
-    // ── Route based on which sheet tab changed ──────────────
-
-    if (sheetName === SHEET_NAMES.REQUESTS) {
-      handleCertificateRequestChange(e, sheet);
-    }
-
-    if (sheetName === SHEET_NAMES.REQUEST_ATTACHMENTS) {
-      handleAttachmentChange(e, sheet);
-    }
-
-    // Approver_Settings changes don't trigger any automation
-
-  } catch (err) {
-    Logger.log(`onSheetChange() ERROR: ${err.message}`);
-  }
-}
-
-
-// ============================================================
-// CERTIFICATE REQUESTS CHANGE HANDLER
-// Watches for Status column changes — same as AppSheet's
-// [_THISROW_BEFORE].[Status] <> [_THISROW_AFTER].[Status] condition
-// ============================================================
-/*
-  Function Name: handleCertificateRequestChange
-  LAYMAN    : Kapag may nagbago sa Certificate_Requests tab, dito pumupunta.
-              Tinitingnan kung ang STATUS column ba ang nagbago (Col C); kung
-              hindi, wala siyang ginagawa. Kung oo, tinutukoy kung anong bagong
-              status at tinatawag ang tamang email functions.
-  TECHNICAL : Guards on: row > 1 (not header) AND col === CR.STATUS (3).
-              Routes by newStatus to the email pairs that replaced each AppSheet bot.
-  PARAMS    : e — the onEdit event; sheet — the active Sheet object.
-  RETURNS   : (void)
-
-  STATUS → EMAIL mapping (AppSheet bot equivalents):
-    "Pending Approver N"  → sendApprovalRequest_ (Next Approver Bot)
-                            (only if attachments satisfied)
-    "Declined"            → sendDeclineToApprover_ + sendDeclineToRequestor_
-    "Fully Approved"      → sendFullyApprovedToApprover_ + sendFullyApprovedToRequestor_
-    "Returned to…"        → sendReturnToRequestor_ + sendReturnConfirmToApprover_
-
-  NOTE: In the current portal, the handle* functions in WebApp.js already send
-  these emails directly. This trigger provides a fallback for any direct sheet
-  edits (e.g. manual admin corrections). Both paths are safe.
-*/
-function handleCertificateRequestChange(e, sheet) {
-  const range = e.range;
-  const row   = range.getRow();
-
-  // Ignore the header row
-  if (row === 1) return;
-
-  // Only care about changes in the Status column (Col C = column 3)
-  const col = range.getColumn();
-  if (col !== CR.STATUS) return;
-
-  const newStatus = range.getValue();
-  const rowData   = sheet.getRange(row, 1, 1, CR.RESUBMIT_COUNT).getValues()[0];
-  const requestId = rowData[CR.REQUEST_ID - 1];
-
-  Logger.log(`handleCertificateRequestChange(): ${requestId} → Status = "${newStatus}"`);
-
-  // ── Route based on new Status value ────────────────────────
-
-  // Replaces: Next Approver Bot
-  // Condition: CONTAINS([Status], "Pending Approver")
-  //
-  // ⚠️ DOUBLE-SEND GUARD — read before registering the trigger.
-  // submitNewRequest() in WebApp.js calls sendApprovalRequest_() DIRECTLY for
-  // every new PENDING_1 submission (Phase 8: all submits go straight to PENDING_1).
-  // If onSheetChange were registered, a new submission would fire TWO approver
-  // emails — one from submitNewRequest, one here. This is PRE-EXISTING behaviour
-  // (not a Phase 8 regression), and currently SAFE because the trigger is DORMANT
-  // (requires manual registerTrigger()). Before registering: decide which is the
-  // single authority for initial PENDING_1 approval emails and neutralize the other.
-  if (newStatus.includes("Pending Approver")) {
-    // Phase 8: attachments are uploaded before submit — no attachment gate
-    // anymore. A Pending status always means an approver should be notified.
-    sendApprovalRequest_(requestId);
-    return;
-  }
-
-  // Replaces: Decline Notification Bot
-  // Condition: [Status] = "Declined"
-  if (newStatus === STATUS.DECLINED) {
-    sendDeclineToApprover_(requestId);
-    sendDeclineToRequestor_(requestId);
-    return;
-  }
-
-  // Replaces: Fully Approved Notification Bot
-  // Condition: [Status] = "Fully Approved"
-  if (newStatus === STATUS.APPROVED) {
-    sendFullyApprovedToApprover_(requestId);
-    sendFullyApprovedToRequestor_(requestId);
-    return;
-  }
-
-  // Replaces: Return Notification Bot
-  // Condition: STARTSWITH([Status], "Returned to")
-  if (newStatus.startsWith("Returned to")) {
-    sendReturnToRequestor_(requestId);
-    sendReturnConfirmToApprover_(requestId);
-    return;
-  }
-}
-
-
-// ============================================================
-// REQUEST ATTACHMENTS CHANGE HANDLER
-// Watches for new rows added to Request_Attachments.
-// Replaces: Sync Finisher Bot (Data Change Type: Adds only)
-// ============================================================
-/*
-  Function Name: handleAttachmentChange
-  LAYMAN    : Kapag may nadagdag na row sa Request_Attachments (ibig sabihin
-              may na-upload na file), dito pumupunta. Tinutukoy kung anong
-              request ang affected, tapos tinatawag ang sync check.
-  TECHNICAL : Guards on row > 1 AND column === 1 (new row adds start at col 1).
-              Reads the REQUEST_ID from the new row, calls checkAttachmentSync_.
-  PARAMS    : e — the onEdit event; sheet — the Request_Attachments Sheet.
-  RETURNS   : (void)
-*/
-function handleAttachmentChange(e, sheet) {
-  const range     = e.range;
-  const row       = range.getRow();
-
-  // Ignore header row
-  if (row === 1) return;
-
-  // Only care about new rows being added — not edits to existing rows
-  // A new row add will always start at column 1
-  if (range.getColumn() !== 1) return;
-
-  const rowData  = sheet.getRange(row, 1, 1, RA.UPLOADED_AT).getValues()[0];
-  const requestId = rowData[RA.REQUEST_ID - 1];
-
-  if (!requestId) return;
-
-  Logger.log(`handleAttachmentChange(): New attachment detected for ${requestId}`);
-  checkAttachmentSync_(requestId);
-}
-
-
-// ============================================================
-// TRIGGER REGISTRATION — ⚠️ DISABLED. DO NOT RUN registerTrigger().
-// It throws on purpose (see the comment inside it). The legacy
-// onSheetChange path below is kept readable for reference only.
-//
-// The registrations you DO run once per Google account are:
-//   • registerExpiryTrigger()
-//   • registerApproverReminderTrigger()
-// That is TWO registrations, not three.
-// ============================================================
-/*
-  Function Name: registerTrigger
-  LAYMAN    : I-run ito ISANG BESES para mag-register ng automatic watcher
-              sa Sheet. Pagkatapos, awtomatiko na ang lahat — hindi na kailangang
-              mano-manong tumawag. Nag-de-dedup ito: tinatanggal muna ang lumang
-              trigger bago magrehistro ng bago para hindi mag-dobble.
-  TECHNICAL : Removes any existing onSheetChange installable triggers, then
-              registers a new onEdit installable trigger for onSheetChange().
-  PARAMS    : (none) — run manually once in the Apps Script editor.
-  RETURNS   : (void) — logs confirmation.
-  ⚠️ NOTE   : Simple onEdit() triggers (from the editor) can't access user
-              email; the INSTALLABLE trigger registered here can.
-*/
-function registerTrigger() {
-  // ⚠️ INTENTIONALLY DISABLED — do NOT run this in production. Registering
-  // onSheetChange makes it fire on every status write and send a SECOND copy of
-  // every workflow email (the handle* paths already send them); worse, inside an
-  // installable trigger Session.getActiveUser() resolves to the trigger OWNER,
-  // not the acting approver, so receipts go to the wrong person. It sits next to
-  // registerExpiryTrigger()/registerApproverReminderTrigger() (which you DO run),
-  // so this guard prevents an accidental "run all three." If you ever truly need
-  // the legacy sheet-change email path, remove this throw deliberately AND first
-  // neutralize the email sends in handleCertificateRequestChange.
-  throw new Error("registerTrigger() is intentionally disabled: it would double-send every workflow email. See the comment above this line.");
-  // NOTE: the original registration body was removed — it was unreachable after
-  // the throw above and read as live code. Recover it from git history
-  // (commit e87d69c and earlier) if the legacy path is ever deliberately revived.
-}
 
 
 // ============================================================
@@ -368,7 +161,7 @@ function checkContractExpiries() {
 
 // ============================================================
 // Run this function ONCE manually (per Google account) to register
-// the daily expiry sweep. Mirrors registerTrigger().
+// the daily expiry sweep.
 // ⚠️ Triggers are per-script-PER-USER: when the project is migrated to
 // the Megaworld account, someone must run this there too.
 // ============================================================

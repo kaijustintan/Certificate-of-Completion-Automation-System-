@@ -34,9 +34,8 @@
     - showConfirm(opts)              Promise-based confirm dialog
 
   STATUS HELPERS
-    - STATUS_LABELS                  status → {badge, emotion} map
+    - STATUS_LABELS                  status → {badge} map
     - badgeClassFor(status)          badge CSS class
-    - emotionFor(status)             Miga emotion string
 
   SORT
     - sortRequests(requests, sortKey) non-mutating array sort
@@ -296,20 +295,21 @@ function showConfirm(opts) {
 // magic strings across files.
 // ============================================================
 /*
-  STATUS_LABELS — canonical status → {badge, emotion} map.
-  LAYMAN    : Para sa bawat status value, anong kulay ang badge at anong
-              Miga expression ang gagamitin. Iisang lugar para hindi
-              mag-iba-iba ang colors sa iba't ibang page.
-  TECHNICAL : Key = STATUS string; value = {badge: CSS class, emotion: Miga variant}.
-              Consumers use badgeClassFor() and emotionFor() — not this directly.
+  STATUS_LABELS — canonical status → {badge} map.
+  LAYMAN    : Para sa bawat status value, anong kulay ang badge. Iisang lugar
+              para hindi mag-iba-iba ang colors sa iba't ibang page.
+  TECHNICAL : Key = STATUS string; value = {badge: CSS class}. Consumers use
+              badgeClassFor() — not this directly. (The old emotion field and
+              emotionFor() were removed: pages pass Miga emotions explicitly,
+              so both were dead.)
 */
 const STATUS_LABELS = {
-  'Pending Approver 1':    { badge: 'badge-pending',  emotion: 'pending'  },
-  'Pending Approver 2':    { badge: 'badge-pending',  emotion: 'pending'  },
-  'Pending Approver 3':    { badge: 'badge-pending',  emotion: 'pending'  },
-  'Fully Approved':        { badge: 'badge-approved', emotion: 'approved' },
-  'Declined':              { badge: 'badge-declined', emotion: 'declined' },
-  'Returned to Requestor': { badge: 'badge-returned', emotion: 'returned' },
+  'Pending Approver 1':    { badge: 'badge-pending'  },
+  'Pending Approver 2':    { badge: 'badge-pending'  },
+  'Pending Approver 3':    { badge: 'badge-pending'  },
+  'Fully Approved':        { badge: 'badge-approved' },
+  'Declined':              { badge: 'badge-declined' },
+  'Returned to Requestor': { badge: 'badge-returned' },
 };
 
 /*
@@ -319,15 +319,6 @@ const STATUS_LABELS = {
 */
 function badgeClassFor(status) {
   return (STATUS_LABELS[status] && STATUS_LABELS[status].badge) || 'badge-pending';
-}
-
-/*
-  Function Name: emotionFor
-  LAYMAN    : Ano ang expression ni Miga para sa status na ito?
-  TECHNICAL : Looks up STATUS_LABELS[status].emotion; falls back to 'default'.
-*/
-function emotionFor(status) {
-  return (STATUS_LABELS[status] && STATUS_LABELS[status].emotion) || 'default';
 }
 
 

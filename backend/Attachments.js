@@ -20,13 +20,14 @@
   reachable via google.script.run — uploadAttachmentFile_ writing arbitrary
   files into the corporate folder, writeAttachmentRows_ writing a
   caller-supplied Drive ID into RA.FILE_LINK that downloadAttachment then
-  trusts. Only checkAttachmentSync_ (a documented permanent no-op) remains of
-  the legacy sync-finisher path; addAttachment was removed outright.
+  trusts. The legacy sync-finisher path is fully removed: addAttachment,
+  checkAttachmentSync_, and deleteAttachment_ are all gone (see the REMOVED
+  notes at their old locations below).
 
   ────────────────────────────────────────────────────────────
   OUTLINE
   ────────────────────────────────────────────────────────────
-  PHASE 8 — SUBMIT-TIME UPLOAD + GATED SERVING (new)
+  PHASE 8 — SUBMIT-TIME UPLOAD + GATED SERVING
     - validateAttachmentPayload_(files, requireAtLeastOne)  server-side payload guard
     - sanitizeAttachmentFilename_(name)    strip unsafe chars from uploaded filenames
     - uploadAttachmentFile_(file, driveName)  base64 → private DriveApp.createFile → {fileId, url}
@@ -34,12 +35,6 @@
     - writeAttachmentRows_(id, uploaded)   batch-write RA.* child rows (FILE = filename)
     - extractDriveId_(link)                pull a Drive file ID from a URL or bare id
     - downloadAttachment(attachmentId)    identity-gated file serving (base64) — no public link
-
-  LEGACY SYNC-FINISHER (deprecated by Phase 8 — kept dormant)
-    - checkAttachmentSync_(id)             [DEPRECATED] permanent no-op; SYNCING is gone
-    - deleteAttachment_(attachId)          remove attachment row (owner-only); still active
-    (addAttachment + testDomainSharing were REMOVED — see the notes at their old
-     locations below. addAttachment let a caller supply a raw Drive ID.)
 */
 
 
@@ -212,6 +207,10 @@ function validateAttachmentPayload_(files, requireAtLeastOne) {
     }
     if (!f.description || !String(f.description).trim()) {
       return { ok: false, error: "Each file needs a description (file " + (i + 1) + ': "' + f.filename + '").' };
+    }
+    // Formula-injection guard: the description is written into RA.DESCRIPTION.
+    if (startsWithFormula_(f.description)) {
+      return { ok: false, error: 'File descriptions must not start with "=" (file ' + (i + 1) + ': "' + f.filename + '").' };
     }
 
     // ── TYPE GATE (3 layers, cheapest first) ──────────────────────────────
@@ -407,6 +406,9 @@ function writeAttachmentRows_(requestId, uploaded, cycle) {
   });
   var startRow = sheet.getLastRow() + 1;
   sheet.getRange(startRow, 1, rows2D.length, 8).setValues(rows2D);
+  // Sole writer of Request_Attachments → sole invalidation point for the
+  // attachmentRows_() memo (Accessors.js). A new writer MUST invalidate too.
+  invalidateAttachmentCache_();
   Logger.log("writeAttachmentRows_(): Wrote " + rows2D.length + " attachment rows for " + requestId);
 }
 
@@ -445,7 +447,7 @@ function extractDriveId_(link) {
   STEPS
     Step 1 — Locate the attachment row
       Layman    : Hanapin ang attachment sa sheet gamit ang ID.
-      Technical : getAllData_(REQUEST_ATTACHMENTS) loop matching ATTACHMENT_ID.
+      Technical : attachmentRows_() memo scan matching ATTACHMENT_ID.
     Step 2 — Authorize via parent request
       Layman    : Requestor ka ba, approver ng request, o admin? Kung hindi → Unauthorized.
       Technical : getRequestRowData_(REQUEST_ID); sameEmail_(REQUESTOR) || isChainApprover_ || isAdmin_.
@@ -460,12 +462,12 @@ function extractDriveId_(link) {
     → { success:false, error:"Unauthorized" }
 */
 function downloadAttachment(attachmentId) {
-  const caller  = Session.getActiveUser().getEmail();
-  const allData = getAllData_(SHEET_NAMES.REQUEST_ATTACHMENTS);
+  const caller = Session.getActiveUser().getEmail();
+  const rows   = attachmentRows_();   // memoized read — this is a pure lookup
 
-  for (let i = 1; i < allData.length; i++) {
-    if (allData[i][RA.ATTACHMENT_ID - 1] === attachmentId) {
-      const requestId = allData[i][RA.REQUEST_ID - 1];
+  for (let i = 0; i < rows.length; i++) {
+    if (rows[i][RA.ATTACHMENT_ID - 1] === attachmentId) {
+      const requestId = rows[i][RA.REQUEST_ID - 1];
 
       // Same gate as getRequestDetail: requestor, any chain approver, or admin.
       const parentRow = getRequestRowData_(requestId);
@@ -474,7 +476,7 @@ function downloadAttachment(attachmentId) {
         return { success: false, error: "Unauthorized" };
       }
 
-      const fileId = extractDriveId_(allData[i][RA.FILE_LINK - 1]);
+      const fileId = extractDriveId_(rows[i][RA.FILE_LINK - 1]);
       if (!fileId) return { success: false, error: "Attachment file reference is invalid." };
 
       try {
@@ -483,7 +485,7 @@ function downloadAttachment(attachmentId) {
           success:  true,
           base64:   Utilities.base64Encode(blob.getBytes()),
           mimeType: blob.getContentType(),
-          filename: allData[i][RA.FILE - 1] || blob.getName(),
+          filename: rows[i][RA.FILE - 1] || blob.getName(),
         };
       } catch (err) {
         Logger.log("downloadAttachment(): read failed for " + attachmentId + " — " + err.message);
@@ -497,68 +499,14 @@ function downloadAttachment(attachmentId) {
 
 
 // ============================================================
-// LEGACY SYNC-FINISHER (deprecated by Phase 8)
-// These functions implemented the old "submit-first, upload-later" flow
-// where a request could sit in SYNCING status until files were attached.
-// Phase 8 replaced this with mandatory upload-before-submit: every new
-// request goes directly to PENDING_1 and arrives with all files already
-// in Drive. checkAttachmentSync_ and the SYNCING branch are no longer
-// on any live code path (submitNewRequest bypasses addAttachment entirely).
-// They remain here for reference and will be removed in a future cleanup PR.
-// The onSheetChange trigger (Triggers.js) is also DORMANT (unregistered);
-// handleAttachmentChange → checkAttachmentSync_ is therefore never called.
+// LEGACY SYNC-FINISHER — REMOVED
+// The old "submit-first, upload-later" flow (SYNCING status, expected
+// attachment counts, checkAttachmentSync_) was replaced by Phase 8's
+// mandatory upload-before-submit. checkAttachmentSync_ had become a
+// permanent no-op and was deleted together with its only caller, the
+// dormant onSheetChange trigger family in Triggers.js. Recover from git
+// history (commit 06de263 and earlier) if ever needed.
 // ============================================================
-
-// ============================================================
-// SYNC FINISHER
-// Called every time a new attachment row is added.
-// Checks if the required attachment count has been met.
-// If yes — unlocks the parent request and starts approval routing.
-// ============================================================
-/*
-  Function Name: checkAttachmentSync_
-  ⚠️ DEPRECATED by Phase 8 — no longer on any live code path. submitNewRequest()
-  now uploads all files BEFORE creating the request row (no SYNCING state ever
-  written). This function remains dormant pending a cleanup PR.
-
-  LAYMAN    : Tuwing may na-upload na file, tinitingnan kung sapat na bang lahat.
-              Kapag natugunan na ang expected count, "ino-unlock" ang request —
-              ibig sabihin nagsisimula na ang approval routing at inemail ang
-              unang approver. Kapalit ng AppSheet Sync Finisher Bot.
-  TECHNICAL : Reads currentStatus and expectedAttachments; no-ops if status ≠
-              SYNCING; otherwise compares countAttachments_() vs expected and on
-              threshold sets STATUS=PENDING_1, STEP=1, triggers sendApprovalRequest_.
-  PARAMS    : requestId — the parent request to check.
-  RETURNS   : (void)
-
-  STEPS
-    Step 1 — Locate parent row
-      Layman    : Hanapin ang request; kung wala → log at exit.
-      Technical : getRowNumberByRequestId_; -1 → return.
-    Step 2 — Guard: only act on SYNCING requests
-      Layman    : Kung hindi "Syncing Files" ang status, wala na tayong gagawin.
-      Technical : currentStatus !== STATUS.SYNCING → return.
-    Step 3 — Compare actual vs expected
-      Layman    : Bilang ng naka-upload vs bilang na kailangan.
-      Technical : countAttachments_(requestId) vs expectedAttachments.
-    Step 4 — Unlock if threshold met
-      Layman    : Sapat na → Pending Approver 1; padala ng email sa approver.
-      Technical : setValue STATUS=PENDING_1, STEP=1; sendApprovalRequest_.
-
-  EXAMPLE
-    // Request expects 2 files; 1 uploaded already; 2nd just added
-    checkAttachmentSync_("REQ-9b1")
-    // → STATUS flips to "Pending Approver 1"; Approver 1 gets an email
-*/
-function checkAttachmentSync_(requestId) {
-  // PERMANENT NO-OP (schema normalization). The SYNCING status and the
-  // Expected_Attachments column no longer exist — attachments are uploaded
-  // before submit (Phase 8), and the request goes straight to PENDING_1. This
-  // stub remains only so the dormant handleAttachmentChange caller doesn't error;
-  // it can be deleted together with that trigger handler.
-  return;
-}
-
 
 // ============================================================
 // ADD ATTACHMENT ROW
@@ -584,61 +532,12 @@ function checkAttachmentSync_(requestId) {
 // accepting a Drive ID from the client. Recover from git history for reference.
 
 
-// ============================================================
-// DELETE ATTACHMENT ROW
-// Removes an attachment record.
-// Called if a requestor removes a file before resubmitting.
-// ============================================================
-/*
-  Function Name: deleteAttachment_
-  LAYMAN    : I-delete ang isang attachment. Para lang sa requestor ng parent
-              request nito — ibang tao hindi pwede. Ginagamit pag nag-aalis
-              ng file bago mag-resubmit_.
-  TECHNICAL : Scans Request_Attachments for the attachmentId, resolves its
-              parent request, owner-guards, then deletes the row (+1 offset
-              because sheet rows are 1-based).
-  PARAMS    : attachmentId — the ATTACHMENT_ID value (e.g. "A3F-ATT").
-  RETURNS   : { success:true } on delete; { success:false, error/message } on
-              guard failure or not-found.
-
-  STEPS
-    Step 1 — Scan for the attachment row
-      Layman    : Hanapin ang attachment row sa sheet.
-      Technical : getAllData_ loop matching ATTACHMENT_ID; i → Sheet row i+1.
-    Step 2 — Authorize via parent request
-      Layman    : Kunin ang parent request; requestor ka ba? Kung hindi → Unauthorized.
-      Technical : getRequestRowData_(REQUEST_ID); sameEmail_(REQUESTOR, caller) gate.
-    Step 3 — Delete the row
-      Layman    : Burahin ang row ng attachment.
-      Technical : sheet.deleteRow(i + 1).
-
-  EXAMPLE
-    deleteAttachment_("A3F-ATT")
-    → { success:true }   // row deleted
-    deleteAttachment_("A3F-ATT")  // called by wrong user
-    → { success:false, error:"Unauthorized" }
-*/
-function deleteAttachment_(attachmentId) {
-  const caller  = Session.getActiveUser().getEmail();
-  const sheet   = getSheet_(SHEET_NAMES.REQUEST_ATTACHMENTS);
-  const allData = getAllData_(SHEET_NAMES.REQUEST_ATTACHMENTS);
-
-  for (let i = 1; i < allData.length; i++) {
-    if (allData[i][RA.ATTACHMENT_ID - 1] === attachmentId) {
-      // Only the requestor who owns the parent request may delete its files.
-      const parentRow = getRequestRowData_(allData[i][RA.REQUEST_ID - 1]);
-      if (!parentRow || !sameEmail_(parentRow[CR.REQUESTOR - 1], caller)) {
-        return { success: false, error: "Unauthorized" };
-      }
-      sheet.deleteRow(i + 1); // +1 because sheet rows are 1-based
-      Logger.log(`deleteAttachment_(): Removed ${attachmentId}`);
-      return { success: true };
-    }
-  }
-
-  Logger.log(`deleteAttachment_(): Attachment ID not found — ${attachmentId}`);
-  return { success: false, message: "Attachment not found." };
-}
+// REMOVED: deleteAttachment_(attachmentId) — row deletion for a requestor
+// removing a file before resubmit. It had zero callers (the resubmit flow is
+// deliberately append-only: prior files are kept as the audit trail and grouped
+// as "Previous versions" in the UI), and a row-deleting primitive contradicts
+// that design. Recover from git history (commit 06de263 and earlier) if a
+// remove-before-resubmit flow is ever deliberately added.
 
 // REMOVED: testDomainSharing() — a one-off diagnostic left over from the Phase 8
 // sharing investigation. It had zero callers, no doc block, and as a callable

@@ -64,17 +64,30 @@ function adminGuard_() {
 }
 
 /*
-  validGroupName_ — is this name non-blank and unused?
-  LAYMAN    : May laman ba ang pangalan, at wala pa bang ibang group (kahit
-              inactive) na ganito ang pangalan? Case-insensitive ang banggaan.
-  TECHNICAL : Compares trimmed lowercase against ALL groups (incl. inactive —
-              reactivating later must not collide). excludeId skips self on rename.
+  validGroupName_ — is this name non-blank, within length, safe, and unused?
+  LAYMAN    : May laman ba ang pangalan, hindi sobrang haba, hindi nagsisimula
+              sa "=", at wala pa bang ibang group (kahit inactive) na ganito ang
+              pangalan? Case-insensitive ang banggaan.
+  TECHNICAL : Length cap matches the client maxlength=80 (which is UX, not a
+              control — adminCreateGroup/adminRenameGroup are directly callable
+              via google.script.run, so the server cap here is the real one).
+              startsWithFormula_ blocks a formula-injection write into
+              GRP.GROUP_NAME. Uniqueness compares trimmed lowercase against ALL
+              groups (incl. inactive — reactivating later must not collide).
+              excludeId skips self on rename.
   PARAMS    : name — candidate display name; excludeId — group_id to skip (rename).
   RETURNS   : { ok:true, name:<trimmed> } or { ok:false, error }.
 */
 function validGroupName_(name, excludeId) {
+  const MAX_GROUP_NAME = 80;   // keep in sync with maxlength in Admin.html
   const trimmed = String(name || "").trim();
   if (!trimmed) return { ok: false, error: "Group name is required." };
+  if (trimmed.length > MAX_GROUP_NAME) {
+    return { ok: false, error: "Group name is too long (max " + MAX_GROUP_NAME + " characters)." };
+  }
+  if (startsWithFormula_(trimmed)) {
+    return { ok: false, error: 'Group name must not start with "=".' };
+  }
   const lower = trimmed.toLowerCase();
   const clash = getAllGroups_().some(function (g) {
     return g.id !== excludeId && String(g.name).trim().toLowerCase() === lower;
@@ -531,11 +544,24 @@ function adminSaveChain(groupId, slots) {
 
   const cleaned = [];
   const seen = {};
+  const MAX_APPROVER_EMAIL = 254;  // RFC 5321 practical ceiling
+  const MAX_DESIGNATION    = 200;  // matches MAX_SHORT_TEXT elsewhere
   for (let i = 0; i < slots.length; i++) {
     const email       = String((slots[i] && slots[i].email) || "").trim();
     const designation = String((slots[i] && slots[i].designation) || "").trim();
     if (!email || !/^\S+@\S+\.\S+$/.test(email)) {
       return { success: false, error: "Approver " + (i + 1) + " needs a valid email address." };
+    }
+    if (email.length > MAX_APPROVER_EMAIL) {
+      return { success: false, error: "Approver " + (i + 1) + "'s email address is too long." };
+    }
+    // Designation renders on the COC signatory block and in email labels, and
+    // is written to a cell — cap it and block a leading "=".
+    if (designation.length > MAX_DESIGNATION) {
+      return { success: false, error: "Approver " + (i + 1) + "'s designation is too long (max " + MAX_DESIGNATION + " characters)." };
+    }
+    if (startsWithFormula_(designation)) {
+      return { success: false, error: 'Approver ' + (i + 1) + '\'s designation must not start with "=".' };
     }
     const key = normalizeEmail_(email);
     if (seen[key]) {

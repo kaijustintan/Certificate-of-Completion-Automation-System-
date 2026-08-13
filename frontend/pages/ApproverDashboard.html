@@ -146,13 +146,6 @@ async function renderApproverDashboardPage() {
               current state vars.
 */
 function renderApproverControls() {
-  const sortOptions = [
-    { value: 'newest',  label: 'Most Recent'  },
-    { value: 'oldest',  label: 'Oldest First' },
-    { value: 'project', label: 'Project A→Z' },
-    { value: 'group',   label: 'Group A→Z'   },
-  ];
-
   // View switch as tabs with count badges (reuses the .tab/.tab-count CSS).
   function tab(view, label, count) {
     const active = (view === _approverCurrentView) ? ' active' : '';
@@ -167,10 +160,7 @@ function renderApproverControls() {
       tab('actioned', 'Actioned by you',      _approverActionedCache.length) +
     '</div>';
 
-  const sortHtml = sortOptions.map(function (o) {
-    return '<option value="' + o.value + '"' +
-      (o.value === _approverCurrentSort ? ' selected' : '') + '>' + o.label + '</option>';
-  }).join('');
+  const sortHtml = renderSortOptions(_approverCurrentSort);   // shared (UI.html)
 
   // Status sub-filter only applies to the "Actioned by you" view.
   let statusGroup = '';
@@ -183,11 +173,7 @@ function renderApproverControls() {
       { value: 'returned', label: 'Returned' },
       { value: 'expired',  label: 'Expired'  }, // #10 — contract end date lapsed (any status)
     ];
-    const statusHtml = statusOptions.map(function (o) {
-      return '<option value="' + o.value + '"' +
-        (o.value === _approverActionedStatus ? ' selected' : '') + '>' +
-        o.label + ' (' + counts[o.value] + ')</option>';
-    }).join('');
+    const statusHtml = renderCountedOptions(statusOptions, counts, _approverActionedStatus);   // shared (UI.html)
     statusGroup =
       '<div class="filter-group">' +
         '<label class="filter-label" for="approver-status-filter">Status</label>' +
@@ -216,21 +202,12 @@ function renderApproverControls() {
 /*
   Function Name: computeApproverActionedCounts
   LAYMAN    : Para sa Status dropdown, bilangin kung ilan ang approved, declined,
-              returned, expired, at lahat sa actioned cache. Ang "expired" ay
-              hiwalay na bilang — cross-cutting sa status (#10).
-  TECHNICAL : Iterates _approverActionedCache; status buckets via getDashboardFilter;
-              expired via the server-computed r.isExpired flag. Returns
-              {all, approved, declined, returned, expired}.
+              returned, expired, at lahat sa actioned cache.
+  TECHNICAL : Thin wrapper over the shared computeStatusCounts (UI.html) — no
+              'pending' bucket here, an actioned request is never pending for you.
 */
 function computeApproverActionedCounts() {
-  const counts = { all: 0, approved: 0, declined: 0, returned: 0, expired: 0 };
-  for (const r of _approverActionedCache) {
-    counts.all++;
-    const bucket = getDashboardFilter(r.status);
-    if (counts[bucket] !== undefined) counts[bucket]++;
-    if (r.isExpired) counts.expired++;
-  }
-  return counts;
+  return computeStatusCounts(_approverActionedCache, ['all', 'approved', 'declined', 'returned', 'expired']);
 }
 
 /*
@@ -420,52 +397,12 @@ function applyApproverView() {
 
 /*
   Function Name: renderApproverTable
-  LAYMAN    : Gumawa ng HTML table na may approver-specific columns (Control No.,
-              Project, Requestor, Group, Status, Filed). Bawat row ay clickable
-              papunta sa review detail page. Kung lapsed na ang contract, may
-              gray na "Expired" chip sa tabi ng status badge (#10).
-  TECHNICAL : Returns .data-table HTML; each <tr> onclick navigateTo('review',{id}).
-              Used by both awaiting and actioned list renderers. Expired chip
-              driven by the server-computed r.isExpired flag.
+  LAYMAN    : Ang requests table ng page na ito. Ang mismong table ay ang shared
+              renderRequestTable (UI.html) — dito, papunta sa review page ang click.
+  TECHNICAL : Delegates to renderRequestTable(rows, 'review'). Was a byte-identical
+              copy of Admin's table except the route; consolidated into UI.html.
 */
 function renderApproverTable(rows) {
-  const tableRows = rows.map(function (r) {
-    const idAttr = escapeHtml(r.requestId);
-    return '' +
-      '<tr tabindex="0" onclick="navigateTo(\'review\', {id: \'' + idAttr + '\'})" onkeydown="uiKeyActivate(event)">' +
-        '<td>' +
-          '<div class="cell-request">' +
-            '<div class="cell-request-icon">' + renderIcon('file', 16) + '</div>' +
-            '<div class="cell-request-text">' +
-              '<div class="cell-primary">' + escapeHtml(r.controlNumber) + '</div>' +
-            '</div>' +
-          '</div>' +
-        '</td>' +
-        '<td class="cell-clip" title="' + escapeHtml(r.projectTitle) + '">' + escapeHtml(r.projectTitle) + '</td>' +
-        '<td class="cell-clip" title="' + escapeHtml(r.requestor) + '">' + escapeHtml(r.requestor) + '</td>' +
-        '<td class="cell-clip" title="' + escapeHtml(r.group) + '">' + escapeHtml(r.group) + '</td>' +
-        '<td>' + renderStatusBadge(r.status) +
-          (r.isExpired ? ' <span class="badge badge-expired" title="Contract end date has passed">Expired</span>' : '') +
-        '</td>' +
-        '<td><span class="cell-date">' + renderIcon('calendar', 14) + escapeHtml(r.dateFiled) + '</span></td>' +
-        '<td class="cell-chevron">' + renderIcon('chevron-right', 18) + '</td>' +
-      '</tr>';
-  }).join('');
-
-  return '' +
-    '<div class="table-scroll">' +
-    '<table class="data-table">' +
-      '<thead><tr>' +
-        '<th>Request</th>' +
-        '<th>Project</th>' +
-        '<th>Requestor</th>' +
-        '<th>Group</th>' +
-        '<th>Status</th>' +
-        '<th>Filed</th>' +
-        '<th></th>' +
-      '</tr></thead>' +
-      '<tbody>' + tableRows + '</tbody>' +
-    '</table>' +
-    '</div>';
+  return renderRequestTable(rows, 'review');
 }
 </script>
