@@ -77,9 +77,13 @@ let _adminCreatingGroup = false;       // create-group form visible?
   TECHNICAL : Defensive isAdmin bounce (cosmetic — server callables re-verify);
               Promise.all([adminGetAllRequests, adminGetGroups]); resets view
               state; returns page HTML with clickable stat grid + control/list slots.
+              params.section ('records'|'groups') opens that section directly —
+              used by the request-detail back link so "← Back to Admin records"
+              lands on the records list, not the two-tile landing.
+  PARAMS    : params — { section? } (optional).
   RETURNS   : HTML string.
 */
-async function renderAdminPage() {
+async function renderAdminPage(params) {
   if (!state.user || !state.user.isAdmin) {
     return renderEmptyState({
       title:   'Not authorized',
@@ -92,7 +96,10 @@ async function renderAdminPage() {
     callServer('adminGetAllRequests'),
     callServer('adminGetGroups'),
   ]);
-  _adminSection       = null;   // start on the two-tile landing
+  // Landing by default; honor an explicit section (back-nav from a detail page).
+  const section = params && (params.section === 'records' || params.section === 'groups')
+    ? params.section : null;
+  _adminSection       = section;
   _adminCurrentSort   = 'newest';
   _adminStatusFilter  = 'all';
   _adminSearch        = '';
@@ -413,12 +420,14 @@ function syncAdminStatCards() {
   LAYMAN    : Table ng requests (kasalukuyang page lang). Bawat row clickable
               papunta sa READ-ONLY detail page (yung 'request' route — hindi
               'review', kasi hindi naman ikaw ang aaprove; tingin lang).
-  TECHNICAL : Delegates to the shared renderRequestTable(rows, 'request')
+  TECHNICAL : Delegates to the shared renderRequestTable(rows, 'request', 'admin')
               (UI.html). The detail page hides the resubmit panel for
-              non-owners, so admin lands read-only.
+              non-owners, so admin lands read-only. The 'admin' origin marker
+              makes the detail page's back link return to Admin records
+              instead of the viewer's own dashboard.
 */
 function renderAdminRequestTable(rows) {
-  return renderRequestTable(rows, 'request');
+  return renderRequestTable(rows, 'request', 'admin');
 }
 
 
@@ -486,7 +495,7 @@ function renderAdminGroupCard(g) {
       escapeHtml(g.id) + ' · ' +
       g.approverCount + ' approver' + (g.approverCount === 1 ? '' : 's') + ' · ' +
       g.pendingCount + ' pending request' + (g.pendingCount === 1 ? '' : 's') +
-      (g.approverCount === 0 ? ' · <span class="admin-warn">' + renderIcon('alert', 14) + ' no approver chain — set one up before use</span>' : '') +
+      (g.approverCount === 0 ? ' · <span class="admin-warn">' + renderIcon('alert', 14) + ' no approver chain, set one up before use</span>' : '') +
     '</div>';
 
   let actions = '';
@@ -526,7 +535,7 @@ function renderAdminChainEditor(g) {
 
   const warn = g.pendingCount > 0
     ? '<div class="admin-warn">' + renderIcon('alert', 14) + ' ' + g.pendingCount + ' in-flight request' + (g.pendingCount === 1 ? '' : 's') +
-      ' — chain changes take effect immediately. The chain must keep at least ' +
+      '. Chain changes take effect immediately. The chain must keep at least ' +
       (g.maxPendingStep || 1) + ' approver' + ((g.maxPendingStep || 1) === 1 ? '' : 's') + '.</div>'
     : '';
 
@@ -545,7 +554,7 @@ function renderAdminChainEditor(g) {
   }).join('');
 
   const removedRows = removed.map(function (s, j) {
-    const label = escapeHtml(s.email || '(blank)') + (s.designation ? ' — ' + escapeHtml(s.designation) : '');
+    const label = escapeHtml(s.email || '(blank)') + (s.designation ? ' · ' + escapeHtml(s.designation) : '');
     return '' +
       '<div class="chain-slot-row chain-slot-removed">' +
         '<span class="chain-slot-removed-label">Removed: ' + label + '</span>' +
@@ -688,7 +697,7 @@ async function adminToggleGroupActive(groupId) {
   const deactivating = g.active;
   const pendingNote = (deactivating && g.pendingCount > 0)
     ? ' Its ' + g.pendingCount + ' pending request' + (g.pendingCount === 1 ? '' : 's') +
-      ' will continue through the existing chain — only the new-request dropdown is affected.'
+      ' will continue through the existing chain; only the new-request dropdown is affected.'
     : '';
   const ok = await showConfirm({
     title:        (deactivating ? 'Deactivate' : 'Reactivate') + ' "' + g.name + '"?',
@@ -800,7 +809,7 @@ function adminChainRemove(i) {
 function adminChainRestore(j) {
   if (!_adminChainDraft) return;
   if (_adminChainDraft.slots.length >= 3) {
-    showToast('Chain is already at the 3-approver limit — remove one first.', 'error');
+    showToast('Chain is already at the 3-approver limit. Remove one first.', 'error');
     return;
   }
   const slot = _adminChainDraft.removed.splice(j, 1)[0];
@@ -861,7 +870,7 @@ async function adminSubmitChain() {
     const ok = await showConfirm({
       title:        'Apply chain changes now?',
       message:      'This group has ' + g.pendingCount + ' in-flight request' + (g.pendingCount === 1 ? '' : 's') + '. ' +
-                    'Changes apply to their next steps immediately — a replaced approver hands their queue to the new person. ' +
+                    'Changes apply to their next steps immediately: a replaced approver hands their queue to the new person. ' +
                     'Any newly-added approver is emailed right away with anything already awaiting them.',
       confirmLabel: 'Save chain',
       danger:       true,

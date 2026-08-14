@@ -41,7 +41,9 @@
     - getApprovers_(groupId)              legacy 6-field shape (compat)
     - getCurrentApprover_(step, groupId)  email at a given sequence
     - getGroupById_ / getGroupNameById_ / getGroupIdByName
-    - getApproverGroups()                [{id, name}] for the form dropdown
+    - getApproverGroups_()               [{id, name}] for the form dropdown
+    - getNewRequestOptions()             CALLABLE: { groups, locations } for the form
+    - ensureLocationsTab_() / getLocations_()  self-healing Locations tab + reader
   GROUPS / APPROVERS — ADMIN (read incl. inactive + write primitives)
     - getAllGroups_()                     all groups incl. inactive
     - getGroupChain_(groupId)             active chain rows, full fields
@@ -245,6 +247,7 @@ function invalidateActivityCache_() {
 */
 var ADMINS_CACHE_ = null;
 var ATTACHMENTS_CACHE_ = null;
+var LOCATIONS_CACHE_ = null;   // no invalidator: the sheet is the only writer (no code writes it)
 
 /* adminRows_ — memoized data rows of the Admins tab (one read per execution). */
 function adminRows_() {
@@ -284,6 +287,59 @@ function flagRows_() {
 /* invalidateFlagCache_ — drop the memo. Called by both Request_Flags writers. */
 function invalidateFlagCache_() {
   REQUEST_FLAGS_CACHE_ = null;
+}
+
+
+// ============================================================
+// LOCATIONS — editable dropdown options for the request form
+// ============================================================
+
+/*
+  ensureLocationsTab_ — return the Locations sheet, creating + seeding it when
+  the tab does not exist yet.
+  LAYMAN    : Kung wala pang "Locations" tab, gagawin ito at lalagyan agad ng
+              apat na dating naka-hardcode na options. Mula noon, ang sheet na
+              ang pinag-eeditan — magdagdag ng row para magdagdag ng option.
+  TECHNICAL : Self-heals ON READ (unlike Request_Flags which heals on write)
+              because Locations has no code write path — a request stores the
+              chosen STRING in CR.LOCATION, never a row reference. Seeded from
+              LOCATIONS_DEFAULT (Constants.js) so the first post-deploy render
+              behaves identically to the old hardcoded dropdown.
+  RETURNS   : the Locations Sheet object.
+*/
+function ensureLocationsTab_() {
+  const ss = getSpreadsheet_();
+  let sheet = ss.getSheetByName(SHEET_NAMES.LOCATIONS);
+  if (!sheet) {
+    sheet = ss.insertSheet(SHEET_NAMES.LOCATIONS);
+    const rows = [["name", "active"]].concat(
+      LOCATIONS_DEFAULT.map(function (name) { return [name, "TRUE"]; })
+    );
+    sheet.getRange(1, 1, rows.length, 2).setValues(rows);
+  }
+  return sheet;
+}
+
+/*
+  getLocations_ — the active Location options, in sheet row order.
+  LAYMAN    : Ang listahan ng locations para sa dropdown. Ang mga naka-"FALSE"
+              sa active column ay hindi isasama.
+  TECHNICAL : Memoized per execution (LOCATIONS_CACHE_). Blank names dropped;
+              names trimmed. "Other" is NOT part of this list — the form appends
+              it (with the free-text path) itself.
+  RETURNS   : string[] (may be empty if every row was deactivated).
+*/
+function getLocations_() {
+  if (LOCATIONS_CACHE_ === null) {
+    LOCATIONS_CACHE_ = ensureLocationsTab_()
+      .getDataRange().getValues().slice(1)
+      .filter(function (r) {
+        return String(r[LOC.NAME - 1] || "").trim() &&
+               String(r[LOC.ACTIVE - 1]).toUpperCase() !== "FALSE";
+      })
+      .map(function (r) { return String(r[LOC.NAME - 1]).trim(); });
+  }
+  return LOCATIONS_CACHE_;
 }
 
 
@@ -370,17 +426,20 @@ function getGroupIdByName_(name) {
   return m ? m[GRP.GROUP_ID - 1] : "";
 }
 /*
-  getApproverGroups — selectable groups for the new-request dropdown.
+  getApproverGroups_ — selectable groups for the new-request dropdown.
   LAYMAN    : Mga group na PWEDENG piliin ng requestor — active AT may kahit
               isang approver. Kung walang approver pa ang group, hindi ito
               lalabas (kung hindi, masa-submit sa wala, ma-stuck habambuhay).
               Makikita pa rin ito ng admin (naka-flag na "no chain").
   TECHNICAL : Filters GRP.ACTIVE AND ≥1 active Group_Approvers row. The
               has-approver set is built in one pass over GROUP_APPROVERS.
+              WAS the bare callable getApproverGroups; demoted to a helper when
+              getNewRequestOptions() became the form's single fetch (groups +
+              locations in one round-trip) — surface count unchanged.
   RETURNS   : [{ id, name }] (selectable groups only). NOTE: shape is objects,
               not string[] — the frontend dropdown matches.
 */
-function getApproverGroups() {
+function getApproverGroups_() {
   const hasApprover = {};
   groupApproverRows_().forEach(function (r) {
     if (String(r[GAP.ACTIVE - 1]).toUpperCase() !== "FALSE" && r[GAP.GROUP_ID - 1]) {
@@ -394,6 +453,21 @@ function getApproverGroups() {
              hasApprover[String(r[GRP.GROUP_ID - 1])];
     })
     .map(function (r) { return { id: r[GRP.GROUP_ID - 1], name: r[GRP.GROUP_NAME - 1] }; });
+}
+
+/*
+  getNewRequestOptions — everything the new-request form needs, in ONE call.
+  LAYMAN    : Isang biyahe sa server para sa form: ang mga group na pwedeng
+              piliin AT ang mga location options mula sa Locations tab.
+  TECHNICAL : BARE CALLABLE (replaces getApproverGroups on the surface —
+              tools/callable-surface.js EXPECTED updated in the same commit).
+              Returns non-sensitive registry data only; same exposure level the
+              old getApproverGroups had. Fetched fresh per form open so admin
+              group edits and Locations sheet edits show without re-login.
+  RETURNS   : { groups: [{id, name}], locations: string[] }.
+*/
+function getNewRequestOptions() {
+  return { groups: getApproverGroups_(), locations: getLocations_() };
 }
 
 
@@ -1116,6 +1190,35 @@ function timelineCycleLabel_(cycle) {
            submit/resubmit_); actor (email); action (ACTION.*); remark (string).
   RETURNS: (void). Never updates/deletes existing rows.
 */
+/*
+  getLastWorkflowActionDateMap_ — latest WORKFLOW action timestamp per request.
+  LAYMAN    : Kailan huling gumalaw ang bawat request? Isang mapa: request id →
+              petsa ng pinakabagong aksyon. Ginagamit ng approver-reminder sweep
+              para malaman kung ilang araw nang nakabinbin sa kasalukuyang
+              approver ang isang request.
+  TECHNICAL : One pass over the memoized activityRows_(). EXPLICITLY limited to
+              the five workflow ACTION values — the EXPIRY_* system flags share
+              this sheet and must never reset a request's "waiting since" clock
+              (same allowlist rationale as timeline in getApprovalView_).
+              Timestamps compared raw (Sheets returns Date objects).
+  RETURNS   : { "<requestId>": Date } (requests with no workflow action are absent).
+*/
+function getLastWorkflowActionDateMap_() {
+  const WORKFLOW = {};
+  [ACTION.SUBMITTED, ACTION.APPROVED, ACTION.DECLINED, ACTION.RETURNED, ACTION.RESUBMITTED]
+    .forEach(function (a) { WORKFLOW[a] = true; });
+  const map = {};
+  activityRows_().forEach(function (r) {
+    if (!WORKFLOW[r[ACT.ACTION - 1]]) return;
+    const id = String(r[ACT.REQUEST_ID - 1]);
+    const ts = r[ACT.TIMESTAMP - 1];
+    if (!id || !(ts instanceof Date)) return;
+    if (!map[id] || ts.getTime() > map[id].getTime()) map[id] = ts;
+  });
+  return map;
+}
+
+
 function appendAction_(requestId, groupId, cycle, step, actor, action, remark) {
   const sheet = getSheet_(SHEET_NAMES.ACTIVITY_LOG);
   const row = new Array(9).fill("");

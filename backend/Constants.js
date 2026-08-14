@@ -62,6 +62,7 @@ const SHEET_NAMES = {
   ADMINS_LOG:          "Admins_Log",          // append-only audit of admin group/chain actions
   COC_PDFS:            "COC_PDFs",            // one row per generated certificate PDF
   REQUEST_FLAGS:       "Request_Flags",       // per-field/per-attachment flags raised on return (self-healing tab)
+  LOCATIONS:           "Locations",           // editable Location dropdown options (self-healing tab, seeded on first read)
 };
 
 
@@ -238,6 +239,34 @@ const FLG = {
   FLAGGED_AT:     8,  // H  server time
   RESOLVED_CYCLE: 9,  // I  blank = open; the cycle of the resubmit that addressed it
 };
+
+
+/*
+  LOC — Locations column map + default seed.
+  LAYMAN    : Ang mga pagpipilian sa "Location" dropdown ng request form. Dati
+              nakasulat nang direkta sa code — ngayon nasa sariling sheet tab na,
+              para kahit sino sa office na may access sa spreadsheet ay pwedeng
+              magdagdag/magtanggal ng location nang WALANG developer. Ang "Other"
+              ay hindi kasama dito: laging idinadagdag ng form bilang huling
+              option (may kasamang free-text box).
+  TECHNICAL : 1-based, 2 cols. Row order = dropdown order. ACTIVE ("FALSE" to
+              hide, anything else shows) soft-disables an option without losing
+              it — existing requests store the location STRING denormalized in
+              CR.LOCATION, so deactivating/renaming here never breaks old rows
+              (an unknown stored value round-trips through the form's
+              Other + free-text path). The tab is SELF-HEALING ON READ
+              (ensureLocationsTab_ in Accessors.js): created + seeded with
+              LOCATIONS_DEFAULT on the first read that misses it. That differs
+              from Request_Flags (self-heal on write) because Locations has no
+              write path at all — the sheet IS the editor.
+*/
+const LOC = {
+  NAME:   1,  // A  the option label, stored verbatim into CR.LOCATION
+  ACTIVE: 2,  // B  "FALSE" hides the option; blank/TRUE shows it
+};
+
+// Seed rows for the self-healed Locations tab — the previously hardcoded set.
+const LOCATIONS_DEFAULT = ["AGT - Pending", "GCP - Pending", "EGP - Pending", "TWS - Pending"];
 
 
 /*

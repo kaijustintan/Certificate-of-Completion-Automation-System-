@@ -555,7 +555,59 @@
     margin-bottom: 6px;
     font-weight: 500;
   }
-  .form-label .required { color: var(--red-text); margin-left: 2px; }
+  /* Required star — red on field labels AND on section titles (the Supporting
+     documents card marks the whole section required, not one field). */
+  .form-label .required,
+  .form-section-title .required { color: var(--red-text); margin-left: 2px; }
+
+  /* ─── FIELD HELP ("?" hint bubbles on form labels) ───────── */
+  .field-help {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    margin-left: 4px;
+    color: var(--gray-400);
+    cursor: help;
+    vertical-align: middle;
+  }
+  .field-help:hover,
+  .field-help:focus { color: var(--navy-700); outline: none; }
+  .field-help-bubble {
+    position: absolute;
+    left: 50%;
+    bottom: calc(100% + 8px);
+    transform: translateX(-50%);
+    width: max-content;
+    max-width: 240px;
+    padding: 8px 10px;
+    border-radius: var(--radius-md);
+    background: var(--gray-900);
+    color: var(--white);
+    font-size: 12px;
+    font-weight: 400;
+    line-height: 1.45;
+    /* Labels are uppercase-tracked in section titles; hints must not inherit */
+    text-transform: none;
+    letter-spacing: normal;
+    white-space: normal;
+    box-shadow: var(--shadow-md);
+    opacity: 0;
+    visibility: hidden;
+    transition: opacity 0.12s ease;
+    z-index: 30;
+    pointer-events: none;
+  }
+  .field-help:hover .field-help-bubble,
+  .field-help:focus .field-help-bubble { opacity: 1; visibility: visible; }
+  .field-help-bubble::after {           /* caret pointing at the icon */
+    content: '';
+    position: absolute;
+    top: 100%;
+    left: 50%;
+    transform: translateX(-50%);
+    border: 5px solid transparent;
+    border-top-color: var(--gray-900);
+  }
   .form-input,
   .form-select,
   .form-textarea {
@@ -619,9 +671,11 @@
   }
   .attachment-item:last-child { border-bottom: none; }
 
-  /* Filename — flexes to share the row, truncates with ellipsis */
+  /* Filename — equal half of the row (basis 0, NOT auto: a content-sized basis
+     would let long filenames push each row's description input to a different
+     x-position, misaligning the column). Truncates with ellipsis. */
   .attachment-item-name {
-    flex: 1 1 auto;
+    flex: 1 1 0;
     min-width: 0;
     font-size: 13px;
     color: var(--gray-900);
@@ -893,6 +947,25 @@
     white-space: pre-wrap;
     word-break: break-word;
   }
+  /* "View details" on a return that raised per-item flags — opens the flag
+     dialog. Amber to match the flag language used everywhere else. */
+  .timeline-details-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    margin-top: 6px;
+    padding: 4px 10px;
+    border: 1px solid var(--amber-bg);
+    border-radius: 999px;
+    background: var(--white);
+    color: var(--amber-text);
+    font-family: inherit;
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: background 0.12s ease;
+  }
+  .timeline-details-btn:hover { background: var(--amber-bg); }
 
 
   /* ─── RESUBMIT BANNER ───────────────────────────────────── */
@@ -1269,6 +1342,11 @@
     position: fixed;
     inset: 0;
     background: rgba(15, 23, 42, 0.45);
+    /* Blur the page behind the dialog so the box reads as the only live thing.
+       Purely decorative: the tint above already carries the contrast, so
+       browsers without backdrop-filter lose nothing. */
+    backdrop-filter: blur(3px);
+    -webkit-backdrop-filter: blur(3px);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -1284,6 +1362,15 @@
     width: 100%;
     padding: 24px;
     animation: modalIn 150ms var(--ease-out);
+  }
+  /* Flag-details dialog: wider than a confirm prompt, and its list scrolls
+     rather than pushing the actions off-screen on a long return. */
+  .modal-wide { max-width: 560px; }
+  .flag-modal-list {
+    max-height: 50vh;
+    overflow-y: auto;
+    margin-bottom: 20px;
+    border-top: 1px solid var(--gray-200);
   }
   .modal-title {
     font-size: 16px;
@@ -1463,7 +1550,10 @@
   .choice-arrow { flex-shrink: 0; color: var(--text-muted); transition: transform 0.15s ease; }
   .choice-card:hover .choice-arrow { color: var(--blue-accent); transform: translateX(2px); }
   /* "← Admin home" back link above each section. */
-  .admin-back {
+  /* Back links — the top-left "← Back to …" affordance above a page title.
+     .admin-back predates .back-link; both share the ruleset (same look). */
+  .admin-back,
+  .back-link {
     display: inline-block;
     margin-bottom: 16px;
     color: var(--navy-700);
@@ -1471,7 +1561,8 @@
     font-weight: 500;
     cursor: pointer;
   }
-  .admin-back:hover { text-decoration: underline; }
+  .admin-back:hover,
+  .back-link:hover { text-decoration: underline; }
   /* Soft-removed chain slots: greyed, pending until Save. */
   .chain-removed-list {
     margin: 8px 0;
@@ -1564,8 +1655,9 @@
   .hero-art::before {
     content: '';
     position: absolute;
-    right: -6px;
-    bottom: -28px;
+    right: -12px;
+    top: 50%;
+    margin-top: -84px;      /* half of 168px — centered on the mascot roundel */
     width: 168px;
     height: 168px;
     border-radius: 50%;
@@ -1577,15 +1669,22 @@
     width: 100%;
     height: 100%;
   }
+  /* Circular roundel, vertically centered in the band. The interim Miga art is
+     a square with its own dark bg — cropping it to a ring reads as deliberate
+     instead of a clipped floating rectangle. Centering uses top + margin (not
+     transform) so the heroFloat translateY animation still applies cleanly. */
   .hero-mascot {
     position: absolute;
-    right: 8px;
-    bottom: -28px;          /* sits the mascot into the card's bottom edge */
-    height: 150px;
-    width: auto;
-    object-fit: contain;
+    right: 18px;
+    top: 50%;
+    margin-top: -56px;      /* half of 112px — vertical center */
+    height: 112px;
+    width: 112px;
+    object-fit: cover;
+    border-radius: 50%;
+    border: 2px solid rgba(255, 255, 255, 0.22);
     /* interim Miga art has a dark bg; on the navy hero it blends naturally.
-       TODO (Phase 12): with transparent assets this just works as-is. */
+       TODO (Phase 12): with transparent assets, drop the crop if preferred. */
     animation: heroFloat 4s ease-in-out infinite;
   }
   @keyframes heroFloat {
@@ -1819,7 +1918,8 @@
   /* Tablet/large-phone: hero mascot gets in the way — trim it down */
   @media (max-width: 880px) {
     .hero-art { width: 130px; }
-    .hero-mascot { height: 118px; bottom: -22px; }
+    .hero-mascot { height: 88px; width: 88px; margin-top: -44px; right: 12px; }
+    .hero-art::before { width: 130px; height: 130px; margin-top: -65px; right: -8px; }
   }
 
   @media (max-width: 640px) {
@@ -1837,5 +1937,9 @@
     .pagination { justify-content: center; }
     /* Chain editor: let email + designation inputs and buttons reflow */
     .chain-slot-row { flex-wrap: wrap; }
+    /* Hint bubbles: anchor left of the icon so they can't run off-screen
+       (labels sit at the left edge on stacked mobile forms) */
+    .field-help-bubble { left: -12px; transform: none; max-width: 210px; }
+    .field-help-bubble::after { left: 18px; transform: none; }
   }
 </style>

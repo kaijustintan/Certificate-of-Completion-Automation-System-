@@ -67,26 +67,31 @@ const NEW_REQUEST_REQUIRED = Object.keys(NEW_REQUEST_LABELS);
   LAYMAN    : Ipakita ang bagong request form. Sariwa ang group list sa bawat
               pagbukas — kaka-fetch galing sa server, kaya kung nag-edit ang admin
               ng groups (nag-add/deactivate), makikita agad dito.
-  TECHNICAL : Fetches state.approverGroups fresh via callServer('getApproverGroups')
-              on every render (no session cache — an admin group change must not be
-              masked by a stale cache); returns the full form HTML with 5 card sections.
+  TECHNICAL : Fetches state.approverGroups + state.locations fresh via
+              callServer('getNewRequestOptions') on every render (one round-trip;
+              no session cache — an admin group change or a Locations sheet edit
+              must not be masked by a stale cache); returns the full form HTML
+              with 5 card sections.
   RETURNS   : HTML string.
 */
 async function renderNewRequestPage() {
   // Always fetch fresh so admin changes to the group list (add / deactivate /
-  // chain edits that empty a group) are reflected the next time the form opens.
-  state.approverGroups = await callServer('getApproverGroups');
+  // chain edits that empty a group) and Locations sheet edits are reflected
+  // the next time the form opens. One call carries both lists.
+  const options = await callServer('getNewRequestOptions');
+  state.approverGroups = (options && options.groups) || [];
+  state.locations      = (options && options.locations) || [];
 
   // No routable group → no form. Without this the group dropdown renders with
   // only "Select a group…" and submit dead-ends on a generic required-field
   // toast, which reads as a bug rather than a setup gap.
   if (!state.approverGroups || state.approverGroups.length === 0) {
     return `
+      ${renderBackLink('Back to dashboard', "navigateTo('home')")}
       <div class="page-header">
         <div>
           <div class="page-title">New e-certificate request</div>
         </div>
-        <button class="btn btn-secondary" onclick="navigateTo('home')">← Back</button>
       </div>
       ${renderEmptyState({
         title: 'No approver groups available',
@@ -95,7 +100,7 @@ async function renderNewRequestPage() {
       })}`;
   }
 
-  // getApproverGroups() returns [{id, name}] — the option VALUE is the group_id
+  // options.groups is [{id, name}] — the option VALUE is the group_id
   // (what submitNewRequest stores in CR.GROUP); the LABEL is the display name.
   const groupOptions = (state.approverGroups || [])
     .map(function (g) {
@@ -103,13 +108,22 @@ async function renderNewRequestPage() {
     })
     .join('');
 
+  // Location options from the Locations sheet (self-healing tab, editable
+  // without a developer). "Other" is always appended by the form itself —
+  // it toggles the free-text row, so it must exist even if the sheet changes.
+  const locationOptions = (state.locations || [])
+    .map(function (loc) {
+      return '<option value="' + escapeHtml(loc) + '">' + escapeHtml(loc) + '</option>';
+    })
+    .join('');
+
   return `
+    ${renderBackLink('Back to dashboard', "navigateTo('home')")}
     <div class="page-header">
       <div>
         <div class="page-title">New e-certificate request</div>
         <div class="page-subtitle">Fields marked with <span class="required">*</span> are required.</div>
       </div>
-      <button class="btn btn-secondary" onclick="navigateTo('home')">← Back</button>
     </div>
 
     <form id="new-request-form" autocomplete="off">
@@ -118,50 +132,47 @@ async function renderNewRequestPage() {
         <div class="form-section-title">Request information</div>
 
         <div class="form-row">
-          <label class="form-label" for="projectTitle">Project title <span class="required">*</span></label>
+          <label class="form-label" for="projectTitle">Project title <span class="required">*</span>${renderFieldHelp('projectTitle')}</label>
           <input type="text" class="form-input" id="projectTitle" name="projectTitle" required>
         </div>
 
         <div class="form-grid">
           <div class="form-row">
-            <label class="form-label" for="group">Approver group <span class="required">*</span></label>
+            <label class="form-label" for="group">Approver group <span class="required">*</span>${renderFieldHelp('group')}</label>
             <select class="form-select" id="group" name="group" required>
               <option value="">Select a group…</option>
               ${groupOptions}
             </select>
           </div>
           <div class="form-row">
-            <label class="form-label" for="requestorDesig">Requestor designation</label>
+            <label class="form-label" for="requestorDesig">Requestor designation${renderFieldHelp('requestorDesig')}</label>
             <input type="text" class="form-input" id="requestorDesig" name="requestorDesig" placeholder="e.g. Systems Analyst">
           </div>
         </div>
 
         <div class="form-grid">
           <div class="form-row">
-            <label class="form-label" for="accountablePerson">Accountable person <span class="required">*</span></label>
+            <label class="form-label" for="accountablePerson">Accountable person <span class="required">*</span>${renderFieldHelp('accountablePerson')}</label>
             <input type="text" class="form-input" id="accountablePerson" name="accountablePerson" required>
           </div>
           <div class="form-row">
-            <label class="form-label" for="department">Department <span class="required">*</span></label>
+            <label class="form-label" for="department">Department <span class="required">*</span>${renderFieldHelp('department')}</label>
             <input type="text" class="form-input" id="department" name="department" required>
           </div>
         </div>
 
         <div class="form-grid">
           <div class="form-row">
-            <label class="form-label" for="location-select">Location <span class="required">*</span></label>
+            <label class="form-label" for="location-select">Location <span class="required">*</span>${renderFieldHelp('location')}</label>
             <select class="form-select" name="location" id="location-select" required
               onchange="onLocationChange(this.value)">
               <option value="">Select a location…</option>
-              <option value="AGT - Pending">AGT - Pending</option>
-              <option value="GCP - Pending">GCP - Pending</option>
-              <option value="EGP - Pending">EGP - Pending</option>
-              <option value="TWS - Pending">TWS - Pending</option>
+              ${locationOptions}
               <option value="Other">Other</option>
             </select>
           </div>
           <div class="form-row">
-            <label class="form-label" for="pcName">PC name <span class="required">*</span></label>
+            <label class="form-label" for="pcName">PC name <span class="required">*</span>${renderFieldHelp('pcName')}</label>
             <input type="text" class="form-input" id="pcName" name="pcName" required>
           </div>
         </div>
@@ -178,21 +189,21 @@ async function renderNewRequestPage() {
         <div class="form-section-title">Reference numbers</div>
         <div class="form-grid">
           <div class="form-row">
-            <label class="form-label" for="prism">PRISM</label>
+            <label class="form-label" for="prism">PRISM${renderFieldHelp('prism')}</label>
             <input type="text" class="form-input" id="prism" name="prism" placeholder="Optional">
           </div>
           <div class="form-row">
-            <label class="form-label" for="purchaseOrder">Purchase Order <span class="required">*</span></label>
+            <label class="form-label" for="purchaseOrder">Purchase Order <span class="required">*</span>${renderFieldHelp('purchaseOrder')}</label>
             <input type="text" class="form-input" id="purchaseOrder" name="purchaseOrder" required>
           </div>
         </div>
         <div class="form-grid">
           <div class="form-row">
-            <label class="form-label" for="ihelpNumber">IHelp number</label>
+            <label class="form-label" for="ihelpNumber">IHelp number${renderFieldHelp('ihelpNumber')}</label>
             <input type="text" class="form-input" id="ihelpNumber" name="ihelpNumber" placeholder="Optional">
           </div>
           <div class="form-row">
-            <label class="form-label" for="supplierName">Supplier name <span class="required">*</span></label>
+            <label class="form-label" for="supplierName">Supplier name <span class="required">*</span>${renderFieldHelp('supplierName')}</label>
             <input type="text" class="form-input" id="supplierName" name="supplierName" required>
           </div>
         </div>
@@ -203,21 +214,21 @@ async function renderNewRequestPage() {
         <div class="form-section-title">Product</div>
         <div class="form-grid">
           <div class="form-row">
-            <label class="form-label" for="productType">Product type <span class="required">*</span></label>
+            <label class="form-label" for="productType">Product type <span class="required">*</span>${renderFieldHelp('productType')}</label>
             <input type="text" class="form-input" id="productType" name="productType" placeholder="e.g. Software, Hardware" required>
           </div>
           <div class="form-row">
-            <label class="form-label" for="productName">Product name <span class="required">*</span></label>
+            <label class="form-label" for="productName">Product name <span class="required">*</span>${renderFieldHelp('productName')}</label>
             <input type="text" class="form-input" id="productName" name="productName" required>
           </div>
         </div>
         <div class="form-grid">
           <div class="form-row">
-            <label class="form-label" for="typeOfPurchase">Type of purchase <span class="required">*</span></label>
+            <label class="form-label" for="typeOfPurchase">Type of purchase <span class="required">*</span>${renderFieldHelp('typeOfPurchase')}</label>
             <input type="text" class="form-input" id="typeOfPurchase" name="typeOfPurchase" placeholder="e.g. New, Renewal" required>
           </div>
           <div class="form-row">
-            <label class="form-label" for="typeOfLicense">Type of license <span class="required">*</span></label>
+            <label class="form-label" for="typeOfLicense">Type of license <span class="required">*</span>${renderFieldHelp('typeOfLicense')}</label>
             <input type="text" class="form-input" id="typeOfLicense" name="typeOfLicense" placeholder="e.g. 3-year Subscription" required>
           </div>
         </div>
@@ -228,12 +239,12 @@ async function renderNewRequestPage() {
         <div class="form-section-title">Contract</div>
         <div class="form-grid">
           <div class="form-row">
-            <label class="form-label" for="contractStart">Contract start date <span class="required">*</span></label>
+            <label class="form-label" for="contractStart">Contract start date <span class="required">*</span>${renderFieldHelp('contractStart')}</label>
             <input type="date" class="form-input" id="contractStart" name="contractStart" required
               oninput="var e=this.closest('form').elements['contractEnd']; if(e) e.min=this.value;">
           </div>
           <div class="form-row">
-            <label class="form-label" for="contractEnd">Contract end date <span class="required">*</span></label>
+            <label class="form-label" for="contractEnd">Contract end date <span class="required">*</span>${renderFieldHelp('contractEnd')}</label>
             <input type="date" class="form-input" id="contractEnd" name="contractEnd" required>
           </div>
         </div>
@@ -243,14 +254,14 @@ async function renderNewRequestPage() {
       <div class="card">
         <div class="form-section-title">Purpose</div>
         <div class="form-row">
-          <label class="form-label" for="requestorRemark">Purpose / remark <span class="required">*</span></label>
+          <label class="form-label" for="requestorRemark">Purpose / remark <span class="required">*</span>${renderFieldHelp('requestorRemark')}</label>
           <textarea class="form-textarea" id="requestorRemark" name="requestorRemark" placeholder="State the purpose of this e-certificate request." required></textarea>
         </div>
       </div>
 
 
       <div class="card">
-        <div class="form-section-title">Supporting documents <span class="required">*</span></div>
+        <div class="form-section-title">Supporting documents <span class="required">*</span>${renderFieldHelp('attachments')}</div>
         <p class="text-small text-muted" style="margin:0 0 12px;">
           Attach at least one supporting document before submitting
           (e.g. Purchase Order, Supplier Quotation, Budget Approval).
@@ -424,7 +435,7 @@ async function onNewRequestSubmit(e) {
     const result = await callServer('submitNewRequest', data);
     if (result && result.success) {
       hideLoading();
-      showToast('Request submitted — ' + result.controlNumber, 'success');
+      showToast('Request submitted: ' + result.controlNumber, 'success');
       navigateTo('request', { id: result.requestId });
     } else {
       hideLoading();
