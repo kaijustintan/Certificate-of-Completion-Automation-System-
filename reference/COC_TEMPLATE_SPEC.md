@@ -21,7 +21,7 @@ template. The real layout lived in Google Drive, not the repo — so this file w
 record of *what* that Doc had to contain (placeholders, formatting, structure) and *why*.
 
 > Source of truth for the look: the original AppSheet template ("Image 6" in
-> `E-Certificate Automation Documentation.pdf`).
+> `docs/archive/AppSheet-era User Guide.pdf`).
 
 ---
 

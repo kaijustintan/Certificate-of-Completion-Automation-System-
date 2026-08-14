@@ -327,33 +327,37 @@ row click → navigateTo('request', {id}) → RequestDetail.renderRequestDetailP
 
 ---
 
-## Flow 9 — The background trigger (`onSheetChange`)  ⚠️ understand this duality
+## Flow 9 — ⛔ DELETED: the `onSheetChange` background trigger
 
-**Layman first:** whenever the Sheet itself changes, Google fires a watcher — the ported version of AppSheet's old "bots". This runs *in parallel* to the `handle*` functions above, which is the one real gotcha in the system.
+> ⛔ **This flow no longer exists.** The entire `onSheetChange` trigger family
+> (`handleCertificateRequestChange`, `handleAttachmentChange`, and the `registerTrigger()`
+> registrar) was **deleted from the codebase**. Nothing here describes running code.
+>
+> The section is kept as a tombstone because the deletion is worth understanding, and because a
+> stale trigger registration may still exist on an old Google account.
 
-### Step 1 — Any sheet edit fires it (Server)
-**File:** `Triggers.js:44 → onSheetChange(e)` (installable trigger, registered once via `Triggers.js:217 → registerTrigger()`)
-**Layman:** routes by which tab changed.
-```
-onSheetChange → Requests ? handleCertificateRequestChange : Request_Attachments ? handleAttachmentChange
-```
+**What it was.** An installable trigger that fired on any spreadsheet edit and, watching the
+`Status` column, sent workflow emails: a direct port of AppSheet's old "bots". It ran *in
+parallel* to the `handle*` web-app functions, which already send those same emails.
 
-### Step 2 — Status-change watcher (Server → Email)
-**File:** `Triggers.js:94 → handleCertificateRequestChange(e, sheet)`
-**Layman:** watches the `Status` column; on change, fires the matching email pair by status value — the ported bots.
+**Why it was deleted.** Three reasons, in order of severity:
 
-### How it relates to Flows 3–6
-The `handle*` functions **already send those emails directly** (they run in the web-app session, so they know *who* acted). The trigger is the legacy/fallback path — useful for raw Sheet edits (e.g. a manual admin correction).
+1. **It held a complete second implementation of the notification system.** It was one trigger
+   registration away from double-sending every workflow email.
+2. **Identity was wrong by construction.** Inside an installable trigger,
+   `Session.getActiveUser()` resolves to the *trigger owner*, not the person who acted. Every
+   receipt it sent would have named the wrong actor.
+3. **It was dormant anyway.** Its registrar was disabled, so it was dead weight carrying live
+   risk.
 
-> ⚠️ **Open item to verify before go-live:** if the installable trigger is **active** *and* a `handle*` path runs, one status change could send the **same email twice**. Confirm via `ScriptApp.getProjectTriggers()` whether `onSheetChange` is currently registered; if it is, gate one of the two paths. This is the main reason to understand both.
+**What replaced it.** Nothing, deliberately. The `handle*` functions run in the web-app session,
+so they know who acted; that has always been the authoritative path. Raw manual sheet edits no
+longer send email at all, which is correct: a hand-edited cell is not a workflow action and
+should not notify anyone.
 
-**One-line flow summary**
-```
-📊 any Sheet edit → Triggers.onSheetChange
-   → handleCertificateRequestChange   (watches Status col → fires the matching email pair)
-   → handleAttachmentChange           (new attachment → checkAttachmentSync)
-   ⚠️ runs in parallel to the handle* emails — verify no double-send
-```
+> 🛠 **If you find an `onSheetChange` trigger on any account, delete it.** It points at a function
+> that no longer exists, so it fails on every spreadsheet edit and generates failure emails.
+> Recover the original code from git history (commit `06de263` and earlier) if it is ever needed.
 
 ---
 
@@ -362,8 +366,14 @@ Once you see these, every flow reads the same way:
 
 1. **Guard before write.** Every sensitive server action checks identity (`Session` + `WebApp.js:213 sameEmail`) *before* touching the Sheet. The frontend only hides buttons; the **server** is what enforces it. (Flows 3–6, 8.)
 2. **Capture before clear.** Return (5) and resubmit (6) record history/snapshots *before* the low-level action wipes the old state. Order is load-bearing.
-3. **The Sheet is the source of truth (★).** Every official change is a `setValue`/`appendRow` in `Approvals.js`/`WebApp.js`. Emails and dashboards just react to it. Two things can react to a Status change — the `handle*` path and `onSheetChange` (9) — so know which is authoritative.
+3. **`Activity_Log` is the source of truth (★).** Every official change is an `appendAction_` to the append-only timeline, followed by `setRequestCache_` to update the denormalized status/step on the request row. The `Requests` columns are a read-cache for fast list views, not the record. Emails and dashboards derive from the timeline via `getApprovalView_`. There is now exactly **one** path that reacts to a state change: the `handle*` functions in the web-app session (see the Flow 9 tombstone above).
 
 ---
 
-*Living doc — add a flow here whenever a new operation ships (COC generation, attachment upload). See `reference/ROADMAP.md` for build status, `reference/COLUMN_MAP (1).md` for column indices.*
+*Living doc — add a flow here whenever a new operation ships. See `docs/manual/` for the full manual, `reference/ROADMAP.md` for build status, and `backend/Constants.js` for the authoritative column maps.*
+
+> ⚠️ **Accuracy note (14 Aug 2026).** This document predates the database normalization and the
+> August feature batch. Flow 9 is a tombstone; the remaining flows are structurally correct but
+> may cite stale line numbers, and they do not cover return flags, editable resubmit, the Admin
+> console, or the `Locations` sheet. **`docs/manual/part-0-common.md` wins** wherever this file
+> disagrees with it.

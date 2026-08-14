@@ -25,7 +25,9 @@
 
 ## 1. What this system is
 
-A single-tenant internal approval portal that replaces a legacy Google AppSheet application. An employee ("requestor") files a request for a software or license Certificate of Completion, attaches supporting documents, and the request routes through a sequential chain of up to three named approvers. On full approval the system generates a branded PDF certificate from a Google Docs template, archives it to Drive, and emails it to the requestor as an attachment.
+A single-tenant internal approval portal that replaces a legacy Google AppSheet application. An employee ("requestor") files a request for a software or license Certificate of Completion, attaches supporting documents, and the request routes through a sequential chain of up to three named approvers. On full approval the system generates a branded PDF certificate **in code** (`buildCertificateHtml_` → PDF), archives it to Drive, and emails it to the requestor as an attachment.
+
+> ⚠️ **Corrected 2026-08-14.** This sentence previously said the certificate was generated "from a Google Docs template." That engine was **removed**: there is no template Doc, and `TEMPLATE_DOC_ID` no longer exists as config. The certificate's layout is now source code, under the same version control and review as the rest of the system. Treat any other mention of a Docs template in this file as historical.
 
 It is not a general workflow engine. The domain is hardcoded: one request type, one certificate type, one organization.
 
