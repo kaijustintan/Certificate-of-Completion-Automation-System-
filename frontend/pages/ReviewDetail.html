@@ -31,7 +31,8 @@
     - closeReviewPanels()               restore action buttons; hide all panels
     - setActionItemHidden(btnId, hidden) show/hide a button's .action-item wrapper
     - syncPanelButton(kind)              enable/disable submit when textarea is filled
-    - onApproveClick()                  showConfirm → runReviewAction('handleApprove', 'Approving…')
+    - onApproveClick()                  opens the approve panel (optional comment)
+    - onApproveConfirm()                runReviewAction('handleApprove', [id, remark])
     - onDeclineSubmit()                 showConfirm → runReviewAction('handleDecline', 'Declining…')
     - onReturnSubmit()                  runReviewAction('handleReturn', 'Returning…')
     - runReviewAction()                 shared: lockButtons + showLoading + callServer
@@ -98,13 +99,13 @@ async function renderReviewDetailPage(params) {
   const prevApprovalNote = canAct ? renderPreviousApprovalNote(detail, userEmail) : '';
 
   return `
+    ${renderBackLink('Back to pending approvals', "navigateTo('approverDashboard')")}
     <div class="page-header">
       <div>
         <div class="text-tiny text-muted">${escapeHtml(detail.controlNumber)}</div>
         <div class="page-title">${escapeHtml(detail.projectTitle)}</div>
         <div class="page-subtitle">${renderStatusBadge(detail.status)}${detail.isExpired ? ' <span class="badge badge-expired" title="Contract end date has passed">Expired</span>' : ''}</div>
       </div>
-      <button class="btn btn-secondary" onclick="navigateTo('approverDashboard')">← Pending list</button>
     </div>
 
     ${renderProgressSteps(detail)}
@@ -117,7 +118,7 @@ async function renderReviewDetailPage(params) {
       <div class="detail-main">
         ${renderRequestSummaryCards(detail)}
         ${renderAttachmentsBlock(detail, false)}
-        ${renderTimeline(detail.timeline)}
+        ${renderTimeline(detail.timeline, detail.flags)}
       </div>
 
       <div class="detail-rail">
@@ -195,7 +196,7 @@ function renderLockedNotice(detail, userEmail) {
   if (!userEmail) {
     reason = 'You are not signed in as an approver.';
   } else if (detail.status === 'Fully Approved') {
-    reason = 'This request is already fully approved — no further action is needed.';
+    reason = 'This request is already fully approved. No further action is needed.';
   } else if (detail.status === 'Declined') {
     reason = 'This request has been declined.';
   } else if (detail.status === 'Returned to Requestor') {
@@ -216,10 +217,12 @@ function renderLockedNotice(detail, userEmail) {
 /*
   Function Name: renderActionBar
   LAYMAN    : Gumawa ng "Your decision" card na may Approve, Return, at Decline
-              buttons. Kasama rin ang 2 hidden panels na lalabas kapag pinindot ang
-              Return o Decline para makapag-enter ng remark.
+              buttons. Kasama rin ang 3 hidden panels na lalabas kapag pinindot
+              ang isa sa tatlo: required remark sa Return/Decline, optional
+              comment sa Approve.
   TECHNICAL : Returns HTML for the .action-card + #decline-panel + #return-panel
-              (both start .hidden). Buttons are .action-btn class (for lock/unlock).
+              + #approve-panel (all start .hidden). Buttons are .action-btn class
+              (for lock/unlock).
   NOTE      : The class .action-card scopes the vertical-stack CSS for buttons
               in the narrow rail layout.
 */
@@ -265,6 +268,19 @@ function renderActionBar() {
       '<div class="form-actions">' +
         '<button class="btn btn-secondary" onclick="closeReviewPanels()">Cancel</button>' +
         '<button class="btn btn-warning action-btn" id="return-submit" disabled onclick="onReturnSubmit()">Confirm return</button>' +
+      '</div>' +
+    '</div>' +
+
+    // Approve panel — the comment is OPTIONAL, so the confirm button is never
+    // disabled. The note line is filled by onApproveClick (final-signatory
+    // wording is computed from the chain at click time).
+    '<div id="approve-panel" class="card hidden">' +
+      '<div class="card-header"><div class="card-title">Approve this request</div></div>' +
+      '<p class="text-muted mb-md" id="approve-panel-note"></p>' +
+      '<textarea class="form-textarea" id="approve-remark" placeholder="Optional comment for the record (visible to the requestor and the next approvers)…"></textarea>' +
+      '<div class="form-actions">' +
+        '<button class="btn btn-secondary" onclick="closeReviewPanels()">Cancel</button>' +
+        '<button class="btn btn-success action-btn" id="approve-submit" onclick="onApproveConfirm()">Confirm approve</button>' +
       '</div>' +
     '</div>';
 }
@@ -327,8 +343,8 @@ function renderReturnFlagSection(detail) {
     return item('attachment', a.attachmentId, a.filename, sub);
   };
   let attachmentItems = '';
-  if (currentFiles.length)  attachmentItems += '<div class="flag-group-label">Documents — current submission</div>' + currentFiles.map(fileItem).join('');
-  if (previousFiles.length) attachmentItems += '<div class="flag-group-label">Documents — previous versions</div>' + previousFiles.map(fileItem).join('');
+  if (currentFiles.length)  attachmentItems += '<div class="flag-group-label">Documents · current submission</div>' + currentFiles.map(fileItem).join('');
+  if (previousFiles.length) attachmentItems += '<div class="flag-group-label">Documents · previous versions</div>' + previousFiles.map(fileItem).join('');
 
   return '' +
     '<div class="flag-section">' +
@@ -419,6 +435,9 @@ function openReviewPanel(panelId) {
   } else if (panelId === 'return-panel') {
     setActionItemHidden('btn-approve', true);
     setActionItemHidden('btn-decline', true);
+  } else if (panelId === 'approve-panel') {
+    setActionItemHidden('btn-return',  true);
+    setActionItemHidden('btn-decline', true);
   }
 
   const textarea = el.querySelector('textarea');
@@ -432,7 +451,7 @@ function openReviewPanel(panelId) {
   TECHNICAL : Adds .hidden to both panels; restores action button visibility.
 */
 function closeReviewPanels() {
-  ['decline-panel', 'return-panel'].forEach(function (id) {
+  ['decline-panel', 'return-panel', 'approve-panel'].forEach(function (id) {
     const el = document.getElementById(id);
     if (el) el.classList.add('hidden');
   });
@@ -497,9 +516,20 @@ function syncPanelButton(kind) {
 
 
 // ─── ACTIONS ───────────────────────────────────────────────
-async function onApproveClick() {
-  const id = __reviewDetail && __reviewDetail.requestId;
-  if (!id) return;
+/*
+  Function Name: onApproveClick / onApproveConfirm
+  LAYMAN    : Approve na may OPTIONAL na komento. Ang unang click ay nagbubukas
+              ng approve panel (kapalit ng dating confirm dialog — parehong
+              bilang ng click, pero may puwang na para sa komento). Ang
+              "Confirm approve" ang tunay na nagpapadala.
+  TECHNICAL : onApproveClick computes the final-signatory note (configured slots
+              only — same skip-blank rule the server uses) into
+              #approve-panel-note, then opens #approve-panel. onApproveConfirm
+              reads the optional #approve-remark and passes it as handleApprove's
+              additive 2nd arg (server validates via validateOptionalRemark_).
+*/
+function onApproveClick() {
+  if (!__reviewDetail) return;
 
   // Are you the final signatory? You are if no CONFIGURED approver slot comes
   // after your current step (approve() skips blank slots, so we mirror that by
@@ -508,17 +538,20 @@ async function onApproveClick() {
   const step  = Number(__reviewDetail.step) || 0;
   const isFinalApprover = !slots.some(function (s) { return s.n > step; });
 
-  const message = isFinalApprover
-    ? 'You are the final signatory. Approving will mark this request FULLY APPROVED and notify the requestor. Continue?'
-    : 'Approving will forward this request to the next approver and send the requestor a progress update. Continue?';
+  const note = document.getElementById('approve-panel-note');
+  if (note) {
+    note.textContent = isFinalApprover
+      ? 'You are the final signatory. Approving will mark this request FULLY APPROVED and notify the requestor. You may add an optional comment for the record.'
+      : 'Approving will forward this request to the next approver and send the requestor a progress update. You may add an optional comment (e.g. a note for the next approver).';
+  }
+  openReviewPanel('approve-panel');
+}
 
-  const ok = await showConfirm({
-    title:        'Approve request',
-    message:      message,
-    confirmLabel: 'Approve',
-  });
-  if (!ok) return;
-  await runReviewAction('handleApprove', [id], 'Request approved.', 'Approving…');
+async function onApproveConfirm() {
+  const id = __reviewDetail && __reviewDetail.requestId;
+  if (!id) return;
+  const remark = String((document.getElementById('approve-remark') || {}).value || '').trim();
+  await runReviewAction('handleApprove', [id, remark], 'Request approved.', 'Approving…');
 }
 
 async function onDeclineSubmit() {

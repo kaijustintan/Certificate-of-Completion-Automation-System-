@@ -45,15 +45,23 @@
               papunta sa susunod na approver, o "Fully Approved" kung wala nang
               susunod. Nilalaktawan ang blangkong approver slots.
   TECHNICAL : Reads step/group_id/cycle from the Requests cache; getApprovers_()
-              for skip-blank routing; appendAction_(APPROVED) at the current step;
-              setRequestCache_(status, step). Cycle = current resubmit_count.
-  PARAMS    : requestId — request to approve_.
+              for skip-blank routing; appendAction_(APPROVED, remark) at the
+              current step; setRequestCache_(status, step). Cycle = current
+              resubmit_count. approverRemark is OPTIONAL (validateOptionalRemark_)
+              and rides the action row, so the timeline shows it everywhere.
+  PARAMS    : requestId — request to approve_; approverRemark — optional comment.
   RETURNS   : { success:true, newStatus, step:newStep } or { success:false, message }.
 
   EXAMPLE
     approve_("9B1")  → { success:true, newStatus:"Fully Approved", step:2 }
 */
-function approve_(requestId) {
+function approve_(requestId, approverRemark) {
+  // Optional approve comment (visible to the next approver and the requestor
+  // via the timeline). Validated BEFORE the lock — an invalid comment fails
+  // the action while nothing has changed.
+  const rv = validateOptionalRemark_(approverRemark);
+  if (!rv.ok) return { success: false, message: rv.message };
+
   // Serialize with a script lock so a re-read inside the lock is a true
   // compare-and-set: a racing second approve_ (two tabs, double email link)
   // sees the already-advanced status and is rejected, so the certificate and
@@ -120,7 +128,7 @@ function approve_(requestId) {
     else if (newStatus === STATUS.PENDING_3) newStep = 3;
     else                                     newStep = step + 1; // APPROVED: step no longer routes
 
-    appendAction_(requestId, groupId, cycle, step, caller, ACTION.APPROVED, "");
+    appendAction_(requestId, groupId, cycle, step, caller, ACTION.APPROVED, rv.value);
     setRequestCache_(requestId, { status: newStatus, step: newStep });
 
     Logger.log(`approve_(): ${requestId} approved at Step ${step} → ${newStatus}`);
@@ -224,6 +232,31 @@ function decline_(requestId, approverRemark) {
     validateRemark_("wrong dates")            → { ok:false, message:"Please give a bit more detail…" }
     validateRemark_("Contract dates do not match the PO.")  → { ok:true }
 */
+/*
+  Function Name: validateOptionalRemark_
+  LAYMAN    : Pang-check ng OPTIONAL na komento (hal. sa approve). Pwedeng blanko;
+              kapag may laman, huwag sobrang haba at bawal magsimula sa "=".
+  TECHNICAL : Companion of validateRemark_ for actions where the remark is not
+              required (approve). Blank → ok with value "". Non-blank → trimmed,
+              MAX_REMARK cap, startsWithFormula_ guard (the string is written
+              verbatim into ACT.REMARK).
+  PARAMS    : remark — raw client string (may be undefined).
+  RETURNS   : { ok:true, value:"<trimmed>" } | { ok:false, message }.
+*/
+function validateOptionalRemark_(remark) {
+  const MAX_REMARK = 2000;
+  const trimmed = String(remark == null ? "" : remark).trim();
+  if (trimmed === "") return { ok: true, value: "" };
+  if (trimmed.length > MAX_REMARK) {
+    return { ok: false, message: "Your comment is too long (max " + MAX_REMARK + " characters)." };
+  }
+  if (startsWithFormula_(trimmed)) {
+    return { ok: false, message: 'Your comment must not start with "=".' };
+  }
+  return { ok: true, value: trimmed };
+}
+
+
 function validateRemark_(remark) {
   const MIN_REMARK = 20;
   const MAX_REMARK = 2000;

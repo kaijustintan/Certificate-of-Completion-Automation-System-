@@ -36,7 +36,16 @@
       - renderSortOptions(current)     sort <option> html
       - renderCountedOptions(o, c, cur) status <option> html with counts
       - computeStatusCounts(rows, keys) one-pass status/expired bucket counter
-      - renderRequestTable(rows, route) the shared clickable request table
+      - renderRequestTable(rows, route, from) the shared clickable request table
+    FIELD HELP
+      - FIELD_HINTS                    per-field hint copy (single source of truth)
+      - renderFieldHelp(key)           "?" icon + hover/focus hint bubble
+    NAVIGATION
+      - renderBackLink(label, jsCall)  top-left "← Back to …" line above a page title
+    REQUEST TIMELINE
+      - renderTimeline(timeline, flags) the Request History card; a return that
+                                        raised flags gets a "View details" button
+      - showFlagDetails(cycle)          modal listing that round's flagged items
 
   ⚠️ Callbacks are passed as GLOBAL function-name strings (e.g.
      onInput:'dashboardSearch', onPage:'dashboardGoPage') because the markup
@@ -54,6 +63,7 @@ const UI_ICONS = {
   'check-circle':'<circle cx="12" cy="12" r="10"/><path d="m9 12 2 2 4-4"/>',
   'x-circle':    '<circle cx="12" cy="12" r="10"/><path d="m15 9-6 6"/><path d="m9 9 6 6"/>',
   'clock':       '<circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>',
+  'help':        '<circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><path d="M12 17h.01"/>',
   'alert':       '<path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><path d="M12 9v4"/><path d="M12 17h.01"/>',
   'flag':        '<path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><line x1="4" x2="4" y1="22" y2="15"/>',
   'inbox':       '<polyline points="22 12 16 12 14 15 10 15 8 12 2 12"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/>',
@@ -418,11 +428,14 @@ function computeStatusCounts(rows, keys) {
   PARAMS    : rows — request DTO page slice; route — 'review' | 'request'.
   RETURNS   : .table-scroll > .data-table HTML string.
 */
-function renderRequestTable(rows, route) {
+function renderRequestTable(rows, route, from) {
+  // Optional origin marker — rides the nav params so the detail page can offer
+  // a "back to where you came from" link (e.g. Admin records → request detail).
+  const fromAttr = from ? ', from: \'' + escapeHtml(from) + '\'' : '';
   const tableRows = rows.map(function (r) {
     const idAttr = escapeHtml(r.requestId);
     return '' +
-      '<tr tabindex="0" onclick="navigateTo(\'' + route + '\', {id: \'' + idAttr + '\'})" onkeydown="uiKeyActivate(event)">' +
+      '<tr tabindex="0" onclick="navigateTo(\'' + route + '\', {id: \'' + idAttr + '\'' + fromAttr + '})" onkeydown="uiKeyActivate(event)">' +
         '<td>' +
           '<div class="cell-request">' +
             '<div class="cell-request-icon">' + renderIcon('file', 16) + '</div>' +
@@ -460,6 +473,76 @@ function renderRequestTable(rows, route) {
 }
 
 
+// ─── FIELD HELP (the "?" hint next to form labels) ──────────
+
+// Single source of truth for per-field hint copy. Used by BOTH the new-request
+// form (NewRequest.html) and the resubmit edit form (RequestDetail.html), so
+// wording cannot drift between the two. Keys match FLAGGABLE_FIELDS / the form
+// field names; 'group' and the optional reference fields are included here even
+// though they are not flaggable — hints and flags are independent concerns.
+const FIELD_HINTS = {
+  projectTitle:      'The project or engagement this certificate covers, as it should appear on the certificate.',
+  group:             'The approver chain that will review this request. Pick the group your project falls under.',
+  requestorDesig:    'Your job title, for the request record. e.g. Systems Analyst.',
+  accountablePerson: 'The person answerable for the product or contract, usually the project or product owner.',
+  department:        'The department that owns this project or product.',
+  location:          'The site or property where the product is deployed. Pick Other to type a different one.',
+  pcName:            'The workstation or server the product is installed on. Put N/A if it is not tied to one machine.',
+  prism:             'PRISM reference number, if this purchase has one. Leave blank if none.',
+  purchaseOrder:     'The Purchase Order number covering this acquisition.',
+  ihelpNumber:       'The related IHelp ticket number, if any.',
+  supplierName:      'The vendor or supplier the product was purchased from.',
+  productType:       'What kind of product this is. e.g. Software, Hardware.',
+  productName:       'The product name as purchased. e.g. Microsoft 365 E3.',
+  typeOfPurchase:    'Whether this is a new acquisition or a renewal of an existing one.',
+  typeOfLicense:     'The licensing arrangement. e.g. 3-year subscription, perpetual.',
+  contractStart:     'The date the contract or license coverage begins.',
+  contractEnd:       'The date coverage ends. Expiry reminders are based on this.',
+  requestorRemark:   'Why you are filing this request and what the certificate is for.',
+  attachments:       'Documents that support the request, like the Purchase Order, supplier quotation, or budget approval. Each file needs a short description.',
+};
+
+/*
+  Function Name: renderFieldHelp
+  LAYMAN    : Ang maliit na "?" sa tabi ng label. I-hover (o i-tap sa phone)
+              para makita ang paliwanag kung ano ang ilalagay sa field.
+  TECHNICAL : CSS-only tooltip (.field-help + .field-help-bubble, hover AND
+              focus-triggered — tabindex=0 makes tap-to-focus work on touch).
+              Returns '' for an unknown key so a typo degrades to no icon, not
+              a broken bubble.
+  PARAMS    : key — a FIELD_HINTS key.
+  RETURNS   : HTML string ('' when the key has no hint).
+*/
+function renderFieldHelp(key) {
+  const hint = FIELD_HINTS[key];
+  if (!hint) return '';
+  return '<span class="field-help" tabindex="0" aria-label="' + escapeHtml(hint) + '">' +
+    renderIcon('help', 13) +
+    '<span class="field-help-bubble" role="tooltip">' + escapeHtml(hint) + '</span>' +
+  '</span>';
+}
+
+
+// ─── NAVIGATION ─────────────────────────────────────────────
+
+/*
+  Function Name: renderBackLink
+  LAYMAN    : Ang "← Back to …" na link sa taas ng page title. Mas kita kaysa
+              sa dating button sa kanan — laging nasa parehong lugar (taas-kaliwa),
+              gaya ng "← Admin home" sa Admin console.
+  TECHNICAL : Same look as .admin-back (shared ruleset). jsCall is an inline JS
+              string (e.g. "navigateTo('home')") — global-scope pattern, same as
+              every other UI.html callback. Label is escaped; jsCall is
+              CALLER-AUTHORED code, never user data.
+  PARAMS    : label — visible text after the arrow; jsCall — onclick JS string.
+  RETURNS   : HTML string.
+*/
+function renderBackLink(label, jsCall) {
+  return '<div class="back-link" role="button" tabindex="0" onclick="' + jsCall + '" ' +
+    'onkeydown="uiKeyActivate(event)">← ' + escapeHtml(label) + '</div>';
+}
+
+
 // ─── REQUEST TIMELINE ───────────────────────────────────────
 
 /*
@@ -490,14 +573,38 @@ function renderRequestTable(rows, route) {
 
   ⚠️ EXPIRY_* system actions are filtered out SERVER-SIDE. Do not re-add them here.
 
+  FLAG DETAILS: when `flags` is passed, each RETURNED entry whose cycle raised
+  per-item flags gets a "View details" button opening a modal with that round's
+  flagged items and comments. This is where flag HISTORY lives — the detail
+  pages' flags card shows only OPEN flags ("What needs fixing"), because a
+  resolved-flag card pinned at the top of the page was restating something the
+  history already records (supervisor feedback).
+
   PARAMS  : timeline — detail.timeline array of { cycle, action, step, actor, remark, date }.
+            flags    — optional detail.flags array; enables the per-return "View details" button.
   RETURNS : HTML string for the card, or '' when there is nothing to show.
 */
-function renderTimeline(timeline) {
+function renderTimeline(timeline, flags) {
   const entries = Array.isArray(timeline) ? timeline : [];
   // Deliberate omission, not a missing empty state: every request has at least
   // its SUBMITTED action, so an empty timeline means corrupt data — render less.
   if (!entries.length) return '';
+
+  // Fresh request (only the SUBMITTED action): one plain line inside the card.
+  // A cycle-headed timeline around a single entry read like a fake approval
+  // history (supervisor feedback). Same rule as the two email renderers.
+  if (entries.length === 1 && entries[0].action === 'submitted') {
+    const e = entries[0];
+    return '' +
+      '<div class="card">' +
+        '<div class="card-header"><div class="card-title">Request History</div></div>' +
+        '<div class="text-small">Submitted by <strong>' + escapeHtml(e.actor || '—') + '</strong></div>' +
+        '<div class="text-small text-muted">' + escapeHtml(e.date || '—') + '</div>' +
+      '</div>';
+  }
+
+  // Cycle headers only earn their place once there is MORE than one cycle.
+  const multiCycle = entries.some(function (e) { return (parseInt(e.cycle, 10) || 0) > 0; });
 
   const label = function (e) {
     const by = e.step ? ' by Approver ' + e.step : '';
@@ -512,13 +619,33 @@ function renderTimeline(timeline) {
     return (parseInt(c, 10) || 0) === 0 ? 'Original submission' : 'Resubmit #' + c;
   };
 
+  // Bucket flags by the cycle whose return raised them, and stash them where the
+  // injected onclick can reach them (innerHTML markup can only call globals —
+  // the same constraint every other UI.html callback works under).
+  const flagsByCycle = {};
+  (flags || []).forEach(function (f) {
+    const c = parseInt(f.cycle, 10) || 0;
+    (flagsByCycle[c] = flagsByCycle[c] || []).push(f);
+  });
+  window.__timelineFlags = flagsByCycle;
+
   let rows = '';
   let lastCycle = -1;
   entries.forEach(function (e) {
-    if (e.cycle !== lastCycle) {
+    if (multiCycle && e.cycle !== lastCycle) {
       rows += '<div class="timeline-cycle">' + escapeHtml(cycleLabel(e.cycle)) + '</div>';
       lastCycle = e.cycle;
     }
+    // A return that flagged specific items gets a button revealing them, so the
+    // "what exactly was wrong that round" detail sits with the event that caused
+    // it instead of as a separate card above the page.
+    const cyc = parseInt(e.cycle, 10) || 0;
+    const nFlags = (e.action === 'returned' && flagsByCycle[cyc]) ? flagsByCycle[cyc].length : 0;
+    const detailsBtn = nFlags
+      ? '<button type="button" class="timeline-details-btn" onclick="showFlagDetails(' + cyc + ')">' +
+          renderIcon('flag', 12) + ' View details (' + nFlags + ')' +
+        '</button>'
+      : '';
     rows +=
       '<div class="timeline-item timeline-' + escapeHtml(e.action) + '">' +
         '<div class="timeline-dot"></div>' +
@@ -530,6 +657,7 @@ function renderTimeline(timeline) {
           (String(e.remark || '').trim()
             ? '<div class="timeline-remark">' + escapeHtml(e.remark) + '</div>'
             : '') +
+          detailsBtn +
         '</div>' +
       '</div>';
   });
@@ -539,6 +667,83 @@ function renderTimeline(timeline) {
       '<div class="card-header"><div class="card-title">Request History</div></div>' +
       '<div class="timeline">' + rows + '</div>' +
     '</div>';
+}
+
+/*
+  Function Name: showFlagDetails
+
+  LAYMAN (Tropang Ex):
+  Pag pinindot ang "View details" sa isang Returned na entry sa Request History,
+  lalabas ang isang box sa gitna (malabo ang likod) na naglalaman ng lahat ng
+  minarkahan ng approver noong round na iyon: aling field o dokumento, ano ang
+  komento, sino ang nagmarka at kailan. Kung naayos na, may check na berde.
+  I-click sa labas, pindutin ang Close, o Escape para isara.
+
+  TECHNICAL:
+  Reads window.__timelineFlags (set by renderTimeline — inline onclick handlers
+  in innerHTML markup can only reach globals). Reuses the existing
+  .modal-overlay/.modal chrome from showConfirm so there is ONE dialog look, and
+  the .flags-card-* classes so a flag row looks the same here as it does in the
+  open-flags card. Resolved rows take the green check treatment.
+  Closes on backdrop click, the Close button, or Escape; the keydown listener is
+  removed on close so repeated opens do not stack handlers.
+
+  PARAMS  : cycle — the resubmit cycle whose return raised the flags.
+  RETURNS : (void) — appends an overlay to <body>.
+*/
+function showFlagDetails(cycle) {
+  const flags = (window.__timelineFlags || {})[cycle] || [];
+  if (!flags.length) return;
+
+  const rows = flags.map(function (f) {
+    const tag = f.targetType === 'attachment' ? ' (document)' : '';
+    const who = f.flaggedByStep
+      ? 'Approver ' + f.flaggedByStep + ' (' + f.flaggedBy + ')'
+      : f.flaggedBy;
+    return '' +
+      '<div class="flags-card-item' + (f.resolved ? ' flags-card-resolved' : '') + '">' +
+        '<div class="flags-card-label">' +
+          '<span class="flag-icon">' + renderIcon(f.resolved ? 'check' : 'flag', 13) + '</span>' +
+          escapeHtml(f.label + tag) +
+        '</div>' +
+        '<div class="flags-card-comment">' + escapeHtml(f.comment) + '</div>' +
+        '<div class="flags-card-meta">Flagged by ' + escapeHtml(who) +
+          (f.flaggedAt ? ' · ' + escapeHtml(f.flaggedAt) : '') + '</div>' +
+      '</div>';
+  }).join('');
+
+  const allResolved = flags.every(function (f) { return f.resolved; });
+  const title = (parseInt(cycle, 10) || 0) === 0
+    ? 'Flagged on the original submission'
+    : 'Flagged on Resubmit #' + cycle;
+
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.innerHTML =
+    '<div class="modal modal-wide" role="dialog" aria-modal="true">' +
+      '<div class="modal-title">' + escapeHtml(title) + '</div>' +
+      '<div class="modal-message">' +
+        (allResolved
+          ? 'These items were marked for correction and have since been resubmitted.'
+          : 'These items still need to be corrected before this request can move forward.') +
+      '</div>' +
+      '<div class="flag-modal-list">' + rows + '</div>' +
+      '<div class="modal-actions">' +
+        '<button class="btn btn-secondary" data-act="close">Close</button>' +
+      '</div>' +
+    '</div>';
+
+  function close() {
+    document.removeEventListener('keydown', onKey);
+    overlay.remove();
+  }
+  function onKey(e) { if (e.key === 'Escape') close(); }
+
+  overlay.addEventListener('click', function (e) {
+    if (e.target === overlay || e.target.getAttribute('data-act') === 'close') close();
+  });
+  document.addEventListener('keydown', onKey);
+  document.body.appendChild(overlay);
 }
 
 </script>

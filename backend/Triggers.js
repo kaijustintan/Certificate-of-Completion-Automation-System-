@@ -212,25 +212,31 @@ function registerExpiryTrigger() {
 
   LAYMAN (Tropang Ex):
   Tuwing umaga (8am), nililibot nito lahat ng request na naka-PENDING pa. Para sa
-  bawat isa, tinitingnan kung kaninong pirma ang hinihintay ngayon (current approver),
-  tapos pinagsasama-sama lahat ng nakabinbin para sa iisang approver sa ISANG email.
-  Ganito kasi minsan natatabunan yung unang email — kaya araw-araw na paalala hangga't
-  pending pa. Walang marka sa Activity_Log: ang araw-araw na schedule na mismo ang
-  "idempotency" — isang takbo kada araw, kaya isang padala kada araw.
+  bawat isa, tinitingnan kung kaninong pirma ang hinihintay ngayon (current approver)
+  at kung GAANO NA KATAGAL itong nakabinbin sa kanya. Hindi araw-araw ang paalala:
+  unang padala kapag 7 araw nang walang aksyon, tapos kada 3 araw pagkatapos
+  (7, 10, 13, ...). Kapareho ito ng cadence ng DCS. Ang mga request na pasok sa
+  padadalhan ngayong araw ay pinagsasama-sama kada approver sa ISANG digest email.
+  Walang marka sa Activity_Log: ang schedule + date math ang "idempotency".
 
   TECHNICAL:
   Time-based trigger handler (registered by registerApproverReminderTrigger). One pass
-  over the Requests sheet; only the three PENDING_* statuses are considered. For each,
-  getCurrentApprover_(step, group) resolves the responsible approver email; rows are
-  bucketed by normalizeEmail_(approver) so a single approver gets ONE digest covering
-  all their pending requests (regardless of step/group). Then sendPendingApprovalReminder_
-  fires once per bucket.
+  over the Requests sheet; only the three PENDING_* statuses are considered. Cadence:
+  a request's wait age = whole days since its latest WORKFLOW action
+  (getLastWorkflowActionDateMap_ — submitted/approved/resubmitted all hand the request
+  to a new approver, so any action resets the clock; EXPIRY_* flags are excluded there).
+  A row is due when age >= REMINDER_FIRST_AFTER_DAYS and
+  (age - REMINDER_FIRST_AFTER_DAYS) % REMINDER_REPEAT_DAYS === 0 — with the daily
+  trigger that fires on days 7, 10, 13, ... STATELESS: a skipped trigger run simply
+  misses that day; the next matching day still fires. Due rows are bucketed by
+  normalizeEmail_(getCurrentApprover_) so a single approver gets ONE digest; then
+  sendPendingApprovalReminder_ fires once per bucket.
 
   Unlike checkContractExpiries this writes NOTHING to Activity_Log and uses NO system
-  ACTION flag — a daily nudge is MEANT to repeat, so the once-a-day trigger schedule is
-  the idempotency. Logging each reminder would append one row per pending request per
-  day and bloat the append-only timeline. Each row + each send is wrapped in try/catch
-  so one bad row/approver never aborts the sweep.
+  ACTION flag — the schedule + pure date math IS the idempotency. Logging each reminder
+  would append one row per pending request per reminder day and bloat the append-only
+  timeline. Each row + each send is wrapped in try/catch so one bad row/approver never
+  aborts the sweep.
 
   ⚠️ QUOTA: GmailApp sends count against the daily quota (~100 consumer / ~1500
   Workspace). Digest-per-approver (not per-request) keeps the send count low.
@@ -247,10 +253,20 @@ function registerExpiryTrigger() {
       Technical : Iterate buckets; sendPendingApprovalReminder_(email, rows); count sends.
 
   EXAMPLE
-    (trigger fires at 8am; approverA holds 2 pending, approverB holds 1)
-    → 2 emails sent; log "reminded 2 approver(s)."
-    → no pending rows: 0 emails; log "reminded 0 approver(s)."
+    (trigger fires at 8am; approverA holds one 7-day-old and one 3-day-old
+     pending, approverB holds one 10-day-old)
+    → 2 emails sent (A's digest lists only the 7-day-old request; B's lists
+      theirs); log "reminded 2 approver(s)."
+    → nothing due today: 0 emails; log "reminded 0 approver(s)."
 */
+
+// Reminder cadence (days). First nudge after 7 quiet days at the current
+// approver, then every 3 days (7, 10, 13, ...) — matches the DCS cadence the
+// department is already used to. Source constants, not Script Properties:
+// policy knobs belong in version control.
+const REMINDER_FIRST_AFTER_DAYS = 7;
+const REMINDER_REPEAT_DAYS      = 3;
+
 function checkPendingApprovals() {
   // ⚠️ Owner/trigger only — this is the guard that makes the "the daily schedule
   // IS the idempotency" design above actually true. Without it, any authenticated
@@ -266,9 +282,24 @@ function checkPendingApprovals() {
   const pending = [STATUS.PENDING_1, STATUS.PENDING_2, STATUS.PENDING_3];
   const byApprover = {};   // normalized email -> [rowData, ...]
 
+  // Wait age per request: whole days since the latest workflow action. One
+  // memoized pass over Activity_Log for the whole sweep.
+  const lastActionMap = getLastWorkflowActionDateMap_();
+  const MS_PER_DAY = 24 * 60 * 60 * 1000;
+  const nowMs = new Date().getTime();
+  const isDueToday = function (requestId) {
+    const last = lastActionMap[String(requestId)];
+    if (!last) return false;   // no recorded workflow action — corrupt row; skip loudly below
+    const age = Math.floor((nowMs - last.getTime()) / MS_PER_DAY);
+    return age >= REMINDER_FIRST_AFTER_DAYS &&
+           (age - REMINDER_FIRST_AFTER_DAYS) % REMINDER_REPEAT_DAYS === 0;
+  };
+
   rows.forEach(function (row) {
     try {
       if (pending.indexOf(row[CR.STATUS - 1]) === -1) return;
+      // Cadence gate: only rows whose quiet-wait hits today's 7/10/13/... mark.
+      if (!isDueToday(row[CR.REQUEST_ID - 1])) return;
       const approver = getCurrentApprover_(row[CR.STEP - 1], row[CR.GROUP - 1]);
       if (!approver) return;                       // unconfigured group / step 0 — skip
       const key = normalizeEmail_(approver);

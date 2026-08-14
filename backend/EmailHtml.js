@@ -300,23 +300,41 @@ function emailSection_(title, innerHtml) {
   dating nakahilera lang sa plain text.
 
   TECHNICAL:
-  Iterates [ [key, value], ... ] pairs → <table> rows. Both key and value
-  escaped here. Empty/null values render an em dash.
+  Iterates [ [key, value] , ... ] or [ [key, value, tone], ... ] pairs →
+  <table> rows. Both key and value escaped here. Empty/null values render an
+  em dash. An optional 3rd element tints that ONE row (label + value cells get
+  the tone's tint background and the label takes the tone's colour), for a
+  value that carries the email's substance — e.g. "Reason for Return" — without
+  promoting it out of the key/value list into a standalone callout box.
 
   PARAMS:
-  - pairs — array of [label, value] tuples.
+  - pairs — array of [label, value] or [label, value, tone] tuples.
+            tone ∈ 'red' | 'amber' | 'blue' | 'green' (same names as emailRemarkBox_).
 
   RETURNS:
   HTML string — a full-width borderless table.
 */
 function emailKeyValueRows_(pairs) {
+  const tones = {
+    red:   { bg: EMAIL_THEME.redTint,   fg: EMAIL_THEME.red },
+    amber: { bg: EMAIL_THEME.amberTint, fg: EMAIL_THEME.amber },
+    blue:  { bg: EMAIL_THEME.blueTint,  fg: EMAIL_THEME.blue },
+    green: { bg: EMAIL_THEME.greenTint, fg: EMAIL_THEME.green },
+  };
   const rows = (pairs || []).map(function (p) {
-    const val = (p[1] == null || p[1] === "") ? "&mdash;" : escapeHtml_(p[1]);
+    const val  = (p[1] == null || p[1] === "") ? "&mdash;" : escapeHtml_(p[1]);
+    const t    = tones[p[2]];
+    // Tinted rows get their own background + a little breathing room; untinted
+    // rows keep the exact padding/colours they always had (no visual drift).
+    const bg   = t ? "background-color:" + t.bg + ";" : "";
+    const padL = t ? "6px 16px 6px 10px" : "4px 16px 4px 0";
+    const padR = t ? "6px 10px 6px 0"    : "4px 0";
     return "<tr>" +
-      '<td style="font-family:' + EMAIL_THEME.fontStack + "; font-size: 13px; color:" + EMAIL_THEME.muted + "; " +
-        'padding: 4px 16px 4px 0; vertical-align: top; white-space: nowrap;">' + escapeHtml_(p[0]) + "</td>" +
-      '<td style="font-family:' + EMAIL_THEME.fontStack + "; font-size: 13px; color:" + EMAIL_THEME.text + "; " +
-        'padding: 4px 0; vertical-align: top;">' + val + "</td>" +
+      '<td style="font-family:' + EMAIL_THEME.fontStack + "; font-size: 13px; color:" +
+        (t ? t.fg + "; font-weight: 600" : EMAIL_THEME.muted) + "; " + bg +
+        "padding: " + padL + '; vertical-align: top; white-space: nowrap;">' + escapeHtml_(p[0]) + "</td>" +
+      '<td style="font-family:' + EMAIL_THEME.fontStack + "; font-size: 13px; color:" + EMAIL_THEME.text + "; " + bg +
+        "padding: " + padR + '; vertical-align: top;">' + val + "</td>" +
     "</tr>";
   }).join("");
   return '<table cellpadding="0" cellspacing="0" border="0" style="margin: 0 0 16px;">' + rows + "</table>";
@@ -337,6 +355,9 @@ function emailInfoTable_(rowData) {
     ["E-Certificate ID",    rowData[CR.CONTROL_NUMBER - 1]],
     ["Requestor",           rowData[CR.REQUESTOR - 1]],
     ["Group",               getGroupNameById_(rowData[CR.GROUP - 1])],
+    // Purpose rides every email — the most decision-relevant field for an
+    // approver (supervisor feedback). Twin of buildInfoBlock_ (Emails.js).
+    ["Purpose",             rowData[CR.REQUESTOR_REMARK - 1] || "—"],
   ]);
 }
 
@@ -360,7 +381,7 @@ function emailAttachmentList_(requestId) {
   const items = attachments.map(function (row) {
     return '<li style="margin: 0 0 4px;">' +
       "<strong>" + escapeHtml_(row[RA.FILE - 1]) + "</strong>" +
-      (row[RA.DESCRIPTION - 1] ? " &mdash; " + escapeHtml_(row[RA.DESCRIPTION - 1]) : "") +
+      (row[RA.DESCRIPTION - 1] ? " &middot; " + escapeHtml_(row[RA.DESCRIPTION - 1]) : "") +
     "</li>";
   }).join("");
   return '<ul style="font-family:' + EMAIL_THEME.fontStack + "; font-size: 13px; color:" + EMAIL_THEME.text + "; " +
@@ -435,6 +456,22 @@ function emailApprovalLog_(rowData, approvers) {
            EMAIL_THEME.muted + ';">No activity recorded yet.</div>';
   }
 
+  // Fresh request (only the SUBMITTED action): one plain line, no section
+  // furniture. Twin of the same rule in buildApprovalLog_ (Emails.js).
+  if (entries.length === 1 && entries[0].action === ACTION.SUBMITTED) {
+    const e = entries[0];
+    // Timestamp on its own line under the actor (muted), matching the meta line
+    // of the full timeline rows below. Twin of buildApprovalLog_ (Emails.js).
+    return '<div style="font-family:' + EMAIL_THEME.fontStack + '; font-size: 13px; color:' +
+           EMAIL_THEME.text + ';">Submitted by <strong>' + escapeHtml_(e.actor || "—") + "</strong>" +
+           '<div style="font-size:12px; color:' + EMAIL_THEME.muted + '; padding-top:2px;">' +
+             escapeHtml_(e.date || "—") +
+           "</div></div>";
+  }
+
+  // Cycle headers only once there is MORE than one cycle (twin of buildApprovalLog_).
+  const multiCycle = entries.some(function (e) { return (parseInt(e.cycle, 10) || 0) > 0; });
+
   // Accent per action so a return is scannable at a glance without reading it.
   const dotColor = function (action) {
     if (action === ACTION.APPROVED) return EMAIL_THEME.green;
@@ -448,7 +485,7 @@ function emailApprovalLog_(rowData, approvers) {
   let lastCycle = -1;
 
   entries.forEach(function (e) {
-    if (e.cycle !== lastCycle) {
+    if (multiCycle && e.cycle !== lastCycle) {
       html += '<tr><td colspan="2" style="padding:' + (lastCycle === -1 ? "0" : "12px") +
                 ' 0 4px; font-size:11px; font-weight:bold; letter-spacing:0.06em; ' +
                 'text-transform:uppercase; color:' + EMAIL_THEME.muted + ';">' +

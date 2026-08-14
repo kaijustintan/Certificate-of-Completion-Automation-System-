@@ -52,7 +52,7 @@
      - getPendingApprovals()          approver "awaiting" list
      - getMyActionedRequests()        approver "actioned" list
      - getRequestDetail(id)           full single-request DTO (or null)
-     - getApproverGroups()            group names for the new-request form
+     - getNewRequestOptions()         groups + locations for the new-request form (Accessors.js)
 
   E. MUTATION
      - submitNewRequest(formData)     append a new request row
@@ -618,6 +618,14 @@ function getRequestDetail(requestId) {
   attachmentRowsForReq.forEach(function (a) {
     attachmentNameById[String(a[RA.ATTACHMENT_ID - 1])] = a[RA.FILE - 1] || "";
   });
+  // Which Approver N raised each cycle's flags: the RETURNED timeline entry of
+  // that cycle carries the step AT THE TIME of the return. Derived from the
+  // timeline (not the current chain) so a later chain reorder cannot relabel
+  // history. At most one RETURNED per cycle, so a plain map suffices.
+  const returnStepByCycle = {};
+  (view.timeline || []).forEach(function (e) {
+    if (e.action === ACTION.RETURNED && e.step) returnStepByCycle[e.cycle] = e.step;
+  });
   const flags = getFlagsForRequest_(requestId).map(function (f) {
     const label = f.targetType === "attachment"
       ? (attachmentNameById[String(f.targetKey)] || "Attachment")
@@ -630,6 +638,8 @@ function getRequestDetail(requestId) {
       label:      label,
       comment:    f.comment,
       flaggedBy:  f.flaggedBy,
+      // Additive: the approver's position when they flagged (0 = unknown).
+      flaggedByStep: returnStepByCycle[f.cycle] || 0,
       flaggedAt:  f.flaggedAt ? fmtDateTime(f.flaggedAt) : "",
       resolved:   f.resolvedCycle !== null || f.cycle < resubmitCountRaw,
     };
@@ -689,6 +699,9 @@ function getRequestDetail(requestId) {
     flaggableFields:      Object.keys(FLAGGABLE_FIELDS).map(function (k) {
       return { key: k, label: FLAGGABLE_FIELDS[k].label };
     }),
+    // Location options for the resubmit edit form's dropdown (additive).
+    // From the self-healing Locations tab — no more hardcoded copy in the UI.
+    locations:            getLocations_(),
     approver1:            approvers.approver1 || "",
     approver2:            approvers.approver2 || "",
     approver3:            approvers.approver3 || "",
@@ -710,8 +723,9 @@ function getRequestDetail(requestId) {
 }
 
 
-// getApproverGroups() — MOVED to Accessors.js. It now returns [{id, name}] for
-// active groups (the new-request dropdown sends group_id, shows the name).
+// getNewRequestOptions() — lives in Accessors.js. Returns { groups, locations }
+// for the new-request form (the dropdown sends group_id, shows the name).
+// It absorbed the old getApproverGroups callable (now getApproverGroups_).
 
 
 /*
@@ -1007,7 +1021,10 @@ function submitNewRequest(formData) {
               approver na, may resibo sa kanya at progress update sa requestor.
   TECHNICAL : Guard (isCurrentApprover_) → approve_() → branch on newStatus to
               fire either the fully-approved pair or the intermediate trio.
-  PARAMS    : requestId — the request to approve_.
+              remark is an OPTIONAL approver comment (additive 2nd arg — no new
+              callable); validated in approve_ and stored on the APPROVED action
+              row, so the timeline carries it to the next approver + requestor.
+  PARAMS    : requestId — the request to approve_; remark — optional comment.
   RETURNS   : approve_()'s result { success, newStatus, step } — or
               { success:false, error } if not found / unauthorized.
 
@@ -1031,13 +1048,13 @@ function submitNewRequest(formData) {
     → { success:true, newStatus:"Fully Approved", step:3 }
       (sends sendFullyApprovedToApprover_ + sendFullyApprovedToRequestor_)
 */
-function handleApprove(requestId) {
+function handleApprove(requestId, remark) {
   const caller = Session.getActiveUser().getEmail();
   const row    = getRequestRowData_(requestId);
   if (!row) return { success: false, error: "Request not found." };
   if (!isCurrentApprover_(row, caller)) return { success: false, error: "Unauthorized" };
 
-  const result = approve_(requestId);
+  const result = approve_(requestId, remark);
   if (result.success) {
     if (result.newStatus === STATUS.APPROVED) {
       sendFullyApprovedToApprover_(requestId);

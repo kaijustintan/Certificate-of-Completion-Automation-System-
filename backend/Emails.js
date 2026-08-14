@@ -121,11 +121,13 @@ function emailSubject_(controlNumber, statusLabel, audience) {
 
 /*
   Function Name: buildInfoBlock_
-  LAYMAN    : Gumawa ng 4-linyang summary ng request para sa email body —
-              title, ID, requestor, group — para alam agad ng tatanggap kung
-              anong request ang pinag-uusapan.
-  TECHNICAL : Joins 4 labeled lines (one per field) with "\n". No padding
-              alignment — plain-text emails use proportional fonts.
+  LAYMAN    : Gumawa ng 5-linyang summary ng request para sa email body —
+              title, ID, requestor, group, at purpose — para alam agad ng
+              tatanggap kung anong request ang pinag-uusapan at PARA SAAN.
+  TECHNICAL : Joins 5 labeled lines (one per field) with "\n". No padding
+              alignment — plain-text emails use proportional fonts. Purpose
+              (CR.REQUESTOR_REMARK) rides every email because it is the single
+              most decision-relevant field for an approver (supervisor feedback).
   PARAMS    : rowData — the 0-indexed request row array (from getRequestData_).
   RETURNS   : Multi-line string.
 */
@@ -138,6 +140,7 @@ function buildInfoBlock_(rowData) {
     `E-Certificate ID: ${rowData[CR.CONTROL_NUMBER - 1]}`,
     `Requestor: ${rowData[CR.REQUESTOR - 1]}`,
     `Group: ${getGroupNameById_(rowData[CR.GROUP - 1])}`,  // CR.GROUP holds group_id
+    `Purpose: ${rowData[CR.REQUESTOR_REMARK - 1] || "—"}`,
   ].join("\n");
 }
 
@@ -184,7 +187,7 @@ function buildAttachmentList_(requestId) {
   const attachments = getAttachmentsForRequest_(requestId);
   if (attachments.length === 0) return "No supporting documents uploaded.";
   return attachments
-    .map(row => `- ${row[RA.FILE - 1]} — ${row[RA.DESCRIPTION - 1]}`)
+    .map(row => `- ${row[RA.FILE - 1]} · ${row[RA.DESCRIPTION - 1]}`)
     .join("\n");
 }
 
@@ -261,14 +264,28 @@ function buildApprovalLog_(rowData, approvers) {
   const entries = view.timeline || [];
   if (!entries.length) return "No activity recorded yet.";
 
+  // Fresh request (only the SUBMITTED action): one plain line. A framed
+  // "ORIGINAL SUBMISSION" section around a single entry read like a fake
+  // approval history (supervisor feedback).
+  if (entries.length === 1 && entries[0].action === ACTION.SUBMITTED) {
+    const e = entries[0];
+    // Actor and timestamp on separate lines — they are two different facts and
+    // run together as one long line otherwise. Twin of emailApprovalLog_.
+    return "Submitted by " + (e.actor || "—") + "\n" + (e.date || "—");
+  }
+
+  // Cycle headers only earn their place once there is MORE than one cycle;
+  // a single-cycle history under "Original submission" is just noise.
+  const multiCycle = entries.some(function (e) { return (parseInt(e.cycle, 10) || 0) > 0; });
+
   let out = "";
   let lastCycle = -1;
   entries.forEach(function (e) {
-    if (e.cycle !== lastCycle) {
+    if (multiCycle && e.cycle !== lastCycle) {
       out += (lastCycle === -1 ? "" : "\n") + timelineCycleLabel_(e.cycle) + "\n";
       lastCycle = e.cycle;
     }
-    out += "  " + timelineLabel_(e) + " — " + (e.actor || "—") + "\n";
+    out += "  " + timelineLabel_(e) + " - " + (e.actor || "—") + "\n";
     out += "    " + (e.date || "—") + "\n";
     if (String(e.remark || "").trim()) out += '    Reason: "' + e.remark + '"\n';
   });
@@ -469,9 +486,9 @@ We regret to inform you that your request has been declined.
 
 ${buildInfoBlock_(rowData)}
 
-Reason for Decline: ${reason}
 Declined by: ${approverLabel} (${actioner})
 Date: ${nowFormatted_()}
+Reason for Decline: ${reason}
 
 Note: If you would like to try again, you must create a brand new request.
 
@@ -487,10 +504,12 @@ Open this request: ${getPortalUrl_(requestId, "request")}`;
       emailP_("Good day!") +
       emailP_("We regret to inform you that your request has been <strong>declined</strong>.") +
       emailInfoTable_(rowData) +
-      emailRemarkBox_("Reason for Decline", reason, "red") +
+      // Reason as a key-value row beside its siblings, not a lone callout, but
+      // tinted (red here, amber on returns) — same rule as the return email.
       emailKeyValueRows_([
-        ["Declined by", approverLabel + " (" + actioner + ")"],
-        ["Date",        nowFormatted_()],
+        ["Declined by",        approverLabel + " (" + actioner + ")"],
+        ["Date",               nowFormatted_()],
+        ["Reason for Decline", reason, "red"],
       ]) +
       emailP_("Note: If you would like to try again, you must create a brand new request.") +
       emailSection_("Request History", emailApprovalLog_(rowData)),
@@ -747,20 +766,22 @@ Open this request: ${getPortalUrl_(requestId, "request")}`;
 
 
 // ============================================================
-// EMAIL 14 — Daily nudge to a pending approver (digest)
-// Fired by checkPendingApprovals() in Triggers.js, once per approver
-// per daily sweep. NOT an event email — there is no handle* caller.
+// EMAIL 14 — Cadenced nudge to a pending approver (digest)
+// Fired by checkPendingApprovals() in Triggers.js for requests whose
+// quiet-wait hits the 7/10/13-day cadence, bucketed per approver.
+// NOT an event email — there is no handle* caller.
 // ============================================================
 /*
   Function Name: sendPendingApprovalReminder_
 
   LAYMAN (Tropang Ex):
-  Araw-araw na paalala sa isang approver: "May hinihintay pa pala sa'yo." Imbes na
-  isa-isang email kada request, pinagsama-sama lahat ng nakabinbin niya sa ISANG
-  email. Pero kompleto pa rin ang detalye kada request — title, ID, requestor, group,
-  supporting documents, at approval progress — kapareho ng normal na "needs your
-  approval" email, plus link na diretso sa review page. Para hindi na malunod sa
-  inbox, ito yung pang-gising kada umaga hangga't may pending pa.
+  Paalala sa isang approver: "May hinihintay pa pala sa'yo." Hindi ito araw-araw:
+  unang padala kapag 7 araw nang nakabinbin, tapos kada 3 araw (7, 10, 13, ...) —
+  ang cadence ay sa checkPendingApprovals nakalagay, hindi dito. Imbes na
+  isa-isang email kada request, pinagsama-sama lahat ng due na nakabinbin niya sa
+  ISANG email. Pero kompleto pa rin ang detalye kada request — title, ID,
+  requestor, group, supporting documents, at approval progress — kapareho ng
+  normal na "needs your approval" email, plus link na diretso sa review page.
 
   TECHNICAL:
   Digest sender. Receives the approver email + the list of pending request rows
@@ -817,7 +838,7 @@ Open this request: ${getPortalUrl_(requestId, "review")}`;
 
   const body = `Good day!
 
-This is a daily reminder that the following e-certificate request${n > 1 ? "s are" : " is"} awaiting your review and action:
+This is a reminder that the following e-certificate request${n > 1 ? "s have" : " has"} been awaiting your review and action for a while:
 
 ${blocks}
 
@@ -839,8 +860,8 @@ Please review and act on ${n > 1 ? "each" : "the"} request in the portal. Thank 
     accent:   "navy", // action needed
     bodyHtml:
       emailP_("Good day!") +
-      emailP_("This is a daily reminder that the following e-certificate request" +
-             (n > 1 ? "s are" : " is") + " <strong>awaiting your review and action</strong>:") +
+      emailP_("This is a reminder that the following e-certificate request" +
+             (n > 1 ? "s have" : " has") + " been <strong>awaiting your review and action</strong> for a while:") +
       htmlBlocks +
       emailP_("Please review and act on " + (n > 1 ? "each" : "the") + " request in the portal. Thank you!"),
     // No layout-level button — each block carries its own review button.
@@ -1075,11 +1096,15 @@ Open this request: ${getPortalUrl_(requestId, "request")}`;
       emailP_("Good day!") +
       emailP_("Your request has been <strong>sent back to you for updates</strong>.") +
       emailInfoTable_(rowData) +
+      // Reason rides the same key-value rows as "Returned by" / "Return Date"
+      // (supervisor feedback: same caliber, not a lone callout box) but amber-
+      // tinted, since it is the substance of the email. The flagged-items list
+      // below keeps its own full amber section.
       emailKeyValueRows_([
-        ["Returned by", returnerLine],
-        ["Return Date", nowFormatted_()],
+        ["Returned by",       returnerLine],
+        ["Return Date",       nowFormatted_()],
+        ["Reason for Return", reason, "amber"],
       ]) +
-      emailRemarkBox_("Reason for Return", reason, "amber") +
       emailFlagList_(flagItems) +
       emailP_("Please review the comments, make the necessary changes, and resubmit your request.") +
       emailSection_("Request History", emailApprovalLog_(rowData)),
@@ -1340,10 +1365,10 @@ Open this request: ${getPortalUrl_(requestId, "review")}`;
       emailP_("A request you had previously approved has been <strong>returned to the requestor</strong> for further updates.") +
       emailInfoTable_(rowData) +
       emailKeyValueRows_([
-        ["Returned by", returnerLine],
-        ["Date",        nowFormatted_()],
+        ["Returned by",       returnerLine],
+        ["Date",              nowFormatted_()],
+        ["Reason for Return", reason || "No reason provided.", "amber"],
       ]) +
-      emailRemarkBox_("Reason for Return", reason || "No reason provided.", "amber") +
       emailP_("When the requestor resubmits, the request will route through the full approval chain again and will require your approval once more. You will receive a new action request at that time.") +
       emailSection_("Request History", emailApprovalLog_(rowData)),
     buttonUrl:   getPortalUrl_(requestId, "review"),
