@@ -109,7 +109,7 @@ Each of these was weighed and deferred with a reason, not forgotten.
 ## 7. UI/UX Improvements
 
 - Flag picker integrated into the existing return panel (progressive disclosure: collapsed by default, remark stays the required control; confirm gates on both the 20-char reason and per-flag comments).
-- Requestor sees flags three ways (highlight on the field, consolidated card, email) so the fix instruction cannot be missed; the approver re-reviewing sees "Flagged last cycle, marked as fixed" as a checklist.
+- Requestor sees open flags three ways (highlight on the field, consolidated card, email) so the fix instruction cannot be missed. Resolved-flag history is reached from the Request History timeline: the return that raised them carries a "View details" button opening a dialog with that round's items. *(Superseded 2026-08-14: this originally rendered as a "Flagged last cycle, marked as fixed" card pinned above the page; it was moved into the history because it restated what the history already recorded.)*
 - Edit form preserves every existing convention: same field markup/ids as New Request, same location Other path (free-text locations prefill instead of being blanked), same file picker, same confirm dialog pattern.
 - Both error shapes now surface in toasts (a flag-validation failure shows its actual message instead of "Action failed.").
 - All new CSS uses existing `:root` tokens only; amber = needs-fixing continues the established color language; no new hues, no emoji-as-icons (a real Lucide flag glyph was added to `UI_ICONS`).
