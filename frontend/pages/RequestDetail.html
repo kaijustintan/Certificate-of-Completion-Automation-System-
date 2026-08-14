@@ -31,7 +31,7 @@
     - renderDetailRow(key, value)          single labeled row in .detail-row
     - renderRequestSummaryCards(detail)    4 info cards (Request/Product/Contract/Purpose)
     - renderApproversChain(detail, blur)   approver chain with icons + conditional email blur
-    - renderResubmitBanner(detail)         current return entry + collapsible history
+    - renderResubmitBanner(detail)         current return alert (history lives in the timeline)
     - renderAttachmentsBlock(detail, canManage)  attachments card (filename + View + desc)
     - viewAttachmentFile(attachmentId)     gated fetch → inline preview / download
     - toggleAttachDesc(attachmentId)       show/hide an attachment's description
@@ -40,7 +40,6 @@
     - renderRequestDetailPage(params)     main renderer; getRequestDetail + auth
     - afterRender_request(params)         wires the resubmit file picker (if present)
     - onResubmitClick(requestId)          resubmit handler: optional re-upload + confirm
-    - toggleResubmitHistory()             expands/collapses old resubmit history
 -->
 
 
@@ -113,7 +112,7 @@ function renderProgressSteps(detail) {
   for (let i = 0; i < slots.length; i++) {
     const state = dotStateFor(slots[i].n, detail);
     const cls   = 'step-dot' + (state ? ' ' + state : '');
-    const title = slots[i].approver + (slots[i].designation ? ' — ' + slots[i].designation : '');
+    const title = slots[i].approver + (slots[i].designation ? ' · ' + slots[i].designation : '');
     html += '<div class="' + cls + '" title="' + escapeHtml(title) + '">' + slots[i].n + '</div>';
     if (i < slots.length - 1) {
       const lineDone = (state === 'done') ? ' done' : '';
@@ -164,6 +163,22 @@ function openFieldFlags(detail) {
   const map = {};
   (detail.flags || []).forEach(function (f) {
     if (!f.resolved && f.targetType === 'field') map[f.targetKey] = f;
+  });
+  return map;
+}
+
+/*
+  Function Name: openAttachmentFlags
+  LAYMAN    : Katulad ng openFieldFlags pero para sa mga dokumento — { attachmentId:
+              flag } ng mga BUKAS pang attachment flag, para ma-highlight ng
+              attachments list ang mismong file na minarkahan.
+  TECHNICAL : Filters detail.flags to open (resolved=false) attachment-type flags,
+              keyed by targetKey (an RA.ATTACHMENT_ID).
+*/
+function openAttachmentFlags(detail) {
+  const map = {};
+  (detail.flags || []).forEach(function (f) {
+    if (!f.resolved && f.targetType === 'attachment') map[f.targetKey] = f;
   });
   return map;
 }
@@ -239,18 +254,19 @@ function renderRequestSummaryCards(detail) {
   Function Name: renderFlagsCard
 
   LAYMAN (Tropang Ex):
-  Ang "What needs fixing" card. Kapag may mga BUKAS na marka (kaka-return lang),
+  Ang "What needs fixing" card. Kapag may mga BUKAS pang marka (kaka-return lang),
   nakalista dito lahat: aling field o dokumento, ano ang komento ng approver,
-  sino at kailan nag-marka. Kapag KAKA-RESUBMIT lang naman (wala nang bukas na
-  marka), ipinapakita ang mga markang inayos ng huling resubmit bilang "marked
-  as fixed" — para sa approver na nagre-review, listahan ito ng dapat niyang
-  i-double-check. Wala pareho? Walang card.
+  sino at kailan nag-marka. Kapag naayos na lahat, WALANG card — ang kasaysayan
+  ng mga naayos na marka ay nasa Request History na (pindutin ang "View details"
+  sa Returned entry). Dati may "Flagged last cycle (marked as fixed)" card dito;
+  inalis dahil inuulit lang niya sa taas ng page ang nasa history na (supervisor
+  feedback).
 
   TECHNICAL:
   Same function on BOTH detail pages (global scope, like renderResubmitBanner).
-  Open flags take precedence; else flags with cycle === resubmitCount - 1
-  (addressed by the current cycle's resubmit) render in the resolved style.
-  Attachment flags are included with a "(document)" tag. Everything escaped.
+  OPEN flags only — resolved-flag history moved to renderTimeline's per-return
+  "View details" modal (showFlagDetails in UI.html). Attachment flags are
+  included with a "(document)" tag. Everything escaped.
 
   PARAMS    : detail — the getRequestDetail DTO.
   RETURNS   : .card HTML string or ''.
@@ -259,40 +275,32 @@ function renderFlagsCard(detail) {
   const flags = detail.flags || [];
   if (!flags.length) return '';
 
-  const open = flags.filter(function (f) { return !f.resolved; });
-  const currentCycle = Number(detail.resubmitCount) || 0;
-  const justFixed = flags.filter(function (f) { return f.resolved && f.cycle === currentCycle - 1; });
-
-  let title, items, resolvedStyle;
-  if (open.length) {
-    title = 'What needs fixing';
-    items = open;
-    resolvedStyle = false;
-  } else if (justFixed.length && String(detail.status || '').indexOf('Pending') !== -1) {
-    title = 'Flagged last cycle — marked as fixed';
-    items = justFixed;
-    resolvedStyle = true;
-  } else {
-    return '';
-  }
+  const items = flags.filter(function (f) { return !f.resolved; });
+  if (!items.length) return '';
 
   const rows = items.map(function (f) {
     const tag = f.targetType === 'attachment' ? ' (document)' : '';
+    // "Flagged by Approver 2 (email)" — the step is the approver's position AT
+    // THE TIME of the return (server-derived from the timeline), so the next
+    // approver knows whose review raised each mark. 0 = unknown → email only.
+    const who = f.flaggedByStep
+      ? 'Approver ' + f.flaggedByStep + ' (' + f.flaggedBy + ')'
+      : f.flaggedBy;
     return '' +
-      '<div class="flags-card-item' + (resolvedStyle ? ' flags-card-resolved' : '') + '">' +
+      '<div class="flags-card-item">' +
         '<div class="flags-card-label">' +
-          '<span class="flag-icon">' + renderIcon(resolvedStyle ? 'check' : 'flag', 13) + '</span>' +
+          '<span class="flag-icon">' + renderIcon('flag', 13) + '</span>' +
           escapeHtml(f.label + tag) +
         '</div>' +
         '<div class="flags-card-comment">' + escapeHtml(f.comment) + '</div>' +
-        '<div class="flags-card-meta">Flagged by ' + escapeHtml(f.flaggedBy) +
+        '<div class="flags-card-meta">Flagged by ' + escapeHtml(who) +
           (f.flaggedAt ? ' · ' + escapeHtml(f.flaggedAt) : '') + '</div>' +
       '</div>';
   }).join('');
 
   return '' +
     '<div class="card">' +
-      '<div class="card-header"><div class="card-title">' + title + '</div></div>' +
+      '<div class="card-header"><div class="card-title">What needs fixing</div></div>' +
       rows +
     '</div>';
 }
@@ -391,21 +399,23 @@ function renderApproversChain(detail, blurFutureEmails) {
 }
 
 
-// Renders the resubmit banner. Shared with ReviewDetail.html. Split into:
-//   Block A — the CURRENT active return ([PENDING] entry): amber alert, always
-//             expanded, no toggle. This is what the requestor must act on now.
-//   Block B — PREVIOUS confirmed resubmit cycles (Resubmit #N entries): lighter
-//             styling, collapsible.
+// Renders the resubmit banner: the CURRENT active return only ([PENDING]
+// entry) — amber alert, always expanded. Shared with ReviewDetail.html.
 // Parses detail.resubmitHistory rather than relying on resubmitCount, so the
 // banner also shows on the first return (count still 0, but a [PENDING] exists).
+//
+// The old collapsible "Previous return history" block was REMOVED (supervisor
+// feedback): every past return, its reason, and its resubmit already appear in
+// the Request History timeline — a second partial rendering of the same events
+// was redundant. resubmitHistory itself (the parsed string) is unchanged.
 /*
   Function Name: renderResubmitBanner
-  LAYMAN    : Kapag may pagbabalik, ipakita ang amber alert na nagsasabi kung
-              BAKIT ibinalik at (kung marami nang resubmit), may collapsible
-              history ng mga nakaraang returns.
-  TECHNICAL : Parses detail.resubmitHistory (separator: "\n\n---\n\n"). Block A
-              = the [PENDING] entry (current return, always shown). Block B =
-              numbered entries (collapsible toggle). Empty history → ''.
+  LAYMAN    : Kapag naka-return ang request, ipakita ang amber alert kung SINO
+              ang nagbalik at BAKIT. Ang mga lumang returns ay nasa Request
+              History timeline na — hindi na inuulit dito.
+  TECHNICAL : Parses detail.resubmitHistory (separator: "\n\n---\n\n") and
+              renders the [PENDING] entry (current return). No pending entry →
+              '' (post-resubmit the alert simply disappears).
 */
 function renderResubmitBanner(detail) {
   const history = String(detail.resubmitHistory || '').trim();
@@ -415,65 +425,20 @@ function renderResubmitBanner(detail) {
     .map(function (e) { return e.trim(); })
     .filter(Boolean);
 
-  const pending   = entries.filter(function (e) { return e.indexOf('[PENDING]') === 0; });
-  const confirmed = entries.filter(function (e) { return e.indexOf('Resubmit #') === 0; });
+  const pending = entries.filter(function (e) { return e.indexOf('[PENDING]') === 0; });
+  if (!pending.length) return '';
 
-  if (!pending.length && !confirmed.length) return '';
-
-  // ── Block A — current active return ──
-  let blockA = '';
-  if (pending.length) {
-    const lines = pending[pending.length - 1]   // most recent pending entry
-      .replace(/^\[PENDING\]\s*/, '')           // drop the internal marker
-      .split('\n');
-    // line 0: "Approver 1 (email)" → "Returned by: Approver 1 — email"
-    lines[0] = 'Returned by: ' + lines[0].replace(/\(([^)]+)\)/, '— $1');
-    const body = lines.map(escapeHtml).join('<br>');
-    blockA = '' +
-      '<div class="resubmit-banner">' +
-        '<div class="mb-sm"><strong>' + renderIcon('alert', 14) + ' This request has been returned for revision.</strong></div>' +
-        '<div class="text-small">' + body + '</div>' +
-      '</div>';
-  }
-
-  // ── Block B — previous confirmed resubmit history ──
-  let blockB = '';
-  if (confirmed.length) {
-    const n = confirmed.length;
-    const divider = '<div style="border-top: 1px solid var(--gray-200); margin: 8px 0;"></div>';
-    const body = confirmed.map(function (e) {
-      return '<div style="white-space: pre-wrap;">' + escapeHtml(e) + '</div>';
-    }).join(divider);
-    blockB = '' +
-      '<div class="mt-sm">' +
-        '<a href="javascript:void(0)" onclick="toggleResubmitHistory()" ' +
-           'style="color: var(--gray-600); cursor: pointer; font-size: 12px;">' +
-          'Previous return history (' + n + ' cycle' + (n === 1 ? '' : 's') + ') ' +
-          '<span id="resubmit-arrow">' + renderIcon('chevron-down', 14) + '</span>' +
-        '</a>' +
-        '<div id="resubmit-history" class="hidden text-small mt-sm" ' +
-             'style="border-left: 2px solid var(--gray-200); padding-left: 12px;">' +
-          body +
-        '</div>' +
-      '</div>';
-  }
-
-  return blockA + blockB;
-}
-
-
-// Toggles the previous-return-history block (Block B) under the banner.
-/*
-  Function Name: toggleResubmitHistory
-  LAYMAN    : Expand/collapse ang old resubmit history sa banner.
-  TECHNICAL : Toggles .hidden on #resubmit-history-block; swaps the chevron icon.
-*/
-function toggleResubmitHistory() {
-  const block = document.getElementById('resubmit-history');
-  const arrow = document.getElementById('resubmit-arrow');
-  if (!block) return;
-  const nowHidden = block.classList.toggle('hidden');
-  if (arrow) arrow.innerHTML = nowHidden ? renderIcon('chevron-down', 14) : renderIcon('chevron-up', 14);
+  const lines = pending[pending.length - 1]   // most recent pending entry
+    .replace(/^\[PENDING\]\s*/, '')           // drop the internal marker
+    .split('\n');
+  // line 0: "Approver 1 (email)" → "Returned by: Approver 1 (email)"
+  lines[0] = 'Returned by: ' + lines[0];
+  const body = lines.map(escapeHtml).join('<br>');
+  return '' +
+    '<div class="resubmit-banner">' +
+      '<div class="mb-sm"><strong>' + renderIcon('alert', 14) + ' This request has been returned for revision.</strong></div>' +
+      '<div class="text-small">' + body + '</div>' +
+    '</div>';
 }
 
 
@@ -483,45 +448,52 @@ function toggleResubmitHistory() {
 // Resubmitted requests group files by cycle (#6): "Current submission" vs
 // "Previous versions". Shared with ReviewDetail.html.
 /*
-  Function Name: renderAttachmentsBlock
-  LAYMAN    : Ipakita ang listahan ng mga supporting documents. Bawat file ay
-              may filename (bold) at description (muted, laging nakikita — hindi
-              kailangan pang mag-click para makita), at isang "View" button na
-              bubuksan ang file nang dumadaan sa server na may identity-check.
-              Kung naka-resubmit na ang request, hinahati ang files: "Current
-              submission" (yung pinakabagong cycle) vs "Previous versions" (mga
-              luma, naka-label per cycle: Original / Resubmit #N). Kaya kita mo
-              agad kung alin ang dati at alin ang bago habang nagre-review o
-              nagre-resubmit. Description is shown by default: it's the primary
-              decision-relevant info for approvers.
-  TECHNICAL : Renders .card. A file's cycle = a.resubmitCycle (0 = original,
-              N = Resubmit #N); the request's current cycle = detail.resubmitCount.
-              When currentCycle === 0 (never resubmitted) it renders the flat list
-              exactly as before — no group headers in the common case. When
-              resubmitted: a "Current submission" group (cycle === currentCycle,
-              may be empty if the latest resubmit added no files) + a "Previous
-              versions" group (cycle < currentCycle, sub-grouped by cycle, newest
-              first). Each row: attachment-view-name + attachment-view-desc +
-              View button (viewAttachmentFile → gated server fetch). Only
-              attachmentId goes to onclick (safe chars; no injection risk).
+  Function Name: renderAttachmentRowsBody
+  LAYMAN    : Ang listahan mismo ng mga supporting documents (walang card na
+              balot). Bawat file ay may filename (bold) at description (muted,
+              laging nakikita), isang "View" button na dumadaan sa server na may
+              identity-check, at — kung minarkahan ng approver ang file na iyon —
+              amber highlight na may komento sa ilalim ng filename. Kung
+              naka-resubmit na ang request, hinahati ang files: "Current
+              submission" (pinakabagong cycle) vs "Previous versions" (mga luma,
+              naka-label per cycle: Original / Resubmit #N). Ginagamit ito ng
+              Attachments card (parehong detail pages) AT ng resubmit edit form,
+              para iisa lang ang listahan kahit saan.
+  TECHNICAL : Returns rows/groups HTML only — renderAttachmentsBlock adds the
+              card. A file's cycle = a.resubmitCycle (0 = original, N =
+              Resubmit #N); the request's current cycle = detail.resubmitCount.
+              currentCycle === 0 → flat list (no group headers in the common
+              case); resubmitted → "Current submission" group (may be empty if
+              the latest resubmit added no files) + "Previous versions"
+              (sub-grouped by cycle, newest first). Open attachment flags
+              (openAttachmentFlags) add .detail-row--flagged + a .flag-pin
+              comment per affected row — visible to requestor AND approver.
+              Only attachmentId goes to onclick (safe chars; no injection risk).
               No fileLink in the DTO — the URL never leaves the server.
-  PARAMS    : detail — DTO from getRequestDetail(); canManage — bool (retained
-              for signature compatibility; UI is identical for both roles).
+  PARAMS    : detail — DTO from getRequestDetail().
 */
-function renderAttachmentsBlock(detail, canManage) {
+function renderAttachmentRowsBody(detail) {
   const attachments  = detail.attachments || [];
   const currentCycle = parseInt(detail.resubmitCount, 10) || 0;
+  // Open attachment flags → per-row amber highlight + the approver's comment
+  // pinned under the filename, so the flagged document is visibly "the one".
+  const afl = openAttachmentFlags(detail);
 
   // One file row — shared by the flat list and every grouped section.
   function attachmentRow(a) {
     const name = a.filename    || 'Attachment';
     const desc = a.description || '';
     const aid  = escapeHtml(a.attachmentId);
+    const flag = afl[a.attachmentId];
+    const flagPin = flag
+      ? '<div class="flag-pin">' + renderIcon('flag', 12) + ' ' + escapeHtml(flag.comment) + '</div>'
+      : '';
     return '' +
-      '<div class="attachment-view-row">' +
+      '<div class="attachment-view-row' + (flag ? ' detail-row--flagged' : '') + '">' +
         '<div class="attachment-view-info">' +
           '<span class="attachment-view-name" title="' + escapeHtml(name) + '">' + escapeHtml(name) + '</span>' +
           (desc ? '<span class="attachment-view-desc">' + escapeHtml(desc) + '</span>' : '') +
+          flagPin +
         '</div>' +
         '<button type="button" class="attachment-link-btn" onclick="viewAttachmentFile(\'' + aid + '\')">View</button>' +
       '</div>';
@@ -578,6 +550,20 @@ function renderAttachmentsBlock(detail, canManage) {
     body = sections.join('');
   }
 
+  return body;
+}
+
+/*
+  Function Name: renderAttachmentsBlock
+  LAYMAN    : Ang "Attachments" card — ang listahan mula renderAttachmentRowsBody,
+              nakabalot sa card na may file count. Ginagamit sa parehong detail
+              pages; ang resubmit edit form ay ang BODY lang ang hinihiram.
+  TECHNICAL : Card wrapper around renderAttachmentRowsBody(detail). canManage is
+              currently unused (kept for signature stability with ReviewDetail's
+              call site).
+*/
+function renderAttachmentsBlock(detail, canManage) {
+  const attachments = detail.attachments || [];
   return '' +
     '<div class="card">' +
       '<div class="card-header">' +
@@ -586,7 +572,7 @@ function renderAttachmentsBlock(detail, canManage) {
           (attachments.length !== 1 ? 's' : '') +
         '</div>' +
       '</div>' +
-      body +
+      renderAttachmentRowsBody(detail) +
     '</div>';
 }
 
@@ -617,7 +603,10 @@ async function viewAttachmentFile(attachmentId) {
   // Cache hit — second+ view is instant, no server call needed.
   const cached = window._attachmentBlobCache[attachmentId];
   if (cached) {
-    window.open(cached.url, '_blank');
+    // window.open returns null when a popup blocker eats the tab — without
+    // this check the click would silently do nothing.
+    const w = window.open(cached.url, '_blank');
+    if (!w) showToast('Allow pop-ups for this site to preview the file.', '');
     return;
   }
 
@@ -742,14 +731,22 @@ async function renderRequestDetailPage(params) {
   // because only one page renders at a time. Wired in afterRender_request().
   const resubmitPanel = canResubmit ? renderResubmitEditForm(detail, id) : '';
 
+  // Back link — top-left, above the title (consistent with "← Admin home").
+  // An admin arriving from the records list goes back to that list, not to
+  // their own dashboard; everyone else goes home. On a refreshed deep-link the
+  // origin marker is gone from the hash → falls back to the dashboard.
+  const backLink = (params && params.from === 'admin')
+    ? renderBackLink('Back to Admin records', "navigateTo('admin', {section: 'records'})")
+    : renderBackLink('Back to dashboard', "navigateTo('home')");
+
   return `
+    ${backLink}
     <div class="page-header">
       <div>
         <div class="text-tiny text-muted">${escapeHtml(detail.controlNumber)}</div>
         <div class="page-title">${escapeHtml(detail.projectTitle)}</div>
         <div class="page-subtitle">${renderStatusBadge(detail.status)}${detail.isExpired ? ' <span class="badge badge-expired" title="Contract end date has passed">Expired</span>' : ''}</div>
       </div>
-      <button class="btn btn-secondary" onclick="navigateTo('home')">← Back</button>
     </div>
 
     ${renderProgressSteps(detail)}
@@ -759,10 +756,13 @@ async function renderRequestDetailPage(params) {
     <div class="detail-layout">
 
       <div class="detail-main">
-        ${renderRequestSummaryCards(detail)}
-        ${renderAttachmentsBlock(detail, isOwner)}
-        ${resubmitPanel}
-        ${renderTimeline(detail.timeline)}
+        ${canResubmit
+          // Resubmitting → the edit form IS the request details (every field
+          // prefilled + editable, documents inside). Showing the read-only
+          // cards above the same editable fields duplicated the whole page.
+          ? resubmitPanel
+          : renderRequestSummaryCards(detail) + renderAttachmentsBlock(detail, isOwner)}
+        ${renderTimeline(detail.timeline, detail.flags)}
       </div>
 
       <div class="detail-rail">
@@ -800,7 +800,10 @@ async function renderRequestDetailPage(params) {
 */
 function renderResubmitEditForm(detail, id) {
   const fl = openFieldFlags(detail);
-  const KNOWN_LOCATIONS = ['AGT - Pending', 'GCP - Pending', 'EGP - Pending', 'TWS - Pending'];
+  // Location options ride the DTO (detail.locations, from the Locations sheet)
+  // so this form and the new-request form always offer the same set. A stored
+  // location no longer in the sheet round-trips via the Other free-text path.
+  const KNOWN_LOCATIONS = detail.locations || [];
   const locationKnown = KNOWN_LOCATIONS.indexOf(detail.location) !== -1;
   const locationBlank = !detail.location;
 
@@ -814,7 +817,7 @@ function renderResubmitEditForm(detail, id) {
     return '' +
       '<div class="' + rowCls(key) + '">' +
         '<label class="form-label" for="' + key + '">' + escapeHtml(label) +
-          (required ? ' <span class="required">*</span>' : '') + '</label>' +
+          (required ? ' <span class="required">*</span>' : '') + renderFieldHelp(key) + '</label>' +
         '<input type="text" class="form-input" id="' + key + '" name="' + key + '" value="' + escapeHtml(value == null ? '' : value) + '">' +
         pin(key) +
       '</div>';
@@ -822,7 +825,7 @@ function renderResubmitEditForm(detail, id) {
 
   const locationRow = '' +
     '<div class="' + rowCls('location') + '">' +
-      '<label class="form-label" for="location-select">Location <span class="required">*</span></label>' +
+      '<label class="form-label" for="location-select">Location <span class="required">*</span>' + renderFieldHelp('location') + '</label>' +
       '<select class="form-select" name="location" id="location-select" onchange="onLocationChange(this.value)">' +
         '<option value=""' + (locationBlank ? ' selected' : '') + '>Select a location…</option>' +
         KNOWN_LOCATIONS.map(function (loc) {
@@ -888,14 +891,14 @@ function renderResubmitEditForm(detail, id) {
         '<div class="form-section-title">Contract</div>' +
         '<div class="form-grid">' +
           '<div class="' + rowCls('contractStart') + '">' +
-            '<label class="form-label" for="contractStart">Contract start date <span class="required">*</span></label>' +
+            '<label class="form-label" for="contractStart">Contract start date <span class="required">*</span>' + renderFieldHelp('contractStart') + '</label>' +
             '<input type="date" class="form-input" id="contractStart" name="contractStart" ' +
               'value="' + escapeHtml(detail.contractStartInput || '') + '" ' +
               'oninput="var e=document.getElementById(\'contractEnd\'); if(e) e.min=this.value;">' +
             pin('contractStart') +
           '</div>' +
           '<div class="' + rowCls('contractEnd') + '">' +
-            '<label class="form-label" for="contractEnd">Contract end date <span class="required">*</span></label>' +
+            '<label class="form-label" for="contractEnd">Contract end date <span class="required">*</span>' + renderFieldHelp('contractEnd') + '</label>' +
             '<input type="date" class="form-input" id="contractEnd" name="contractEnd" ' +
               'value="' + escapeHtml(detail.contractEndInput || '') + '">' +
             pin('contractEnd') +
@@ -903,12 +906,19 @@ function renderResubmitEditForm(detail, id) {
         '</div>' +
         '<div class="form-section-title">Purpose</div>' +
         '<div class="' + rowCls('requestorRemark') + '">' +
-          '<label class="form-label" for="requestorRemark">Purpose / remark <span class="required">*</span></label>' +
+          '<label class="form-label" for="requestorRemark">Purpose / remark <span class="required">*</span>' + renderFieldHelp('requestorRemark') + '</label>' +
           '<textarea class="form-textarea" id="requestorRemark" name="requestorRemark">' + escapeHtml(detail.requestorRemark || '') + '</textarea>' +
           pin('requestorRemark') +
         '</div>' +
       '</form>' +
       '<div class="form-section-title">Documents</div>' +
+      // The files already on the request, flagged ones highlighted with the
+      // approver's comment — so the requestor sees exactly which document to
+      // replace without scrolling to a separate card. Attachments are
+      // append-only: a "replacement" is a new upload; both stay in the record,
+      // grouped by cycle.
+      renderAttachmentRowsBody(detail) +
+      '<div class="form-section-title" style="margin-top:16px;">Add corrected or missing documents</div>' +
       '<div id="attachment-list"></div>' +
       '<div class="attachment-add-row">' +
         '<label class="btn btn-secondary file-input-label">' +
@@ -1052,7 +1062,7 @@ async function onResubmitClick(requestId) {
 
   const fileNote = files.length
     ? files.length + ' document(s) will be added (your original attachments are kept). '
-    : 'No new documents added — your original attachments will be reused. ';
+    : 'No new documents added; your original attachments will be reused. ';
   const ok = await showConfirm({
     title:        'Resubmit request',
     message:      'Your field values will be saved as shown in the form. ' + fileNote +
