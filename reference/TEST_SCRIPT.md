@@ -1,38 +1,66 @@
-# Consolidated Test Pass — everything untested as of 2026-08-13
+# Consolidated Test Pass
 
-**Why this file exists.** Five layers of change are stacked and **none has ever executed**:
+**Last updated:** 2026-08-14 · **Phase 0 status: ✅ PASSED** (see below)
+
+**Why this file exists.** Five layers of change are stacked and **none had ever executed** before this pass:
 
 | Layer | What |
 |---|---|
 | `b8869de` | Script Properties config resolver, domain allowlist, expiry-sweep performance |
 | `bf20b31` | Callable-surface security sweep (118 → 31 functions, ~90 renames) |
 | `06de263` | `isAdmin` regression fix, mandatory decline reasons, upload magic-byte validation, group-lookup cache, **certificate rebuilt in code** |
-| timeline commit | Cross-cycle approval timeline, domain allowlist tightened |
-| final audit batch | **Return flags + editable resubmit** (new `Request_Flags` sheet), dead-code removal (callable surface 31 → **27**), submit/resubmit locks, formula-injection rejection, admin input caps, isAdmin/attachments memos, TextFinder row lookup, empty states, table consolidation |
+| `6b0f9dc` + `c2361aa` | Cross-cycle approval timeline, domain allowlist tightened |
+| `5a70bca` + `3605608` | **Return flags + editable resubmit** (new `Request_Flags` sheet), dead-code removal (callable surface 31 → **27**), submit/resubmit locks, formula-injection rejection, admin input caps, isAdmin/attachments memos, TextFinder row lookup, empty states, table consolidation |
 
-`GO_LIVE_RUNBOOK.md` lists the older items 1-35 in the order they were *written*, not the order to *run* them. This file is the execution order for a single sitting. **Phase 8 (new, below) covers the final audit batch.**
+`GO_LIVE_RUNBOOK.md` lists the older items in the order they were *written*, not the order to *run* them. This file is the execution order for a single sitting.
 
-**Time:** about 2 hours. **Account:** your `@dlsu.edu.ph` account only. You will act as requestor AND approver, which is supported (there is no requestor-≠-approver guard, and `EMAIL_DEV_TAG` exists specifically for this).
+**Time:** about 2 hours for Phases 1-8. **Account:** your `@dlsu.edu.ph` account only. You act as requestor AND approver, which is supported (there is no requestor-≠-approver guard, and `EMAIL_DEV_TAG` exists specifically for this).
 
-> ⚠️ **A personal gmail account will NOT work anymore.** `ORG.ALLOWED_DOMAINS` is now `["megaworldcorp.com", "dlsu.edu.ph"]`. If you need a second tester, they must be on one of those domains, or add their domain to that array as an **uncommitted local edit** and remove it after.
+> ⚠️ **A personal gmail account will NOT work.** `ORG.ALLOWED_DOMAINS` is `["megaworldcorp.com", "dlsu.edu.ph"]`. A second tester must be on one of those domains, or add theirs as an **uncommitted local edit** and remove it after.
 
 ---
 
-## Phase 0 — Does it even load (5 min)
+## 🚩 How to run this pass
 
-A script-load failure breaks everything, so this comes first and costs nothing.
+**Do not look for crashes. Look for plausible wrong answers.**
 
-1. **Refresh the Apps Script editor tab.** If you had it open during `clasp push`, it is showing stale code. Never Ctrl+S in a stale tab.
-2. **Run `_testConfig`.** Expect a re-authorization prompt (the `documents` OAuth scope was dropped when the certificate was rewritten). Accept it. This is expected, not a fault.
-3. Read the log. It must show:
+Every defect that actually hurt a comparable system produced **no error message**: an escaper that escaped nothing, a tab that always read zero, corrections formally requested and never delivered, a test that printed "19 passed, 0 failed" against a broken database. Each returned something that looked correct.
+
+So at every step, the question is not "did it error?" but **"is this answer actually right?"** The steps marked ⚠️ are the ones where a wrong answer looks most normal.
+
+Expect breakage. Five unserved layers means something will fail; that is the point of running this, not a sign anything went wrong.
+
+---
+
+## Phase 0 — Does it even load ✅ PASSED 2026-08-14
+
+*Kept for the record and for re-running after any future push.*
+
+1. **Refresh the Apps Script editor tab.** If it was open during `clasp push` it shows stale code. Never Ctrl+S in a stale tab.
+2. **Run `_testConfig`.** A re-authorization prompt is expected (the `documents` OAuth scope was dropped when the certificate was rewritten). Accept it.
+3. The log must show:
    - `ARCHIVE_FOLDER_ID` and `ATTACHMENTS_FOLDER_ID` tagged `[fallback(Constants.js)]`
-   - **No `TEMPLATE_DOC_ID` line at all** (it was removed with the Doc engine)
+   - **No `TEMPLATE_DOC_ID` line at all** (removed with the Doc engine)
    - `EMAIL_DEV_TAG = true`
    - `ORG.ALLOWED_DOMAINS = ["megaworldcorp.com","dlsu.edu.ph"]` → `domain gate ACTIVE`
-   - `⚠️ TEMPORARY DOMAIN EXCEPTION STILL ACTIVE: ["dlsu.edu.ph"]` with removal instructions
+   - `⚠️ TEMPORARY DOMAIN EXCEPTION STILL ACTIVE: ["dlsu.edu.ph"]`
    - `fail-loud OK → Script property NO_SUCH_KEY_SMOKE_TEST is not set…`
 
-> **If this throws instead of logging**, stop. Something fails at file-load time and nothing else is testable. The likely suspects are `Constants.js` (loads first) or a syntax issue the parser accepted but Apps Script did not.
+**Result 2026-08-14:** all seven assertions passed. Script Properties are intentionally empty; the fallbacks in `Constants.js` are the correct dev state.
+
+> ⚠️ **Known trap, hit once and fixed.** `.clasp.json` has `"rootDir": "."` and `scriptExtensions: [".js"]`, so **clasp pushes every `.js` in the repo**, including Node tooling. `tools/callable-surface.js` uses `require()`, which does not exist in Apps Script, so it threw at load time and took the **whole project down** before any code ran. Fixed by `.claspignore`. If Phase 0 ever throws again, check the Apps Script file list for a stray `tools/*.gs` first.
+
+> **If this throws instead of logging**, stop. Nothing else is testable. Suspects: a stray pushed file (above), `Constants.js` (loads first), or a syntax issue the parser accepted but Apps Script did not.
+
+---
+
+## Before Phase 1 — redeploy
+
+`clasp push` only updates `/dev`. Email deep-links use `ScriptApp.getService().getUrl()`, which returns the **published** `/exec` URL. Testing before republishing means chasing ghosts.
+
+**Deploy → Manage deployments → edit the existing deployment → New version → Deploy.**
+
+> ⚠️ **Never create a *new* deployment.** That mints a new URL and silently orphans every link in every email already sent. One deployment per app, always "New version."
 
 ---
 
@@ -76,6 +104,24 @@ You now have a request with **3 cycles**: submitted → returned → resubmitted
 14. **Requestor view.** Open the request. The **Request History** card lists **every** action in order, grouped `Original submission` / `Resubmit #1` / `Resubmit #2`, each with actor, timestamp, and both return reasons. ⚠️ **The approval must be visible** — a requestor could never see approvals before this change.
 15. **Approver view.** Open the same request from My Approvals (or the review deep-link). The Request History card is **identical**. This symmetry is the entire point of the feature.
 16. **Attachment grouping.** The attachments card splits into **Current submission** vs **Previous versions**, sub-labelled Original / Resubmit #1 / Resubmit #2.
+
+16b. ### ⚠️ File display — genuinely unverified, and a wrong result looks normal
+
+COC never sends a Drive link. `downloadAttachment` returns bytes, the browser builds a Blob, and PDFs/images are shown by navigating a **new tab** to a blob URL. The parallel DCS system found that Apps Script's sandbox **refuses to render blob URLs**, though they were embedding in an `<iframe>` inside the page, which is a different context from a top-level tab. Ours may work where theirs did not. Untested either way.
+
+Press **View** on each type and check:
+
+| File | Expected |
+|---|---|
+| PDF | new tab opens and **the document is actually visible** |
+| PNG / JPG | same |
+| DOCX / XLSX | tab closes, file **downloads** |
+| Same PDF a second time | instant, no loading screen (blob cache hit) |
+| With pop-ups blocked | toast "Allow pop-ups to preview inline; downloading instead", then downloads |
+
+⚠️ **The failure mode is a blank or error tab, with no toast and no download.** The code has already taken its success branch by then, so nothing reports the problem. A blank tab here is a real failure, not a slow load.
+
+**If PDFs render blank:** DCS's finding applies to us too. The options are (a) download everything instead of previewing, or (b) elevate that one file to domain-visible at view time and open it in the Drive viewer. Option (b) weakens the private-by-default design, so (a) is the safer default. Do not redesign before confirming the failure.
 17. **Resubmit banner still works.** The amber banner and its collapsible previous-return history render as before. *(Its `[PENDING]` parser was deliberately left untouched.)*
 18. **A clean request.** Open any older request that was never returned → timeline shows `Submitted` plus approvals under one `Original submission` heading, no `Resubmit` groups.
 19. **Cache invalidation.** Approve any other pending request and **immediately** open its detail page. The new approval appears. *(Proves `appendAction_` invalidates the `Activity_Log` memo inside the same execution. A missing entry here means the invalidation was dropped.)*
@@ -188,7 +234,15 @@ google.script.run.withSuccessHandler(console.log).handleResubmit("REQ-x",[],{pro
 | Flags not showing / not resolving | `Request_Flags` tab + `flagRows_()`/`resolveOpenFlags_` (Accessors.js). Note the DTO self-heals: an old-cycle flag renders resolved even if the stamp was missed. |
 | Edit form saves nothing | `validateResubmitPayload_` (WebApp.js) then the diff in `resubmit_` (Approvals.js) — log `changedLabels`. A value identical after trim/date-formatting is correctly a no-op. |
 | "System is busy" on submit/resubmit | Lock contention (10s wait). Expected under real concurrency; retry. If persistent, something is holding the script lock — check Executions. |
+| Blank tab when viewing a PDF | Blob navigation blocked by the sandbox. See 16b — this is a design decision, not a bug fix. |
+| Editor throws `require is not defined` | A Node file got pushed. Check `.claspignore` and delete any stray `tools/*.gs` in the Apps Script file list. |
+
+## When the pass is done
+
+1. Fix whatever it surfaced, re-running the affected phase after each fix.
+2. Then go-live config (`GO_LIVE_RUNBOOK.md` Phase D): `EMAIL_DEV_TAG = false`, prod Drive folder IDs, remove `dlsu.edu.ph` from **both** `ORG.ALLOWED_DOMAINS` and `ORG.TRANSITIONAL_DOMAINS`, seed the sheets, and run the two trigger registrations **on the Megaworld account** (they are per-account and are not created by `clasp push`).
 
 ## Not covered here (deliberate)
 
-Production config flips (`EMAIL_DEV_TAG`, prod folder IDs, removing `dlsu.edu.ph`) belong to go-live, not this pass. See `GO_LIVE_RUNBOOK.md` Phase D.
+- **Production config flips** belong to go-live, not this pass. See above.
+- **Deferred backlog** (submission snapshot per round, error-envelope normalization, raising the remark floor from 20 to 30) is in `FINAL_AUDIT_REPORT.md`. None of it blocks this pass, and none should be started until it is complete: adding unserved code to an unserved stack is what produced this backlog in the first place.

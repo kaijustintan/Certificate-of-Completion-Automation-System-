@@ -1,0 +1,26 @@
+# Files clasp must NOT push to the Apps Script project.
+#
+# ⚠️ WHY THIS FILE EXISTS: .clasp.json has "rootDir": "." and
+# "scriptExtensions": [".js"], so WITHOUT this file clasp uploads EVERY .js in
+# the repo — including Node.js tooling. Apps Script evaluates every uploaded
+# file at load time, so a single `require(...)` in a dev script throws
+# "ReferenceError: require is not defined" and takes the WHOLE project down:
+# no function runs, and the deployed web app stops serving. That happened once
+# with tools/callable-surface.js. Anything that is not Apps Script runtime code
+# belongs here.
+
+# Node-only developer tooling (runs via `node`, never in Apps Script)
+tools/**
+
+# Docs and repo furniture
+reference/**
+migration-context/**
+assets/**
+.claude/**
+*.md
+*.py
+
+# Version control / editor
+.git/**
+.gitignore
+.claspignore
